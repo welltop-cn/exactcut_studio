@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+PYTHON_BIN="${EXACTCUT_PYTHON:-python3.11}"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  echo "未找到 Python 3.11。可通过 EXACTCUT_PYTHON=/path/to/python3.11 指定。" >&2
+  exit 2
+fi
+"$PYTHON_BIN" -m venv "$PROJECT_ROOT/.venv"
+"$PROJECT_ROOT/.venv/bin/python" -m pip install -r "$PROJECT_ROOT/requirements.lock.txt"
+"$PROJECT_ROOT/.venv/bin/python" -m pip install --no-deps -e "$PROJECT_ROOT"
+echo "安装完成：$PROJECT_ROOT/bin/exactcut --help"

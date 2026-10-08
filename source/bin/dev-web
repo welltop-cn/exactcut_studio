@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DEVELOPMENT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+export EXACTCUT_DATA_ROOT="$DEVELOPMENT_ROOT"
+export EXACTCUT_ENVIRONMENT=development
+export EXACTCUT_ALLOW_EXTERNAL_WRITES=0
+export EXACTCUT_WORKER_ENABLED=0
+export EXACTCUT_PORT=8792
+export EXACTCUT_RELEASE_ID=development
+"$DEVELOPMENT_ROOT/.venv/bin/python" - <<'PY'
+import os, secrets
+from pathlib import Path
+root=Path(os.environ['EXACTCUT_DATA_ROOT'])
+state=root/'.web-state'
+state.mkdir(mode=0o700,exist_ok=True)
+password=state/'password'
+if not password.exists():password.write_text(secrets.token_urlsafe(32))
+password.chmod(0o600)
+for name in ['.web-state/batches','projects','feedback']:(root/name).mkdir(parents=True,exist_ok=True)
+print('Development: http://127.0.0.1:8792 ; password saved privately in .web-state/password')
+PY
+cd "$DEVELOPMENT_ROOT"
+exec "$DEVELOPMENT_ROOT/.venv/bin/python" -m exactcut.webserver

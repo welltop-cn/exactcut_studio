@@ -1,0 +1,8 @@
+{
+  "production_root": "/ABSOLUTE/PATH/exact-cut-fbbm-data",
+  "repository": "/ABSOLUTE/PATH/exact-cut-fbbm-dev",
+  "plist": "/ABSOLUTE/PATH/Library/LaunchAgents/com.example.exactcut.web.plist",
+  "label": "com.example.exactcut.web",
+  "port": 8791,
+  "staging_port": 8793
+}

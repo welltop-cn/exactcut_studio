@@ -1,0 +1,22 @@
+{
+  "created_at": "2026-10-08T11:25:10.390364+08:00",
+  "commit": "23e303c044c24fe7d0ffb2ab5a4dcf7ea74705ec",
+  "production_version": "v0.3.3-phase4",
+  "host": "macOS-15.7.4-arm64-arm-64bit-Mach-O",
+  "source_files": 114,
+  "working_tree_note": "Only docs/一期修复验收.md differs from HEAD; the package preserves it and includes the patch.",
+  "excluded": [
+    "real credentials",
+    "accounts and sessions",
+    "business task state",
+    "user spreadsheets",
+    "original and rendered videos",
+    "virtualenv and caches",
+    "private backup archives"
+  ],
+  "history_scan": {
+    "blobs_checked": 235,
+    "sensitive_path_candidates": 0,
+    "credential_pattern_candidates": "One synthetic user:pass@api.test fixture in tests/test_phase4_observations.py; reviewed. Pattern scan is not a guarantee."
+  }
+}

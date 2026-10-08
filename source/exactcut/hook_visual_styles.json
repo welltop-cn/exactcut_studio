@@ -1,0 +1,73 @@
+{
+  "version": 1,
+  "enabled_by_default": true,
+  "fallback_style": "default",
+  "near_tie_score_margin": 0.75,
+  "styles": {
+    "neon_reversal": {
+      "label_zh": "霓虹反转",
+      "keywords": [
+        "slept", "stranger", "forbidden", "taboo", "affair", "one night",
+        "intimate", "seduction", "desire", "heat", "lover", "unexpected",
+        "never expecting", "禁忌", "陌生人", "一夜", "暧昧", "欲望", "情人"
+      ]
+    },
+    "danger_warning": {
+      "label_zh": "危险警告",
+      "keywords": [
+        "danger", "threat", "kill", "chase", "weapon", "gun", "trapped",
+        "kidnap", "hostage", "stalk", "hunt", "revenge", "forced", "escape",
+        "危险", "威胁", "追杀", "枪", "武器", "绑架", "囚禁", "复仇", "逃跑"
+      ]
+    },
+    "ceo_luxury": {
+      "label_zh": "CEO 奢华",
+      "keywords": [
+        "boss", "ceo", "billionaire", "tycoon", "contract", "heir", "alpha",
+        "marriage", "office", "company", "executive", "董事长", "总裁", "老板",
+        "亿万富翁", "豪门", "契约", "继承人", "公司", "上司"
+      ]
+    },
+    "emotional_diary": {
+      "label_zh": "情绪日记",
+      "keywords": [
+        "betray", "heartbreak", "tear", "cry", "abandon", "rejected", "grief",
+        "pregnant", "baby", "divorce", "sacrifice", "alone", "hurt", "背叛",
+        "心碎", "眼泪", "哭", "抛弃", "拒绝", "怀孕", "孩子", "离婚", "牺牲"
+      ]
+    },
+    "cold_mystery": {
+      "label_zh": "冷感悬疑",
+      "keywords": [
+        "secret", "identity", "hidden", "unknown", "truth", "reveal", "mystery",
+        "mask", "missing", "stranger", "discover", "who is", "秘密", "身份", "隐藏",
+        "真相", "揭露", "神秘", "面具", "失踪", "陌生人", "发现"
+      ]
+    },
+    "raw_conflict": {
+      "label_zh": "原生冲突",
+      "keywords": [
+        "slap", "fight", "grab", "argument", "confront", "humiliation", "caught",
+        "attack", "push", "restrain", "corner", "expose", "打", "扇", "争吵", "抓",
+        "对峙", "羞辱", "撞见", "攻击", "推", "压制", "揭穿"
+      ]
+    }
+  },
+  "angle_bias": {
+    "forbidden_secret": {"neon_reversal": 2.0, "cold_mystery": 1.0},
+    "relationship_agency": {"neon_reversal": 1.5, "emotional_diary": 1.0},
+    "wrong_belief_reversal": {"cold_mystery": 1.5, "neon_reversal": 1.0},
+    "power_dynamic": {"ceo_luxury": 1.5, "raw_conflict": 1.0},
+    "revenge": {"danger_warning": 1.5, "raw_conflict": 1.0},
+    "betrayal": {"emotional_diary": 1.5, "raw_conflict": 0.75}
+  },
+  "mood_bias": {
+    "seductive": {"neon_reversal": 2.0},
+    "romantic": {"emotional_diary": 1.25, "neon_reversal": 0.75},
+    "dark": {"danger_warning": 1.0, "cold_mystery": 1.0},
+    "suspense": {"cold_mystery": 1.5},
+    "luxury": {"ceo_luxury": 2.0},
+    "emotional": {"emotional_diary": 1.5},
+    "conflict": {"raw_conflict": 1.5, "danger_warning": 0.75}
+  }
+}

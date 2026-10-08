@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PROJECT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+RUNTIME="$PROJECT_ROOT/.venv/bin/python"
+if [[ ! -x "$RUNTIME" ]]; then
+  echo "运行环境不存在，请先执行：$PROJECT_ROOT/bin/setup" >&2
+  exit 2
+fi
+exec "$RUNTIME" -m exactcut "$@"
+

@@ -1,0 +1,18 @@
+{
+  "current": {
+    "version": "v0.3.3-phase4",
+    "previous": "v0.3.2-phase3",
+    "release": "/Users/admin/Desktop/codex/exact-cut-fbbm-ops/releases/v0.3.3-phase4",
+    "commit": "23e303c044c24fe7d0ffb2ab5a4dcf7ea74705ec",
+    "at": "20261007-181732"
+  },
+  "active": [],
+  "health": {
+    "status": "ok",
+    "release": "v0.3.3-phase4",
+    "environment": "production",
+    "maintenance": false,
+    "worker_alive": true,
+    "worker_heartbeat_age_seconds": 0.5
+  }
+}

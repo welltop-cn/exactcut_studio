@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "render": {
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "video_codec": "libx264",
+    "audio_codec": "aac",
+    "audio_rate": 44100,
+    "audio_channels": 2,
+    "crf": 18,
+    "preset": "medium",
+    "hook_duration_ms": 4500,
+    "title_card_duration_ms": 1500,
+    "duration_tolerance_ms": 500,
+    "hook_style": "auto",
+    "hook_fade_out_ms": 1000,
+    "hook_layout_version": 7,
+    "hook_emphasis": "ai_semantic_v1"
+  },
+  "publish": {
+    "oss_prefix": "fb-bm-assets",
+    "feishu_initial_status": "待处理",
+    "wait_timeout_seconds": 1800,
+    "poll_seconds": 15
+  }
+}

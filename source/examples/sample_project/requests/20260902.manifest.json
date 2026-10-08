@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "drama_id": "101460",
+  "drama_title": "Kiss Me Before You Kill Me",
+  "business_date": "20260902",
+  "author": "张三",
+  "creator2": "AGENT",
+  "material_type": "typezxraw",
+  "source_workbook": "/Users/admin/Desktop/exact-cut-fbbm/examples/sample_project/requests/request.xlsx",
+  "requests": [
+    {
+      "request_id": "20260902-01",
+      "title_cn": "示例标题",
+      "hook_text": "Example Hook",
+      "structure": "插叙",
+      "notes": "",
+      "seq": 1,
+      "output_filename": "20260902_typezxraw_张三_AGENT_1_#101460#.mp4",
+      "timeline": [
+        {
+          "type": "episode",
+          "episode": "EP1",
+          "start_ms": 15000,
+          "end_ms": 124000,
+          "text": null,
+          "duration_ms": 109000
+        },
+        {
+          "type": "title_card",
+          "episode": null,
+          "start_ms": null,
+          "end_ms": null,
+          "text": "just a few minutes ago",
+          "duration_ms": 1500
+        }
+      ]
+    }
+  ]
+}

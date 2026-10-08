@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+REPOSITORY_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+exec "$REPOSITORY_ROOT/.venv/bin/python" "$REPOSITORY_ROOT/deploy/ops.py" "$@"

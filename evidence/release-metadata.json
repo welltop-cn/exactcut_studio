@@ -1,0 +1,32 @@
+{
+  "version": "v0.3.3-phase4",
+  "commit": "23e303c044c24fe7d0ffb2ab5a4dcf7ea74705ec",
+  "created_at": "20261007-181715",
+  "data_schema": {
+    "version": 1,
+    "readable": [
+      1
+    ]
+  },
+  "tests": "213 passed in 27.47s",
+  "python": "Python 3.11.15",
+  "ffmpeg": "ffmpeg version 8.1.1 Copyright (c) 2000-2026 the FFmpeg developers",
+  "external_dependencies": [
+    {
+      "path": "/opt/homebrew/Cellar/python@3.11/3.11.15_1/Frameworks/Python.framework/Versions/3.11/bin/python3.11",
+      "sha256": "6ea653217312720b1c08d95abe7d32e8843b5e1c3707b173bc128dd5c01e5450"
+    },
+    {
+      "path": "/opt/homebrew/Cellar/ffmpeg/8.1.1/bin/ffmpeg",
+      "sha256": "29a7b15655bd9dfe03c924700291acea7237802b93881b471fd4d715190fdc33"
+    },
+    {
+      "path": "/opt/homebrew/Cellar/ffmpeg/8.1.1/bin/ffprobe",
+      "sha256": "4349684f6ff56a09a42f3ca1506a4280c9dc6ec2d1872706d60546162c2f4b7c"
+    },
+    {
+      "path": "/Users/admin/.openclaw/agents/main/agent/workshop-skills/drama-material-hub/scripts/material_hub.py",
+      "sha256": "1ab6d769acc03272aefd9b14594c9886bc7e5bdd73ce4317482c6f66035c24fc"
+    }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "source_pytest": "213 passed in 23.69s",
+  "pytest_exit": 0,
+  "bundle_verify_exit": 0,
+  "js_syntax": [
+    {
+      "file": "source/exactcut/web/app.js",
+      "exit_code": 0
+    },
+    {
+      "file": "source/exactcut/web/helper.js",
+      "exit_code": 0
+    }
+  ],
+  "integration_and_controller_python_syntax_files": 5,
+  "seconds": 23.96,
+  "scope": "Packaged source tested using original development Python environment; no new machine, real external upload or long-term load validation."
+}

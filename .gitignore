@@ -1,0 +1,29 @@
+.DS_Store
+
+# Python environments and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Secrets and local runtime. Example configs stay tracked.
+.env
+.env.*
+!.env.example
+.web-state/
+projects/*
+!projects/README.md
+outputs/
+logs/
+tmp/
+feedback/*.json
+output/
+.work/
+.dev-state/
+
+# Local demo data and one-off auth artifacts
+local-demo/
+feishu-auth-qr.png

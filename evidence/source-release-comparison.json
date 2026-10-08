@@ -1,0 +1,458 @@
+[
+  {
+    "path": ".env.example",
+    "matches_release": true
+  },
+  {
+    "path": ".gitignore",
+    "matches_release": true
+  },
+  {
+    "path": "AGENTS.md",
+    "matches_release": true
+  },
+  {
+    "path": "README.md",
+    "matches_release": true
+  },
+  {
+    "path": "bin/dev-web",
+    "matches_release": true
+  },
+  {
+    "path": "bin/exactcut",
+    "matches_release": true
+  },
+  {
+    "path": "bin/ops",
+    "matches_release": true
+  },
+  {
+    "path": "bin/setup",
+    "matches_release": true
+  },
+  {
+    "path": "config/default.json",
+    "matches_release": true
+  },
+  {
+    "path": "deploy/data-schema.json",
+    "matches_release": true
+  },
+  {
+    "path": "deploy/enable_extended_episodes.py",
+    "matches_release": true
+  },
+  {
+    "path": "deploy/install.py",
+    "matches_release": true
+  },
+  {
+    "path": "deploy/ops.py",
+    "matches_release": true
+  },
+  {
+    "path": "deploy/tunnel_recovery.py",
+    "matches_release": true
+  },
+  {
+    "path": "docs/一期修复验收.md",
+    "matches_release": false
+  },
+  {
+    "path": "docs/开发发布与回滚.md",
+    "matches_release": true
+  },
+  {
+    "path": "docs/标准剪辑Excel_分秒毫秒填写说明.md",
+    "matches_release": true
+  },
+  {
+    "path": "docs/编导Excel转换规则.md",
+    "matches_release": true
+  },
+  {
+    "path": "docs/账户与制作内容隔离.md",
+    "matches_release": true
+  },
+  {
+    "path": "docs/项目暂停与归档.md",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/__init__.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/__main__.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/accounts.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/batch_control.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/catalog.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/cli.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/compiler.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/error_guidance.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/errors.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/help/production.json",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/hook_emphasis.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/hook_options.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/hook_presentation.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/hook_preview.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/hook_visual.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/hook_visual_styles.json",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/intake.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/llm_intake.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/material_download.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/media.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/models.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/naming.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/orchestrator.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/prepare.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/preview.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/production_helper.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/progress.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/publish.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/qc.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/renderer.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/runtime.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/safety.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/storage.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/timecode.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/timing_review.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/util.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/web/app.js",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/web/helper.js",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/web/index.html",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/web/login.html",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/webserver.py",
+    "matches_release": true
+  },
+  {
+    "path": "exactcut/workflow.py",
+    "matches_release": true
+  },
+  {
+    "path": "examples/sample_project/data/episodes/README.md",
+    "matches_release": true
+  },
+  {
+    "path": "examples/sample_project/project.json",
+    "matches_release": true
+  },
+  {
+    "path": "examples/sample_project/requests/20260902.manifest.json",
+    "matches_release": true
+  },
+  {
+    "path": "examples/sample_project/requests/request.xlsx",
+    "matches_release": true
+  },
+  {
+    "path": "examples/sample_project/source/videos/README.md",
+    "matches_release": true
+  },
+  {
+    "path": "pyproject.toml",
+    "matches_release": true
+  },
+  {
+    "path": "requirements.lock.txt",
+    "matches_release": true
+  },
+  {
+    "path": "requirements.txt",
+    "matches_release": true
+  },
+  {
+    "path": "templates/工作簿1_标准格式.xlsx",
+    "matches_release": true
+  },
+  {
+    "path": "templates/标准剪辑需求_模板.xlsx",
+    "matches_release": true
+  },
+  {
+    "path": "templates/标准剪辑需求_模板_v1.xlsx",
+    "matches_release": true
+  },
+  {
+    "path": "templates/标准剪辑需求_模板_v1.xlsx.inspect.ndjson",
+    "matches_release": true
+  },
+  {
+    "path": "templates/标准剪辑需求_模板_v2.xlsx",
+    "matches_release": true
+  },
+  {
+    "path": "templates/标准剪辑需求_模板_v2.xlsx.inspect.ndjson",
+    "matches_release": true
+  },
+  {
+    "path": "templates/标准剪辑需求_模板_v3.xlsx",
+    "matches_release": true
+  },
+  {
+    "path": "templates/标准剪辑需求_模板_v3.xlsx.inspect.ndjson",
+    "matches_release": true
+  },
+  {
+    "path": "templates/片段头尾_三种填写示例.xlsx",
+    "matches_release": true
+  },
+  {
+    "path": "templates/片段头尾_三种填写示例.xlsx.inspect.ndjson",
+    "matches_release": true
+  },
+  {
+    "path": "templates/精确剪辑_FBBM_填写模板.xlsx",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_batch_control.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_compiler.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_ffmpeg_policy.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_hook_emphasis.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_hook_visual.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_llm_intake.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_naming.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_oss_key.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_download.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_health.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_hook.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_naming.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_performance.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_preview.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_recovery.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_rework.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase1_timing.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase2_hook_workflow.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase2_preview_api.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase2_timing.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase3_hook_sampling.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase3_storage.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase3_timing.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_phase4_observations.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_production_helper.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_publish_ready.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_pure_cut.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_release_safety.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_split_intake.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_timecode.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_tunnel_recovery.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_webserver.py",
+    "matches_release": true
+  },
+  {
+    "path": "tests/test_workflow.py",
+    "matches_release": true
+  }
+]

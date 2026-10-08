@@ -1,0 +1,31 @@
+23e303c044c24fe7d0ffb2ab5a4dcf7ea74705ec 2026-10-07T18:16:44+08:00 Show honest execution progress and actionable failure guidance
+7a84505460b4568a5ef89fbeedb61d9eda072662 2026-10-07T14:45:04+08:00 docs: record phase3 safety acceptance and clarify resolved endpoints
+18f7ae8f971f0048340630d8c8fb85a7842f9f1b 2026-10-07T14:40:13+08:00 fix: sample the full Hook window across edits and shot boundaries
+b4c6fdc2ad3a19512e85c84a714aa077b98d29ca 2026-10-07T14:39:08+08:00 fix: bound base-cut caches and guard rendering disk space
+9603f1c0861d6c7f1ba263c070894a69edb61c44 2026-10-07T14:34:07+08:00 fix: resolve source endpoints in time review without blocking polling
+d00e2d0fb0dc40b60c3b49ab8d60981ea78f063c 2026-10-07T13:15:14+08:00 fix: back up engineering files without copying production materials
+83e90a151fddbe2a1c864cc4c357096f736ddada 2026-10-07T12:36:09+08:00 fix: ground AI emphasis with explicit budgets and one bounded correction
+cdef49df0852230aafba5bc2b6d051323d236b90 2026-10-07T12:32:47+08:00 feat: approve Hook previews and reuse verified cuts for Hook-only remakes
+0101caba1403325f2b6f8dfc60c0f4bf8e093b23 2026-10-07T12:31:49+08:00 fix: retry transient Hook AI errors once and preserve permanent failures
+0b087d0f0699cce10e82e6f279e9d0811e5483e1 2026-10-07T12:31:49+08:00 fix: explain parsed segment timing without guessing episode endings
+9e66e6da675c697d13865b9bc68b7ee003c80570 2026-10-07T11:37:17+08:00 feat(BUG-02): use grounded AI semantic spans for Hook emphasis
+0e8b4d63a18216438edc24ec245d6c7550544ada 2026-10-07T11:22:25+08:00 fix(BUG-02): allow three-line Hooks within measured safe area
+3aa3a45377454d91360dbf28bb0a2fafc7a48bc1 2026-10-06T19:44:24+08:00 Recover truncated downloads without losing damaged originals or overwriting valid source media
+6f4c66f9fb09f3a1cd9de541e6aada63924cf0c9 2026-10-06T19:36:14+08:00 Document phase-one priorities, historical reproductions, acceptance and rollback
+fed441adb71df83d682053a791186b32b09b14c7 2026-10-06T19:35:15+08:00 Adopt jobs spawned just before restart without replaying confirmed work
+888313e87ff49f84a635ab7d467d9eeedf9132c1 2026-10-06T19:33:48+08:00 Reject incomplete source files without a readable video track before rendering
+bcd3b76a65ac81a5f2a3ced275a89e2b9acadaf7 2026-10-06T19:30:06+08:00 Fix historical BUG-02 cases with lossless two-line reflow and bounded compact sizing
+5dcb2004fc7ee590c4c1f0f40bf09a824feb511e 2026-10-06T19:28:08+08:00 Improve BUG-09 by reusing checked local media and hashing repeated sources once per batch
+e1448856431c051de4dd7d251aa8d52dcedf0d83 2026-10-06T19:27:29+08:00 Ensure download cleanup terminates subordinate processes after Hub exit
+a2bf099c7539f233dc16f3676e4f11e07d9d63d2 2026-10-06T19:27:29+08:00 Fix BUG-10 by exposing stalled runner health independently of HTTP availability
+21bfbb393a8f4997f3936eb1f1354570cafa5b59 2026-10-06T19:26:04+08:00 Fix BUG-08 with checked streaming previews separate from publishable masters
+7545ed67708de59637488f55129130072a74ab56 2026-10-06T19:23:42+08:00 Fix BUG-03 with linked repair drafts that preserve original tasks and assets
+c98f66156d458bbc7ecbb3aa1fcf4d2dfe6b2879 2026-10-06T19:22:04+08:00 Fix BUG-04 with locked sequence reservations across drafts and confirmed materials
+97006fb0ec48bf02e5d929db28846c53137922fa 2026-10-06T19:20:19+08:00 Fix BUG-02 by validating complete Hook copy before confirming production
+2aa04df37ff0fcb0ec5ff78dc798d00f79234e34 2026-10-06T19:19:26+08:00 Guard BUG-01 by grounding explicit Excel times and checking each rendered segment
+4523f53f1ae1b03e272184213bcc1ca666591721 2026-10-06T19:19:26+08:00 Fix BUG-05 and BUG-07 with recoverable queue records and submission receipts
+ac4c411623b8e5cad3ac38a18887c5c5034bbe9b 2026-10-06T19:19:26+08:00 Fix BUG-06 with bounded download retries and required-source validation
+4fb177350d4557b9b102536a809c1855fbde79b5 2026-10-06T18:22:52+08:00 Record reversible tunnel recovery for VPN fake DNS and validate connector readiness
+9687a544079a05b62926828bcabb671c8d7bb1b8 2026-10-06T18:08:48+08:00 Validate historical batches and preview in staging and record build failures
+2aa5064066e7a6e177f0b51f6af991274e15fdea 2026-10-06T18:05:59+08:00 Add isolated environments, verified releases, consistent backups and data-preserving rollback
+b4442da982ca541180c0582d0a707230deced3f2 2026-10-06T17:53:15+08:00 Archive production source baseline and installed dependency versions

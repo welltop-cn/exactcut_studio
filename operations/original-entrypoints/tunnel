@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+set -euo pipefail
+export EXACTCUT_OPS_ROOT=/Users/admin/Desktop/codex/exact-cut-fbbm-ops
+exec /Users/admin/Desktop/codex/exact-cut-fbbm-ops/releases/v0.1.2-infra/.venv/bin/python /Users/admin/Desktop/codex/exact-cut-fbbm-ops/controller/tunnel_recovery.py "$@"
