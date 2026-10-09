@@ -30,12 +30,17 @@ def test_publication_handoff_failure_can_retry_same_verification(api, workspace,
 
 
 @pytest.mark.parametrize('legacy', [False, True])
-def test_restart_repairs_orphaned_verification_handoff(api, workspace, legacy):
+@pytest.mark.parametrize('prior_recovery', [False, True])
+def test_restart_repairs_orphaned_verification_handoff(api, workspace, legacy, prior_recovery):
     batch, path, rid, video, record, entry = uncertain(workspace)
     w.queue_verify_delivery(batch['id'], rid, record['output_sha256'])
     if not legacy:
         publications = read_json(path / 'publications.json')
         publications[rid]['verification_queue'] = {'job_id': 'f' * 32, 'previous': entry}
+        write_json_atomic(path / 'publications.json', publications)
+    if prior_recovery:
+        publications = read_json(path / 'publications.json')
+        publications[rid]['status'] = 'publish_failed'
         write_json_atomic(path / 'publications.json', publications)
     web.recover_jobs(scheduler=True)
     repaired = read_json(path / 'publications.json')[rid]

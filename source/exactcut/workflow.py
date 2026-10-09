@@ -689,7 +689,7 @@ def recover_verification_queue(jobs, *, batch_id=None):
             changed = repaired = False
             for rid, entry in publications.items():
                 transaction = entry.get('verification_queue')
-                legacy = (entry.get('status') == 'fbbm_queued' and entry.get('verification_only')
+                legacy = (entry.get('status') in {'fbbm_queued', 'publish_failed'} and entry.get('verification_only')
                           and entry.get('intent', {}).get('phase') == 'verification')
                 if not transaction and not legacy: continue
                 matched = any(job.get('batch_id') == path.name and job.get('request_id') == rid

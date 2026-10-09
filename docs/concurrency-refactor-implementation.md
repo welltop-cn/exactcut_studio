@@ -438,3 +438,46 @@ TDD：`test_round2_evidence.py` 三条主回归先 3 failed：失败 future 永�
 旧线程 monkeypatch 在 spawn 子进程不继承，因此将原慢摘要/编译/变异回归改成真实独立进程 + 文件事件；保留 ≥1GiB 正片与另一用户 0.8s 内入队、同 batch fence、退出执行器释放 lane、无 backlog、身份变化拒绝等断言。新超时测试在不释放 gate 的情况下核对原 PID 已不存在并成功启动新读取，避免仅从字典删除“假回收”。计时回调与 close 通过独立生命周期锁串行化。
 
 聚焦 28 passed / 7.34s；macOS 完整 646 passed / 86.92s，退出0，隔离命令同上；`git diff --check` 通过。前一次完整645 passed后增补孤儿超时测试再完整重跑，未以较早结果替代最后验证。生产实际磁盘吞吐、RSS、线程和供应商响应仍未执行，等待最终复审及编排者验收。
+
+
+### R2-C 补充 / P1-3：已被旧扫描改成失败的孤儿核实
+
+最终自查按历史恢复代码补第二个启动窗口：第 1 轮 recover_jobs 可能已将 history/verification intent 孤儿从 fbbm_queued 改为 publish_failed。TDD 扩展启动回归先 1 failed / 3 passed，再将 legacy 修复条件兼容这个状态；仍要求保存的 verification_only 和 verification phase，不能把普通上传失败放行。原 intent/pending、只读原对象、普通上传拒绝约束保留。
+
+聚焦7 passed /4.08s；相同 macOS 独立临时数据根完整648 passed /88.46s，`git diff --check` 通过。此补充单独提交，不混入证据读取改造。
+
+
+### 本轮最终验证与干净版本
+
+本机 macOS 15.8.1 arm64 / Python3.12.12：完整648 passed /88.46s，退出0。独立 `git clone --no-hardlinks` 已提交版本 `63491d48c58f4b3b5c16123b7b2cf2cdcc371b38`：完整648 passed /87.93s，退出0；clone测试前后 `git status --porcelain` 均空，显式核对导入来自clone/source，清除继承凭据与配置，使用另一临时数据根。clone检查器首次路径断言遇到macOS `/var` 与 `/private/var` 别名，在运行pytest前退出；改为 resolve() 后执行上面的成功验证，没有隐藏测试失败。
+
+本段证据是最后提交的纯文档 amend，source tree保持 `8a44a3dd8571cbd148617db5761af4348bb7494b`，与已验证clone完全相同。`git diff --check` 通过；原三前端合并 diff SHA256仍为 `bd5e9ad1508e657942fdff60de8d7974c43cc32ec564d7ce7a962f0aba81ad8d`。其他原未提交文档和原未追踪计划/审查文件均未暂存；主工作区保留这些用户改动，发布应从提交版本的独立干净工程执行。
+
+六个聚焦提交：R2-A `89fa99a`、R2-B `16d4922`、R2-C `aa98342`、R2-D `97eff55`、R2-E `c605f1b`、R2-C兼容补充（最后提交）。每组包含对应TDD及完整测试记录。未决事项是第三轮最终复审与编排者的生产真实环境验收；本会话未部署、未真实上传。保守回退仍先排空阶段任务/活动子进程/待核实意图，再用发布管理器切版本，保留现有业务数据；当前代码上容量全1可保守运行，不能用 enabled=false 绕过旧版本协议守卫。
+
+干净clone复现命令（从开发仓库根执行；只操作本地临时目录）：
+
+```sh
+/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+import os, subprocess, tempfile
+from pathlib import Path
+python = '/Users/matao/miniconda3/envs/py3.12/bin/python3.12'
+repository = Path.cwd()
+commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+with tempfile.TemporaryDirectory(prefix='exactcut-round2-clean-') as folder:
+    clone = Path(folder) / 'repository'
+    subprocess.run(['git', 'clone', '--no-hardlinks', str(repository), str(clone)], check=True)
+    subprocess.run(['git', 'checkout', '--detach', commit], cwd=clone, check=True)
+    assert not subprocess.check_output(['git', 'status', '--porcelain'], cwd=clone)
+    prefixes = ('EXACTCUT_', 'OPENAI_', 'ALIYUN_', 'FEISHU_', 'CF_ADS_', 'GEMINI_', 'GOOGLE_API_')
+    env = {k: v for k, v in os.environ.items() if not k.startswith(prefixes)}
+    data = Path(folder) / 'data'; data.mkdir()
+    source = clone / 'source'
+    env.update(EXACTCUT_DATA_ROOT=str(data), EXACTCUT_ENVIRONMENT='development', PYTHONPATH=str(source))
+    imported = subprocess.check_output([python, '-c', 'import exactcut; print(exactcut.__file__)'], cwd=source, env=env, text=True).strip()
+    assert Path(imported).resolve().is_relative_to(source.resolve())
+    code = subprocess.call([python, '-m', 'pytest', '-o', 'addopts=', '-q'], cwd=source, env=env)
+    assert not subprocess.check_output(['git', 'status', '--porcelain'], cwd=clone)
+    raise SystemExit(code)
+PY
+```
