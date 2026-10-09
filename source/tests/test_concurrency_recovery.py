@@ -221,7 +221,7 @@ def test_alive_process_is_adopted_while_owned_executor_is_alive(runner):
 
 def test_legacy_same_project_serializes_with_render_capacity_two(runner, monkeypatch):
     from exactcut import concurrency
-    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 2}})
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 2, 'max_active_children': 2}})
     for key in ('a', 'b'):
         job = queued(key, 'render'); job.update(project='123456'); web.save(job)
     pending, owned = [], {}

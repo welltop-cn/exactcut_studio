@@ -39,6 +39,8 @@ def test_launch_failure_releases_slot_and_next_job_runs(workspace, monkeypatch):
     web.save(first); web.save(second)
     web.WORK.put((first, first['command'])); web.WORK.put((second, second['command']))
     pending, owned = [], {}
+    # Popen below is a launcher stub, so process discovery must use the same fake surface.
+    monkeypatch.setattr(batch_control, 'PROCESSES', batch_control.FakeProcessTable({}))
     monkeypatch.setattr(web.subprocess, 'Popen', Mock(side_effect=[OSError('fail'), Mock(poll=lambda: None)]))
     web.worker_tick(pending, owned)
     assert json.loads((web.JOBS/(first['id']+'.json')).read_text())['status'] == 'failed'

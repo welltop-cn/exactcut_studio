@@ -119,6 +119,7 @@ def batch_response(batch_id, job=None):
                                                    plan.get('required', []), prefetch_jobs))
     if job:
         result['submission'] = {key: job.get(key) for key in ('id', 'action', 'status', 'created', 'request_id')}
+        result['submission']['queue_position'] = job_response(job)['queue_position']
     return result
 
 
@@ -335,6 +336,14 @@ def recover_jobs(*, enqueue=False, owned=None):
             continue
         batch = job.get('batch_id')
         if job['id'] in owned:
+            if batch and (workflow.BATCHES / batch / 'draft.json').exists():
+                path = workflow.BATCHES / batch
+                pid, token = batch_control.resident_identity(job, owned[job['id']][1])
+                recorded = batch_control.recorded_children(path)
+                if not any(child.get('pid') == pid and child.get('process_token') == token for child in recorded):
+                    child = {**job, 'pid': pid, 'pgid': pid, 'process_token': token}
+                    if batch_control.child_state(child) not in {None, 'Z'}:
+                        batch_control.remember_child(path, {**child, 'lane': concurrency.lane(job)})
             continue
         if job.get('status') == 'completed' and job.get('phase') in {'fetch', 'upload'}:
             successor_id = uuid.uuid5(uuid.NAMESPACE_URL, job['id'] + ':' + ('render' if job['phase'] == 'fetch' else 'poll')).hex
@@ -453,24 +462,29 @@ def recover_jobs(*, enqueue=False, owned=None):
 
 def fair_pending(pending):
     """Owner FIFO with a durable round-robin cursor across worker ticks."""
-    groups = {}
-    for entry in sorted(pending, key=lambda item: item[0].get('created', float('inf'))):
+    def owner_for(entry):
         job = entry[0]
         if job.get('batch_id'):
-            owner = accounts.owner(workflow.folder(job['batch_id']))
-        else:
-            owner = job.get('owner') or job.get('actor') or 'admin'
-        groups.setdefault(owner, []).append(entry)
-    owners = list(groups)
-    cursor_file = JOBS.parent / 'scheduler.json'
-    cursor = read_json(cursor_file).get('owner') if cursor_file.exists() else None
-    if cursor in owners:
-        offset = owners.index(cursor) + 1
-        owners = owners[offset:] + owners[:offset]
-    while any(groups.values()):
-        for owner in owners:
-            if groups[owner]:
-                yield owner, groups[owner].pop(0)
+            try:
+                path = workflow.folder(job['batch_id'])
+            except ValueError:
+                # Old queued records can outlive a deleted batch in read responses.
+                pass
+            else:
+                return accounts.owner(path)
+        return job.get('owner') or job.get('actor') or 'admin'
+    entries = sorted(pending, key=lambda item: (item[0].get('created', float('inf')), item[0]['id']))
+    yield from concurrency.owner_round_robin(entries, owner_for, JOBS.parent / 'scheduler.json')
+
+
+def job_response(job):
+    """Queue rank is fair traversal priority, including currently blocked jobs."""
+    position = None
+    if job.get('status') == 'queued':
+        pending = [(item, item.get('command')) for item in stored_jobs() if item.get('status') == 'queued']
+        position = next((index for index, (_, entry) in enumerate(fair_pending(pending), 1)
+                         if entry[0]['id'] == job['id']), None)
+    return {**job, 'queue_position': position}
 
 
 def resource_usage(owned=None):
@@ -479,29 +493,29 @@ def resource_usage(owned=None):
     counts['render'] = len(INLINE_RENDERS)
     batches = set()
     legacy_projects = {job.get('project') for job, _, _ in owned.values() if not job.get('batch_id') and job.get('project')}
-    tokens = set(INLINE_RENDERS)
-    for job, _, _ in owned.values():
-        token = job.get('process_token') or job['id']
-        tokens.add(token)
-        if batch_control.child_state(job) != 'T':
+    residents = {(None, token) for token in INLINE_RENDERS}
+    for job, process, _ in owned.values():
+        identity = batch_control.resident_identity(job, process)
+        if identity not in residents:
             counts[concurrency.lane(job)] += 1
+        residents.add(identity)
         if job.get('batch_id'):
             batches.add(job['batch_id'])
     for path in workflow.BATCHES.glob('*'):
         for child in batch_control.own_live_children(path):
             batches.add(path.name)
-            token = child['process_token']
-            if token not in tokens and batch_control.child_state(child) != 'T':
+            identity = batch_control.resident_identity(child)
+            if identity not in residents:
                 counts[concurrency.lane(child)] += 1
-            tokens.add(token)
+            residents.add(identity)
     for job in stored_jobs():
         if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
             if job.get('project'): legacy_projects.add(job['project'])
-            token = job['process_token']
-            if token not in tokens and batch_control.child_state(job) != 'T':
+            identity = batch_control.resident_identity(job)
+            if identity not in residents:
                 counts[concurrency.lane(job)] += 1
-            tokens.add(token)
-    return counts, tokens, batches, legacy_projects
+            residents.add(identity)
+    return counts, residents, batches, legacy_projects
 
 
 def admit_hook_preview(project):
@@ -559,24 +573,28 @@ def worker_tick(pending, owned):
             if job.get('batch_id') and not (workflow.BATCHES / job['batch_id'] / 'draft.json').exists():
                 pending.remove(entry)
                 WORK.task_done()
+        # Adoption must register crash-window roots before any SIGCONT decision.
+        recover_jobs(owned=owned)
         external_active = {key: 0 for key in concurrency.LANES}
         external_active['render'] = len(INLINE_RENDERS)
-        external_tokens = set()
-        for job, _, _ in owned.values():
-            if not job.get('batch_id') and batch_control.child_state(job) != 'T':
-                external_active[concurrency.lane(job)] += 1
-                external_tokens.add(job.get('process_token') or job['id'])
+        external_identities = set()
+        for job, process, _ in owned.values():
+            if not job.get('batch_id'):
+                identity = batch_control.resident_identity(job, process)
+                if identity not in external_identities:
+                    external_active[concurrency.lane(job)] += 1
+                external_identities.add(identity)
         for job in stored_jobs():
             if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
-                token = job['process_token']
-                if token not in external_tokens and batch_control.child_state(job) != 'T':
+                identity = batch_control.resident_identity(job)
+                if identity not in external_identities:
                     external_active[concurrency.lane(job)] += 1
-                external_tokens.add(token)
+                external_identities.add(identity)
         if any(external_active.values()):
-            batch_control.reconcile(workflow.BATCHES, external_active=external_active)
+            batch_control.reconcile(workflow.BATCHES, external_active=external_active,
+                                    cursor_file=JOBS.parent / 'scheduler.json')
         else:
-            batch_control.reconcile(workflow.BATCHES)
-        recover_jobs(owned=owned)
+            batch_control.reconcile(workflow.BATCHES, cursor_file=JOBS.parent / 'scheduler.json')
         while True:
             try:
                 entry = WORK.get_nowait()
@@ -651,7 +669,7 @@ def worker_tick(pending, owned):
                 if identity and batch:
                     batch_control.remember_child(workflow.folder(batch), identity)
                 counts[resource] += 1
-                tokens.add(token)
+                tokens.add(batch_control.resident_identity(job, process))
                 if batch:
                     batches.add(batch)
                 elif job.get('project'):
@@ -868,7 +886,7 @@ class Handler(BaseHTTPRequestHandler):
                                  'videos': len(list((p / 'source/videos').glob('*.mp4'))),
                                  'indexes': len(list((p / 'data/episodes').glob('*.video.json'))),
                                  'inputs': [f.name for f in sorted((p / 'requests').glob('*.xlsx'))]})
-            jobs = [json.loads(p.read_text()) for p in JOBS.glob('*.json')]
+            jobs = [job_response(job) for job in stored_jobs()]
             catalog = load_catalog()
             return self.respond(200, {'projects': projects, 'catalog': catalog['dramas'], 'catalog_updated': catalog['updated'], 'jobs': sorted(jobs, key=lambda j: j['created'], reverse=True)[:100]})
         match = re.fullmatch(r'/api/jobs/([0-9a-f]{32})/log', self.path)
@@ -1172,7 +1190,7 @@ class Handler(BaseHTTPRequestHandler):
                     job['command'] = cmd
                     save(job)
                     WORK.put((job, cmd))
-                return self.respond(202, job)
+                return self.respond(202, job_response(job))
             if self.path == '/api/upload':
                 project = project_path(data.get('project'))
                 content = base64.b64decode(data['content'], validate=True)
@@ -1198,7 +1216,8 @@ def main():
     env_file = project_env_file()
     if env_file.is_file() or os.environ.get('EXACTCUT_ENV_FILE'):
         load_env_file(env_file)
-    concurrency.settings()
+    limits = concurrency.settings()
+    logging.warning('Effective concurrency settings: %s', json.dumps(limits, sort_keys=True))
     base_path = web_base_path()
     claim_data_root()
     worker_enabled = os.environ.get('EXACTCUT_WORKER_ENABLED', '1') == '1'

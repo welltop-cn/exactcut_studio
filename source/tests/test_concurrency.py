@@ -11,7 +11,7 @@ from test_workflow import workspace, imported, complete_asset
 @pytest.fixture
 def runner(tmp_path, monkeypatch):
     from exactcut import concurrency
-    monkeypatch.setattr(concurrency, 'load_config', lambda: {})
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'max_active_children': 4}})
     monkeypatch.setattr(workflow, 'BATCHES', tmp_path / 'batches'); workflow.BATCHES.mkdir()
     monkeypatch.setattr(web, 'JOBS', tmp_path / 'jobs'); web.JOBS.mkdir()
     monkeypatch.setattr(web, 'WORK', queue.Queue())
@@ -44,7 +44,7 @@ def test_full_fetch_lane_does_not_block_render(runner):
 
 def test_capacity_two_renders_and_owner_fairness(runner, monkeypatch):
     from exactcut import concurrency
-    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 2}})
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 2, 'max_active_children': 2}})
     queued('a', 'render', owner='alice'); queued('b', 'render', owner='alice'); queued('c', 'render', owner='bob')
     pending, owned = [], {}
     try:

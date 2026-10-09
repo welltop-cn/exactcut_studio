@@ -188,6 +188,18 @@ def child_state(child, table=None):
     return live['state']
 
 
+def resident_identity(job, process=None):
+    """Count physical roots separately, resolving the launch window before PID save."""
+    token = job.get('process_token') or job['id']
+    pid = job.get('pid')
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        pid = getattr(process, 'pid', None)
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        found = PROCESSES.find(token) if valid_token(token) else None
+        pid = found['pid'] if found else None
+    return pid, token
+
+
 def change(path, action):
     with LOCK:
         control = read(path)
@@ -247,15 +259,18 @@ def present(path, state):
     return data
 
 
-def reconcile(batch_root, table=None, *, external_active=None):
+def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None):
     """Resume stopped executors only within their lane and batch limits."""
-    from .concurrency import lane, settings
+    from .concurrency import lane, settings, owner_round_robin
+    from .accounts import owner
     table = PROCESSES if table is None else table
     limits = settings()
+    cursor_file = cursor_file or batch_root.parent / 'scheduler.json'
     with LOCK:
         counts = {key: (external_active or {}).get(key, 0) for key in ('fetch', 'render', 'upload', 'poll')}
         active_batches = set()
         waiting = []
+        resident_identities = set()
         for path in sorted(batch_root.glob('*')):
             if not path.is_dir() or not (path / 'runtime.json').exists():
                 continue
@@ -271,8 +286,11 @@ def reconcile(batch_root, table=None, *, external_active=None):
                 if (control.get('paused') or control.get('archived')) and state != 'T':
                     if signal_identity(child, signal.SIGSTOP, table):
                         state = 'T'
-                if state != 'T':
+                identity = (child['pid'], child['process_token'])
+                if identity not in resident_identities:
                     counts[lane(child)] += 1
+                    resident_identities.add(identity)
+                if state != 'T':
                     active_batches.add(path)
                 elif not control.get('paused') and not control.get('archived'):
                     waiting.append((path, child))
@@ -281,19 +299,18 @@ def reconcile(batch_root, table=None, *, external_active=None):
                     control[key] = [child for child in control.get(key, [])
                                     if (child.get('pid'), child.get('process_token')) not in stale]
                 write(path, control)
-        for path, child in waiting:
+        for batch_owner, (path, child) in owner_round_robin(waiting, lambda entry: owner(entry[0]), cursor_file):
             resource = lane(child)
-            if path in active_batches or counts[resource] >= limits[resource]:
+            if path in active_batches or counts[resource] > limits[resource]:
                 continue
-            if not limits['enabled'] and sum(counts.values()):
-                continue
-            if sum(counts.values()) >= limits['max_active_children']:
+            total = limits['max_active_children'] if limits['enabled'] else 1
+            if sum(counts.values()) > total:
                 continue
             if signal_identity(child, signal.SIGCONT, table):
-                counts[resource] += 1
                 active_batches.add(path)
                 control = read(path)
                 control['suspended'] = [item for item in control.get('suspended', [])
                                         if item.get('process_token') != child['process_token']]
                 write(path, control, '已继续执行')
+                write_json_atomic(cursor_file, {'owner': batch_owner})
         return bool(sum(counts.values()))

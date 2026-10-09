@@ -1,6 +1,7 @@
 """Optional lane limits; legacy jobs retain conservative resource mappings."""
 import math
 from .util import load_config
+from .util import read_json
 
 LANES = ('fetch', 'render', 'upload', 'poll')
 
@@ -31,7 +32,7 @@ def settings():
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError('concurrency.' + name + ' 必须为正整数')
         capacities[name] = value
-    total = config.get('max_active_children', sum(capacities.values()))
+    total = config.get('max_active_children', 1)
     if not isinstance(total, int) or isinstance(total, bool) or total < 1:
         raise ValueError('concurrency.max_active_children 必须为正整数')
     previews = config.get('hook_previews', 1)
@@ -50,3 +51,19 @@ def lane(job):
     if value == 'publish':
         return 'upload'
     return 'render'
+
+
+def owner_round_robin(entries, owner_for, cursor_file):
+    """Keep input FIFO within owners, starting after the last admitted owner."""
+    groups = {}
+    for entry in entries:
+        groups.setdefault(owner_for(entry), []).append(entry)
+    owners = list(groups)
+    cursor = read_json(cursor_file).get('owner') if cursor_file.exists() else None
+    if cursor in owners:
+        offset = owners.index(cursor) + 1
+        owners = owners[offset:] + owners[:offset]
+    while any(groups.values()):
+        for owner in owners:
+            if groups[owner]:
+                yield owner, groups[owner].pop(0)

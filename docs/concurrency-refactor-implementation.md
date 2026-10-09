@@ -19,9 +19,50 @@
 
 基线完整测试在上述隔离方式下退出码 0。新增行为用 fixtures、临时数据根和模拟外部客户端验证，不调用真实 OSS、飞书或 FBBM。
 
+可复现的 macOS 完整测试命令（在仓库 `source/` 下执行）：
+
+```sh
+/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+import os, subprocess, tempfile
+with tempfile.TemporaryDirectory(prefix='exactcut-concurrency-tests-') as root:
+    prefixes = ('EXACTCUT_', 'OPENAI_', 'ALIYUN_', 'FEISHU_',
+                'CF_ADS_', 'GEMINI_', 'GOOGLE_API_')
+    env = {key: value for key, value in os.environ.items()
+           if not key.startswith(prefixes)}
+    env.update(EXACTCUT_DATA_ROOT=root, EXACTCUT_ENVIRONMENT='development')
+    raise SystemExit(subprocess.call([
+        '/Users/matao/miniconda3/envs/py3.12/bin/python3.12',
+        '-m', 'pytest', '-o', 'addopts=', '-q'
+    ], env=env))
+PY
+```
+
+初始隔离基线为 364 passed，退出码 0。未隔离时，开发数据根中的环境标记会影响 production 模拟；另一次给整个测试进程固定 `EXACTCUT_SOURCE_ROOT` 后，正片缓存跨 fixture 污染。分别采用临时数据根、清理继承环境以及取消固定源根后通过，未删除用户数据、未放宽环境保护，也未隐藏或跳过失败。排障证据同步保存在工作区外的 `troubleshooting-runbooks/runbooks/exactcut/linux-portability.md`。
+
 ## 提交与测试证据
 
 实施期间按三个步骤独立提交。
+
+测试先行的历史证据：先执行新行为回归观察预期失败，再做最小实现和回归；并非每项补充兼容性用例都曾失败，以下仅列实际观察的 RED，不将直接 GREEN 的边界覆盖冒充 RED。
+
+| 步骤 | 实施前实际 RED | 修复后专项 GREEN | 完整测试提交 |
+| --- | --- | --- | --- |
+| 1 | `pytest tests/test_concurrency.py -q`：7 failed / 1 passed；缺 lane、阶段入口与后继、延迟 poll 未生效。缓存源 render、enabled 类型校验、非 batch 恢复及交付失败重试分别补失败复现 | 首轮 25 passed；后续针对性修复 18、36、38 passed | `e142997`，386 passed |
+| 2 | 首轮 `test_concurrency_recovery.py`：8 failed；后续 owned/启动窗口、回执持久化、SIGHUP 与飞书实际过滤/回读分别观察 2、1、3、5 个失败 | 对应修复后专项 30、35、66、53、85 passed；最终交付组 88 passed | `fb9efa2`，425 passed |
+| 3 | 资源组首轮 12 failed；AI 入口/线程作用域 5 failed；预览预约 2 failed；单令牌重入、Gemini 处理循环、诊断/纠正检查点和缓存兼容性均先复现失败 | 分组 13、18、21、146 passed；最终诊断/缓存相关 86 passed | `00e213f`，471 passed |
+
+以上专项命令均使用指定 Python，在 `source/` 下运行对应测试文件。原有同 batch 串行等已经成立的约束作为兼容性 GREEN 保留。本轮审查新增行为继续逐项先 RED，再最小修复转 GREEN，随后完整测试；各组证据在下文补记。
+
+单元验收映射（每项均用临时数据或 fake process/client，可独立运行）：
+
+| 必须覆盖的单元 | 回归位置 |
+| --- | --- |
+| lane 容量准入、全容量 1、暂停仍占名额 | `source/tests/test_concurrency.py`、`source/tests/test_round1_scheduler.py` |
+| 阶段推进、确定性后继与 `not_before` 重入 | `test_concurrency.py::test_fetch_completion_queues_one_render_and_poll_reschedules`、`test_delayed_poll_survives_recovery_without_interruption` |
+| 同 batch / 同旧项目串行 | `test_concurrency.py::test_same_batch_serial_including_stopped_executor`、`test_concurrency_recovery.py::test_legacy_same_project_serializes_with_render_capacity_two` |
+| 磁盘同盘归并、预约释放、重启重建 | `source/tests/test_concurrency_recovery.py` 的 reservations、launch failure、device remap 用例 |
+| 进程身份认领、owned 共存、断点重排 | `source/tests/test_phase1_recovery.py`、`source/tests/test_concurrency_recovery.py` 的 adoption、dead stage、SIGHUP 用例 |
+| AI 共享配额、处理等待、缓存重入、旧 CLI 等待 | `source/tests/test_step3_resources.py` |
 
 第 1 步：新增 lane 准入、owner 公平轮转、同 batch 串行、fetch/render 与 upload/poll 阶段推进、延迟 poll、按 lane 恢复。保留旧 CLI 与函数入口。新增回归覆盖 lane 满不阻塞其他 lane、双 render、跨 tick 公平、暂停进程、共享源缓存衔接、poll 超时和失败后人工重试。
 
@@ -48,6 +89,22 @@ Hook 第一次回答不合规时，仅保存可信的纠正标记，配额重排
 暂停执行器计入 resident 总量，恢复已有执行器不申请额外进程位置；交互预览共享 render/总量预算，并预约临时与项目文件系统空间，worker 恢复扫描保留活预览预约。助手模型调用移出全局修改锁；预览和表格解析资源忙返回 429 与 `not_before`，助手沿用 `mode=busy` 响应并附可重试时间，不等待令牌。无效并发配置在数据和账号初始化之前拒绝。
 
 第 3 步最终完整测试：471 passed，60.80 秒，退出码 0（独立临时数据根）；`git diff --check` 通过。新增资源测试覆盖真实多输入 FFmpeg、跨进程令牌抢占与重启/时钟回拨、所有 AI 入口配额耗尽、暂停 resident 准入与恢复、交互预览预约保留、旧任务等待资源、Gemini 处理检查点、多模型预检、纠正轮次及损坏缓存重建。规范审查与最终三步集成质量审查均通过。未执行真实生产并发性能/内存峰值标定，供应商实际额度尚未核验。
+
+## 第 1 轮审查修复（2026-10-10）
+
+本轮规范为 `docs/concurrency-refactor-grok-review.md` 与编排者核对后的十条决定。逐组先写失败回归，再实现、独立规范/质量审查、完整测试和独立提交；不部署生产。生产验收由编排者在本轮修复后的已提交版本执行，以下生产栏仍为“未执行”。
+
+### A：暂停名额、保守缺省与公平可见性（#1、#6、#8）
+
+非僵尸的暂停执行器计入 lane 和 resident 总量；恢复已驻留执行器不重复申请名额，但实际驻留数已超过 lane 或总量时拒绝继续。按 `(pid, process_token)` 去重，兼容 spawn 后 PID 尚未保存的身份查找。恢复和准入共用持久 owner 轮转游标。生产 poll 改为 4，仍受总量 8 约束；默认总量保持 1。
+
+`settings()` 自身缺省总量由 lane 之和改为 1；进程启动在初始化数据/账号之前记录实际 `enabled`、各 lane、resident 总量、预览与 AI 设置。代码证据澄清：`util.load_config()` 会合并 `default.json`，因此实际 runtime 缺 concurrency 或只有 lane 时原本已继承总量 1；审查中“现网必然默认总量 4”的推断不成立。函数内部 fallback 确有 4 的缺陷，本轮修复并独立覆盖两层读取。
+
+只读 `queue_position` 为 queued job 在 owner 公平遍历中的 1-based 优先位置，包含延迟、暂停及 lane 暂满的 job；不是下一次必定启动的承诺。非 queued 为 null，字段不写回任务，不接受客户端设置，响应沿用账号访问过滤。
+
+TDD：首轮新回归 13 个预期失败；补删除 batch 后的只读响应 RED→GREEN。完整回归进一步发现“不同 PID 但相同 token”误去重，新增两个身份回归先 RED，再按真实身份修复。独立质量审查复现“running 已保存但 remember_child 未写入”的恢复窗口，补 running/queued/owned 三种回归，保证活任务先被完整认领，再进行 SIGCONT 容量判断。既有启动失败测试的 fake Popen 需配套 FakeProcessTable，避免系统 ps 消耗其 launcher side effects；生产身份发现逻辑未删减。
+
+冻结后 macOS 完整测试 **496 passed，61.64 秒，退出码 0**；按上文完整隔离命令执行，无跳过。规范复审专项 102 passed，质量复审专项 142 passed；`git diff --check` 通过。三个原有前端文件合并 diff SHA256 保持 `bd5e9ad1508e657942fdff60de8d7974c43cc32ec564d7ce7a962f0aba81ad8d`，没有纳入暂存。
 
 ## 回退
 

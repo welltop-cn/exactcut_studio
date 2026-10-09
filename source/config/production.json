@@ -16,7 +16,7 @@
     "fetch": 2,
     "render": 3,
     "upload": 2,
-    "poll": 1,
+    "poll": 4,
     "max_active_children": 8,
     "hook_previews": 1,
     "ai": {
