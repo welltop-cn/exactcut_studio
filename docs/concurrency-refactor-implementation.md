@@ -491,3 +491,38 @@ PY
 独立临时数据根、假进程表与模拟客户端覆盖：75→资源等待、两次tick不回滚、不占执行位、固定时钟到期→原record/material只查询一次；期间新核实拒绝/已有queued请求复用原job。不存在OSS/飞书创建/ingest/resync。聚焦命令（source目录）：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py tests/test_round3_verification.py tests/test_round2_verification.py`：13 passed /6.89s。
 
 R3-A完整pytest（同一清凭据、临时数据根隔离脚本，无固定SOURCE_ROOT）：654 passed /91.17s，退出0。macOS15.8.1 arm64、conda-forge Python3.12.12。`git diff --check`通过。
+
+### R3-B / P1-B：首次升级失败后的独立维护核实入口
+
+TDD：`tests/test_round3_release.py`先10 failed（新维护模块/管理器命令不存在），实现后9 passed，另一个失败是测试捕获bound method时漏计self，修正测试。继续注入poll异常、结果落盘前崩溃，观察2条真实红灯；空.env fixture修复后转绿。聚焦42 passed /1.60s（本轮、R2发布、原发布器回归）。新`linux-ops verify-delivery RELEASE BATCH_ID REQUEST_ID SHA256`在已有维护态、无活动队列时停止登记旧容器，用verify过的固定新镜像、原compose配置/数据挂载，以`--entrypoint python`和`EXACTCUT_WORKER_ENABLED=0`执行一次`exactcut.maintenance_verify --once`；无端口、不启动web/worker，不依赖旧应用API。成功或异常均尝试拉起登记旧容器并检查健康，current版本与维护标记不变。宿主只用现有stdlib发布管理器。
+
+维护模块复用原SHA审批、verification_binding、只读poll、不可变stage-result和原待核实job的严格证据关联；仅原record/material身份一致且ready才终结原历史。不造回执，不清除未知intent。暂未ready、身份冲突、读超时、磁盘不足都保留unverified；单次命令失败/未就绪退出非0，下一次显式命令再读。维护job从第一次保存就用unverified而非queued，避免中途崩溃后旧worker自动执行新阶段；本地结果落盘中断可再次只读核实，已封存ready证据只补终结历史，不重复远端查询。全程保留普通上传保险。因缺回执/不符证据不能排空时，拒绝恢复旧协议，不用虚假“核实”绕守卫。
+
+测试证明完整路径：不同固定镜像ID的旧release不支持阶段/核实API→新release健康失败并产生真实带stage-result的unverified→旧release恢复且保持维护→管理器CLI使用新镜像的一次只读核实→phase_blockers为空→recover成功撤维护→再次正向publish成功。另覆盖无维护/旧核实镜像/活动任务停服前拒绝、查询失败恢复旧容器、维护CLI必须显式--once、磁盘拒绝可重试、结果落盘/历史终结中断可恢复。模拟外部客户端均无OSS、飞书创建/更新、ingest/resync。
+
+操作单补充（**本会话未执行**，由编排者在干净已提交工程构建后执行）：首次升级前按现有安装流程先更新宿主发布管理器，镜像与应用仍通过build/publish切换。此命令使用封存新镜像而非旧容器API；新镜像web健康失败不妨碍单次Python核实进程，但若镜像/凭据本身不可用，保留维护和旧容器，先修复原因再重试，不删数据。
+
+```sh
+# CLEAN_REPO 是已提交、git status --porcelain为空的独立服务器工程，勿用生产目录开发。
+sudo install -m 755 "$CLEAN_REPO/source/deploy/linux_ops.py" /srv/exactcut/bin/linux-ops
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut build "$NEW_VERSION" --repo "$CLEAN_REPO"
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut check-switch "$NEW_VERSION"
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut publish "$NEW_VERSION"
+# 仅健康失败且maintenance仍保留时：从status列出的job、其batch publications取原BATCH_ID/REQUEST_ID/APPROVED_SHA256。
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut status > "$EVIDENCE/failed-upgrade-status.json"
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut verify-delivery "$NEW_VERSION" "$BATCH_ID" "$REQUEST_ID" "$APPROVED_SHA256" > "$EVIDENCE/maintenance-verification.json"
+# 多记录逐一显式核实；未ready/读异常需稍后再次执行上一条，禁止重传。
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut status > "$EVIDENCE/drained-status.json"
+# 必须确认phase_blockers和active_tasks均空。
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut recover
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut check-switch "$NEW_VERSION"
+sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut publish "$NEW_VERSION"
+```
+
+每次记录UTC时间、执行命令/退出码、管理器版本commit、executor_release/固定image/commit、current旧release、维护标记、jobs+stage-results+publications前后快照、history/*-verify-delivery.json、原record/material/SHA对应关系、只读查询次数和平台新增对象计数（必须0）、recover后维护解除、重新publish健康结果。原两用户并发/等待让位/重启/保守回退验收仍执行；14 CPU/24g、pids512不变。`-threads 4`仅编码器约束，继续用`ps -T`及NLWP采样每路ffmpeg实际线程数，不能把参数值当实际总线程证据。
+
+R3-B本机完整pytest：672 passed /91.77s，退出0，同R3-A的macOS/Python和隔离方式。`git diff --check`通过。
+
+R3-B中断窗口补充：维护命令首次保存意图但尚未落job时被终止，下一次命令也必须先执行已有recover_verification_queue。TDD外部临时测试先2 failed /18 passed（原fbbm_queued与旧扫描已改publish_failed两种），回归合入source/tests，再添加启动扫描；只补偿真正缺job，不解除持久等待保险。最终三次全量与干净clone针对含此补齐的source tree重新执行，之前675用例的预备运行不计为最终版本三连跑。
+
+维护中断补齐后的本机全量：677 passed /92.92s，退出0（包含尚未提交的R3-C预览修复）；聚焦本轮维护+预览24 passed /3.14s。R3-B以本次amend纳入上述启动扫描与两条回归，最终干净clone还会核验提交后的完整source tree。

@@ -140,6 +140,15 @@ class Docker:
     def remove(self, root, release, settings):
         self.compose(root, release, settings, 'rm', '-f', 'web')
 
+    def verify_delivery(self, root, release, settings, batch_id, request_id, sha256):
+        # Use the sealed NEW image without its web/worker entrypoint or ports.
+        # Credentials/config/data mounts come from the verified release compose.
+        self.compose(root, release, settings, 'run', '--rm', '--no-deps', '-T',
+                     '--entrypoint', 'python', '-e', 'EXACTCUT_WORKER_ENABLED=0',
+                     '-e', 'EXACTCUT_ALLOW_AI=0', '-e', 'EXACTCUT_ALLOW_MATERIAL_FETCH=0',
+                     'web', '-m', 'exactcut.maintenance_verify', batch_id, request_id, sha256, '--once')
+        return {'status': 'queried'}
+
     def health(self, settings, version, timeout):
         opener = build_opener(ProxyHandler({}))
         deadline = time.monotonic() + timeout
@@ -348,6 +357,38 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                 raise RuntimeError('版本切换失败，已恢复上一状态；业务数据未还原') from exc
 
 
+def verify_delivery_in_maintenance(root, version, batch_id, request_id, sha256, *, engine=None):
+    """Drain saved delivery receipts even if the restored image has no new API."""
+    engine = engine or Docker()
+    if (not re.fullmatch(r'[a-f0-9]{32}', batch_id) or not re.fullmatch(r'[a-f0-9]{64}', sha256)
+            or not request_id or request_id.startswith('-')):
+        raise ValueError('无效核实批次、素材序号或校验值')
+    with operation_lock(root):
+        gate = root / 'data/.web-state/maintenance.json'
+        if not gate.exists(): raise RuntimeError('必须先处于维护态，禁止在线核实')
+        settings = read(root / 'config/deployment.json')
+        validate_resources(settings)
+        target = verify(root, version, engine)
+        if not supports_stages(engine, target): raise RuntimeError('核实镜像必须支持阶段任务协议')
+        current = verify(root, read(root / 'current.json').get('version'), engine)
+        await_idle(root, 0)
+        # No HTTP API is needed. Stop the exact current release before mounting
+        # its durable data in the one-off verified image; restore it on ALL exits.
+        try:
+            engine.stop(root, current, settings)
+            await_idle(root, 0)
+            result = engine.verify_delivery(root, target, settings, batch_id, request_id, sha256)
+        finally:
+            engine.apply(root, current, settings)
+            engine.health(settings, current['version'], 60)
+        result = {**result, 'maintenance': True, 'remaining_phase_blockers': phase_blockers(root)}
+        write(root / 'history' / f'{time.time_ns()}-verify-delivery.json',
+              {'at': datetime.now(timezone.utc).isoformat(), 'action': 'verify-delivery',
+               'executor_release': version, 'restored': current['version'],
+               'batch_id': batch_id, 'request_id': request_id, **result})
+        return result
+
+
 def build(root, repo, version):
     """Archive clean committed source, build once, run isolated Linux tests, seal metadata."""
     with operation_lock(root):
@@ -490,9 +531,11 @@ def main():
     sub.add_parser('check-switch').add_argument('version')
     sub.add_parser('nginx')
     sub.add_parser('recover')
+    check = sub.add_parser('verify-delivery')
+    for field in ('version', 'batch_id', 'request_id', 'sha256'): check.add_argument(field)
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
-    if args.command in {'build', 'publish', 'rollback', 'recover'} and sys.platform != 'linux':
+    if args.command in {'build', 'publish', 'rollback', 'recover', 'verify-delivery'} and sys.platform != 'linux':
         raise RuntimeError('此运维操作只适用于Linux Docker，不操作Mac历史服务')
     if args.command == 'init':
         result = initialize(root, args.runtime_config, instance=args.instance, backend_port=args.backend_port,
@@ -509,6 +552,8 @@ def main():
         if not version:
             raise RuntimeError('没有上一版本可回滚')
         result = transition(root, version, timeout=args.drain_timeout, health_timeout=args.health_timeout)
+    elif args.command == 'verify-delivery':
+        result = verify_delivery_in_maintenance(root, args.version, args.batch_id, args.request_id, args.sha256)
     elif args.command == 'recover':
         with operation_lock(root):
             current = read(root / 'current.json')
