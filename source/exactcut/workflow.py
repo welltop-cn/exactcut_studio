@@ -609,6 +609,7 @@ def queue_publish(batch_id, request_id, sha256):
             raise ValueError('此素材已在上传队列中，无需重复提交')
         publications.setdefault(request_id, {}).update(status='upload_queued', approved_sha256=sha256, approved_at=now_iso())
         publications[request_id].pop('error', None)
+        publications[request_id].pop('poll_started', None)
         write_json_atomic(path / 'publications.json', publications)
     update(path, 'publishing', f'{request_id} 已确认预览，等待上传 FBBM', active_request=request_id)
     return [sys.executable, '-u', '-m', 'exactcut.workflow', 'publish', batch_id, request_id, instance_marker()]
@@ -707,7 +708,7 @@ def produce(batch_id):
         return _produce(batch_id)
 
 
-def _produce(batch_id):
+def _produce(batch_id, *, render_only=False):
     from .orchestrator import execute_batch
     path = folder(batch_id)
     manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
@@ -716,18 +717,20 @@ def _produce(batch_id):
         preparation_started = time.monotonic()
         checkpoint(path, 'source_check')
         required = download_plan(manifest)['required']
-        available = all((project / 'source/videos' / f'{ep}.mp4').is_file() and (project / 'source/videos' / f'{ep}.mp4').stat().st_size > 0 for ep in required)
-        if available:
-            try:
-                for ep in required:
-                    validate_downloaded_video(project / 'source/videos' / f'{ep}.mp4')
-            except RuntimeError as exc:
-                available = False
-                update(path, message=str(exc), source_repair_needed=True)
+        from .media import resolve_episode_video
+        available = True
+        try:
+            for ep in required:
+                validate_downloaded_video(resolve_episode_video(project, ep))
+        except (RuntimeError, OSError, ValueError) as exc:
+            available = False
+            update(path, message=str(exc), source_repair_needed=True)
         if available:
             from .media import validate_manifest_sources
             validate_manifest_sources(manifest, project)
             update(path, message='所需正片已在本地并通过时间检查，直接复用', download_complete=True, reused_local_episodes=required)
+        elif render_only:
+            raise RuntimeError('正片尚未准备完成，请重新排队准备正片')
         else:
             download(path, manifest, project)
         update(path, preparation_seconds=round(time.monotonic()-preparation_started,3))
@@ -744,6 +747,97 @@ def _produce(batch_id):
     except Exception as exc:
         update(path, 'failed', str(exc), error=type(exc).__name__)
         return 2
+
+
+def fetch(batch_id):
+    """Prepare required sources using the same cache as draft prefetch."""
+    path = folder(batch_id)
+    with execution(path):
+        try:
+            manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
+            download(path, manifest, ROOT / 'projects' / manifest.drama_id)
+            update(path, 'queued', '正片已齐，等待制作位置')
+            return 0
+        except Exception as exc:
+            update(path, 'failed', str(exc), error=type(exc).__name__)
+            return 2
+
+
+def render(batch_id):
+    with execution(folder(batch_id)):
+        return _produce(batch_id, render_only=True)
+
+
+def publication_state(path, manifest, request_id, entry):
+    publications = store_publication(path, request_id, entry)
+    complete = all(publications.get(r.request_id, {}).get('status') == 'fbbm_ready' for r in manifest.requests)
+    pending = any(e.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'} for e in publications.values())
+    message = 'FBBM 已就绪' if entry['status'] == 'fbbm_ready' else entry.get('error', '等待 FBBM 就绪')
+    update(path, 'publishing' if pending else 'complete' if complete else 'review', f'{request_id}：{message}')
+
+
+def upload(batch_id, request_id):
+    """Upload and persist the remote record, then release the executor."""
+    from .publish import publish_to_queue
+    path = folder(batch_id)
+    with execution(path, request_id):
+        manifest, request = request_for(path, request_id)
+        entry = read_json(path / 'publications.json')[request_id]
+        started = time.monotonic()
+        try:
+            video, record = preview_file(batch_id, request_id)
+            if record.get('output_sha256') != entry['approved_sha256'] or file_sha256(video) != entry['approved_sha256']:
+                raise ValueError('预览确认后成片已变化，停止上传')
+            entry['status'] = 'uploading'
+            store_publication(path, request_id, entry)
+            checkpoint(path, 'upload')
+            if not entry.get('publication'):
+                entry['publication'] = publish_to_queue(video, manifest, request)
+            entry.update(status='fbbm_queued')
+            entry.setdefault('poll_started', time.time())
+            entry.pop('error', None)
+        except Exception as exc:
+            entry.update(status='publish_failed', error=str(exc))
+        metrics = entry.setdefault('stage_seconds', {})
+        metrics['upload'] = round(metrics.get('upload', 0) + time.monotonic() - started, 3)
+        publication_state(path, manifest, request_id, entry)
+        return 0 if entry['status'] in {'fbbm_queued', 'fbbm_ready'} else 2
+
+
+def poll(batch_id, request_id):
+    """Query once; the scheduler owns the delay between queries."""
+    from .publish import sync_record_once
+    path = folder(batch_id)
+    with execution(path, request_id):
+        manifest, request = request_for(path, request_id)
+        entry = read_json(path / 'publications.json')[request_id]
+        started = time.monotonic()
+        try:
+            if entry.get('status') == 'fbbm_ready':
+                return 0
+            config = load_config()['publish']
+            entry.setdefault('poll_started', time.time())
+            store_publication(path, request_id, entry)
+            if time.time() >= entry['poll_started'] + int(config['wait_timeout_seconds']):
+                raise RuntimeError('等待 FBBM 就绪超时，可重试继续查询原记录')
+            result = sync_record_once(str(entry['publication']['feishu_record_id']))
+            previous = entry.get('fbbm') or {}
+            changed = any(result.get(key) != previous.get(key) for key in ('action', 'video_id', 'material_id', 'fb_status'))
+            entry['fbbm'] = result
+            checkpoint(path, 'fbbm', advanced=changed, platform_action=result.get('action', 'syncing'))
+            if result.get('action') == 'ready' and result.get('video_id'):
+                entry.update(status='fbbm_ready', completed_at=now_iso())
+                entry.pop('error', None)
+            elif result.get('action') == 'failed':
+                raise RuntimeError('FBBM 同步失败，请查看平台原因后继续查询原记录')
+            else:
+                entry['status'] = 'fbbm_queued'
+        except Exception as exc:
+            entry.update(status='publish_failed', error=str(exc))
+        metrics = entry.setdefault('stage_seconds', {})
+        metrics['fbbm'] = round(metrics.get('fbbm', 0) + time.monotonic() - started, 3)
+        publication_state(path, manifest, request_id, entry)
+        return 2 if entry['status'] == 'publish_failed' else 0
 
 
 def publish(batch_id, request_id):
@@ -813,6 +907,10 @@ def _publish(batch_id, request_id):
 
 if __name__ == '__main__':
     load_env_file(project_env_file())
+    if sys.argv[1] in {'fetch', 'render'}:
+        raise SystemExit(globals()[sys.argv[1]](sys.argv[2]))
+    if sys.argv[1] in {'upload', 'poll'}:
+        raise SystemExit(globals()[sys.argv[1]](sys.argv[2], sys.argv[3]))
     if sys.argv[1] == 'produce':
         raise SystemExit(produce(sys.argv[2]))
     if sys.argv[1] == 'preview':

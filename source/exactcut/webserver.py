@@ -18,7 +18,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from .catalog import load_catalog
-from . import workflow, batch_control, accounts, production_helper
+from . import workflow, batch_control, accounts, production_helper, concurrency
 from .util import json_sha256, write_json_atomic, read_json, load_env_file
 
 from .runtime import CODE_ROOT, data_root, require_publish, feature_flags, instance_marker, environment, release_id, maintenance_file, mutation_lock
@@ -74,6 +74,7 @@ def job_command(data):
 
 
 def save(job):
+    job.setdefault('lane', concurrency.lane(job))
     path = JOBS / (job['id'] + '.json')
     temp = path.with_suffix('.tmp')
     temp.write_text(json.dumps(job, ensure_ascii=False), encoding='utf-8')
@@ -177,6 +178,62 @@ def existing_submission(batch_id, action, data, actor):
     return None
 
 
+def stage_command(job, phase):
+    command = [sys.executable, '-u', '-m', 'exactcut.workflow', phase, job['batch_id']]
+    if phase in {'upload', 'poll'}:
+        command.append(job['request_id'])
+    return [*command, instance_marker()]
+
+
+def prepare_staged_job(job):
+    """Preserve public actions and submission tokens while selecting a short phase."""
+    if not concurrency.settings()['enabled'] or not job.get('batch_id'):
+        return job
+    if job.get('action') == 'start':
+        phase = 'fetch'
+    elif job.get('action') == 'publish':
+        path = workflow.folder(job['batch_id'])
+        publications = read_json(path / 'publications.json')
+        phase = 'poll' if publications.get(job.get('request_id'), {}).get('publication') else 'upload'
+    else:
+        return job
+    job.update(phase=phase, lane=phase, command=stage_command(job, phase))
+    return job
+
+
+def advance_stage(job):
+    """Persist deterministic successors before enqueue; repeated completion is safe."""
+    phase = job.get('phase')
+    path = workflow.BATCHES / job['batch_id']
+    next_phase = 'render' if phase == 'fetch' else 'poll' if phase == 'upload' else None
+    if phase == 'poll':
+        publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
+        if publications.get(job.get('request_id'), {}).get('status') == 'fbbm_queued':
+            next_phase = 'poll'
+    if next_phase is None:
+        return
+    interval = max(1, int(workflow.load_config()['publish']['poll_seconds']))
+    if phase == 'poll':
+        # A fresh process identity is assigned at the next launch.
+        job.update(status='queued', not_before=time.time() + interval)
+        for field in ('pid', 'pgid', 'process_token', 'finished', 'exit_code'):
+            job.pop(field, None)
+        save(job)
+        WORK.put((job, job['command']))
+        return
+    successor_id = uuid.uuid5(uuid.NAMESPACE_URL, job['id'] + ':' + next_phase).hex
+    if (JOBS / (successor_id + '.json')).exists():
+        return
+    successor = {key: job[key] for key in ('batch_id', 'project', 'owner', 'actor', 'action', 'request_id') if key in job}
+    successor.update(id=successor_id, parent_id=job['id'], phase=next_phase, lane=next_phase,
+                     created=time.time(), status='queued', instance=instance_marker())
+    successor['command'] = stage_command(successor, next_phase)
+    if next_phase == 'poll':
+        successor['not_before'] = time.time() + interval
+    save(successor)
+    WORK.put((successor, successor['command']))
+
+
 def finish_job(job, code=None, message='执行进程已结束，可查看日志后重试'):
     job.update(status='interrupted' if code is None else 'completed' if code == 0 else 'failed',
                exit_code=code, finished=time.time())
@@ -187,6 +244,22 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
     if not (path / 'draft.json').exists():
         return
     if job.get('action') == 'prefetch':
+        return
+    if job.get('phase'):
+        workflow.update(path, executor_running=False, execution_ended_at=workflow.now_iso())
+        if code == 0:
+            advance_stage(job)
+        elif job.get('phase') in {'upload', 'poll'}:
+            publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
+            rid = job.get('request_id')
+            entry = publications.get(rid, {})
+            if entry.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'}:
+                entry.update(status='publish_failed', error=message)
+                publications = workflow.store_publication(path, rid, entry)
+            waiting = any(item.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'} for item in publications.values())
+            workflow.update(path, 'publishing' if waiting else 'review', message)
+        elif workflow.runtime(path)['status'] in workflow.ACTIVE:
+            workflow.update(path, 'interrupted', message)
         return
     workflow.update(path, executor_running=False, execution_ended_at=workflow.now_iso())
     if job.get('action') == 'publish' and code != 0:
@@ -228,7 +301,7 @@ def recover_jobs(*, enqueue=False):
                 found = batch_control.PROCESSES.find(token)
                 if found:
                     candidate = {**found, 'process_token': token, 'instance': instance_marker(),
-                                 'lane': job.get('action'), 'request_id': job.get('request_id')}
+                                 'lane': concurrency.lane(job), 'request_id': job.get('request_id')}
                     if batch_control.child_state(candidate) not in {None, 'Z'}:
                         child = candidate
                         if batch:
@@ -246,14 +319,21 @@ def recover_jobs(*, enqueue=False):
             job.update(adopted_after_restart=True)
             save(job)
             if batch and (workflow.BATCHES / batch / 'draft.json').exists():
-                batch_control.remember_child(workflow.BATCHES / batch, {**job, 'lane': job.get('action')})
+                batch_control.remember_child(workflow.BATCHES / batch, {**job, 'lane': concurrency.lane(job)})
             live.add(batch)
             continue
         elif job.get('status') == 'running' and (batch not in live or job.get('action') == 'prefetch'):
             code = None
             if batch and (workflow.BATCHES / batch / 'runtime.json').exists():
                 state = workflow.runtime(workflow.BATCHES / batch)['status']
-                if job.get('action') == 'start':
+                if job.get('phase') == 'fetch':
+                    code = 0 if workflow.runtime(workflow.BATCHES / batch).get('download_complete') else 2 if state == 'failed' else None
+                elif job.get('phase') in {'upload', 'poll'}:
+                    file = workflow.BATCHES / batch / 'publications.json'
+                    entries = read_json(file) if file.exists() else {}
+                    status = entries.get(job.get('request_id'), {}).get('status')
+                    code = 0 if status in {'fbbm_queued', 'fbbm_ready'} else 2 if status == 'publish_failed' else None
+                elif job.get('action') == 'start':
                     code = 0 if state in {'review', 'complete'} else 2 if state in {'partial', 'failed'} else None
                 elif job.get('action') == 'publish':
                     path = workflow.BATCHES / batch / 'publications.json'
@@ -266,6 +346,8 @@ def recover_jobs(*, enqueue=False):
                     result = read_json(file) if file.exists() else {}
                     code = 0 if result.get('status') == 'completed' else 2 if result.get('status') == 'failed' else None
             finish_job(job, code)
+    # Stage completion may have queued a successor after the recovery snapshot.
+    queued.update(job.get('batch_id') for job in stored_jobs() if job.get('status') == 'queued')
     for file in workflow.BATCHES.glob('*/runtime.json'):
         path = file.parent
         if path.name in live or path.name in queued:
@@ -282,10 +364,36 @@ def recover_jobs(*, enqueue=False):
             batch_control.write(path, control)
 
 
+def fair_pending(pending):
+    """Owner FIFO with a durable round-robin cursor across worker ticks."""
+    groups = {}
+    for entry in sorted(pending, key=lambda item: item[0].get('created', float('inf'))):
+        job = entry[0]
+        if job.get('batch_id'):
+            owner = accounts.owner(workflow.folder(job['batch_id']))
+        else:
+            owner = job.get('owner') or job.get('actor') or 'admin'
+        groups.setdefault(owner, []).append(entry)
+    owners = list(groups)
+    cursor_file = JOBS.parent / 'scheduler.json'
+    cursor = read_json(cursor_file).get('owner') if cursor_file.exists() else None
+    if cursor in owners:
+        offset = owners.index(cursor) + 1
+        owners = owners[offset:] + owners[:offset]
+    while any(groups.values()):
+        for owner in owners:
+            if groups[owner]:
+                yield owner, groups[owner].pop(0)
+
+
 def worker_tick(pending, owned):
     while True:
         try:
-            pending.append(WORK.get_nowait())
+            entry = WORK.get_nowait()
+            if any(item[0]['id'] == entry[0]['id'] for item in pending) or entry[0]['id'] in owned:
+                WORK.task_done()
+            else:
+                pending.append(entry)
         except queue.Empty:
             break
     with LOCK, batch_control.LOCK:
@@ -304,47 +412,99 @@ def worker_tick(pending, owned):
             if job.get('batch_id') and not (workflow.BATCHES / job['batch_id'] / 'draft.json').exists():
                 pending.remove(entry)
                 WORK.task_done()
-        running = batch_control.reconcile(workflow.BATCHES)
-        running |= bool(owned and any(not job.get('batch_id') for job, _, _ in owned.values()))
+        external_active = {key: 0 for key in concurrency.LANES}
+        external_tokens = set()
+        for job, _, _ in owned.values():
+            if not job.get('batch_id') and batch_control.child_state(job) != 'T':
+                external_active[concurrency.lane(job)] += 1
+                external_tokens.add(job.get('process_token') or job['id'])
+        for job in stored_jobs():
+            if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
+                token = job['process_token']
+                if token not in external_tokens and batch_control.child_state(job) != 'T':
+                    external_active[concurrency.lane(job)] += 1
+                external_tokens.add(token)
+        if any(external_active.values()):
+            batch_control.reconcile(workflow.BATCHES, external_active=external_active)
+        else:
+            batch_control.reconcile(workflow.BATCHES)
         if not owned:
             recover_jobs()
-            running |= any(j.get('status') == 'running' and not j.get('batch_id') and job_alive(j)
-                           for j in stored_jobs())
-        if running:
-            return
-        for index, (job, cmd) in enumerate(pending):
+        limits = concurrency.settings()
+        counts = {key: 0 for key in concurrency.LANES}
+        batches = set()
+        tokens = set()
+        for job, _, _ in owned.values():
+            token = job.get('process_token') or job['id']
+            tokens.add(token)
+            if batch_control.child_state(job) != 'T':
+                counts[concurrency.lane(job)] += 1
             if job.get('batch_id'):
-                control = batch_control.read(workflow.folder(job['batch_id']))
-                if control.get('paused') or control.get('archived'):
+                batches.add(job['batch_id'])
+        for path in workflow.BATCHES.glob('*'):
+            for child in batch_control.own_live_children(path):
+                batches.add(path.name)
+                token = child['process_token']
+                if token not in tokens and batch_control.child_state(child) != 'T':
+                    counts[concurrency.lane(child)] += 1
+                tokens.add(token)
+        for job in stored_jobs():
+            if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
+                token = job['process_token']
+                if token not in tokens and batch_control.child_state(job) != 'T':
+                    counts[concurrency.lane(job)] += 1
+                tokens.add(token)
+        for owner, entry in fair_pending(pending):
+            job, cmd = entry
+            file = JOBS / (job['id'] + '.json')
+            if file.exists():
+                job = read_json(file)
+                cmd = job.get('command', cmd)
+            if job.get('status') != 'queued':
+                pending.remove(entry)
+                WORK.task_done()
+                continue
+            if job.get('not_before', 0) > time.time():
+                continue
+            resource = concurrency.lane(job)
+            if counts[resource] >= limits[resource] or sum(counts.values()) >= limits['max_active_children']:
+                continue
+            if not limits['enabled'] and sum(counts.values()):
+                continue
+            batch = job.get('batch_id')
+            if batch:
+                control = batch_control.read(workflow.folder(batch))
+                if control.get('paused') or control.get('archived') or batch in batches:
                     continue
             log = (JOBS / (job['id'] + '.log')).open('ab')
             try:
-                # CPython accepts arbitrary -X options without changing module argv.
-                # A fresh token identifies this launch even if the OS recycles its PID.
                 token = uuid.uuid4().hex
                 if len(cmd) > 2 and cmd[1] == '-X' and cmd[2].startswith('exactcut_process_token='):
                     cmd = [cmd[0], *cmd[3:]]
                 cmd = [cmd[0], '-X', 'exactcut_process_token=' + token, *cmd[1:]]
-                job.update(process_token=token, command=cmd, instance=instance_marker())
+                job.update(process_token=token, command=cmd, instance=instance_marker(), lane=resource)
                 save(job)
                 process = subprocess.Popen(cmd, cwd=CODE_ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             except Exception as exc:
                 log.close()
                 finish_job(job, -1, '启动失败，可重试：' + type(exc).__name__)
-                pending.pop(index)
+                pending.remove(entry)
                 WORK.task_done()
             else:
                 identity = batch_control.identify(process, process_token=token,
-                                                 lane=job.get('action'), request_id=job.get('request_id'))
+                                                 lane=resource, request_id=job.get('request_id'))
                 owned[job['id']] = (job, process, log)
-                pending.pop(index)
+                pending.remove(entry)
                 job.update(status='running', started=time.time(), instance=instance_marker())
                 if identity:
                     job.update(pid=identity['pid'], pgid=identity['pgid'])
                 save(job)
-                if identity and job.get('batch_id'):
-                    batch_control.remember_child(workflow.folder(job['batch_id']), identity)
-            break
+                if identity and batch:
+                    batch_control.remember_child(workflow.folder(batch), identity)
+                counts[resource] += 1
+                if batch:
+                    batches.add(batch)
+                write_json_atomic(JOBS.parent / 'scheduler.json', {'owner': owner})
 
 
 def worker():
@@ -814,6 +974,8 @@ class Handler(BaseHTTPRequestHandler):
                            'request_id': data.get('request_id'), 'submission_token': data.get('submission_token'),
                            'submission_payload': json_sha256({k: v for k, v in data.items() if k != 'submission_token'})}
                     job['command'] = cmd
+                    prepare_staged_job(job)
+                    cmd = job['command']
                     save(job)
                     WORK.put((job, cmd))
                     return self.respond(202, batch_response(batch_id, job))

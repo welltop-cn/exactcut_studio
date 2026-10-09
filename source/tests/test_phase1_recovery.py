@@ -21,7 +21,7 @@ def workspace(tmp_path, monkeypatch):
     monkeypatch.setattr(web, 'JOBS', tmp_path / '.web-state/jobs')
     web.JOBS.mkdir(parents=True)
     monkeypatch.setattr(web, 'WORK', queue.Queue())
-    monkeypatch.setattr(batch_control, 'reconcile', lambda root: False)
+    monkeypatch.setattr(batch_control, 'reconcile', lambda root, **kwargs: False)
     item = w.import_excel({'filename': 'test.xlsx', 'content': base64.b64encode(TEMPLATE.read_bytes()).decode()})
     return item
 

@@ -247,13 +247,16 @@ def present(path, state):
     return data
 
 
-def reconcile(batch_root, table=None):
-    """Stop children of paused batches. Continue one stopped batch when nothing else is running."""
+def reconcile(batch_root, table=None, *, external_active=None):
+    """Resume stopped executors only within their lane and batch limits."""
+    from .concurrency import lane, settings
     table = PROCESSES if table is None else table
+    limits = settings()
     with LOCK:
-        busy = False
-        waiting = None
-        for path in batch_root.glob('*'):
+        counts = {key: (external_active or {}).get(key, 0) for key in ('fetch', 'render', 'upload', 'poll')}
+        active_batches = set()
+        waiting = []
+        for path in sorted(batch_root.glob('*')):
             if not path.is_dir() or not (path / 'runtime.json').exists():
                 continue
             control = read(path)
@@ -266,20 +269,31 @@ def reconcile(batch_root, table=None):
                     stale.add((child['pid'], child['process_token']))
                     continue
                 if (control.get('paused') or control.get('archived')) and state != 'T':
-                    signal_identity(child, signal.SIGSTOP, table)
-                    state = 'T'
-                if state not in {'T', 'Z'}:
-                    busy = True
-                elif state == 'T' and waiting is None and not control.get('paused') and not control.get('archived'):
-                    waiting = path
+                    if signal_identity(child, signal.SIGSTOP, table):
+                        state = 'T'
+                if state != 'T':
+                    counts[lane(child)] += 1
+                    active_batches.add(path)
+                elif not control.get('paused') and not control.get('archived'):
+                    waiting.append((path, child))
             if stale:
                 for key in ('children', 'suspended'):
                     control[key] = [child for child in control.get(key, [])
                                     if (child.get('pid'), child.get('process_token')) not in stale]
                 write(path, control)
-        if busy:
-            return True
-        if waiting is not None:
-            signal_children(waiting, signal.SIGCONT, table)
-            return True
-        return False
+        for path, child in waiting:
+            resource = lane(child)
+            if path in active_batches or counts[resource] >= limits[resource]:
+                continue
+            if not limits['enabled'] and sum(counts.values()):
+                continue
+            if sum(counts.values()) >= limits['max_active_children']:
+                continue
+            if signal_identity(child, signal.SIGCONT, table):
+                counts[resource] += 1
+                active_batches.add(path)
+                control = read(path)
+                control['suspended'] = [item for item in control.get('suspended', [])
+                                        if item.get('process_token') != child['process_token']]
+                write(path, control, '已继续执行')
+        return bool(sum(counts.values()))
