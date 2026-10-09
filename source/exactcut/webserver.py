@@ -381,6 +381,7 @@ def job_alive(job):
 def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
     verify = stage_results.scheduler_verified if scheduler else stage_results.verified
     jobs = list(stored_jobs())
+    workflow.recover_verification_queue(jobs)
     owned = owned or {}
     live_ids = set(owned)
     live = {job.get('batch_id') for job, _, _ in owned.values()}
@@ -1057,6 +1058,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized(): return
         if self.headers.get('X-Exactcut-Request') != '1':
             return self.respond(403, {'error': '无效请求来源'})
+        verification_started = False
         try:
             size = int(self.headers.get('Content-Length', '0'))
             if not 1 <= size <= 10000: raise ValueError('无效上传确认请求')
@@ -1098,17 +1100,27 @@ class Handler(BaseHTTPRequestHandler):
                 if getattr(self.server, 'auth_db', None):
                     accounts.audit(self.server.auth_db, self.user['username'], action, batch_id)
                 operation = workflow.queue_verify_delivery if action == 'verify-delivery' else workflow.queue_publish
-                cmd = operation(batch_id, data.get('request_id'), data.get('sha256'), _evidence=evidence)
-                job = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'project': workflow.detail(batch_id)['draft']['drama_id'],
+                job_id = uuid.uuid4().hex
+                options = {'_evidence': evidence}
+                if action == 'verify-delivery':
+                    options['_job_id'] = job_id
+                    verification_started = True
+                cmd = operation(batch_id, data.get('request_id'), data.get('sha256'), **options)
+                job = {'id': job_id, 'batch_id': batch_id, 'project': workflow.detail(batch_id)['draft']['drama_id'],
                        'actor': self.user['username'], 'action': action, 'created': time.time(), 'status': 'queued',
                        'request_id': data.get('request_id'), 'submission_token': data.get('submission_token'),
                        'submission_payload': json_sha256({key: value for key, value in data.items() if key != 'submission_token'}), 'command': cmd}
                 if action == 'verify-delivery':
                     job['verification_only'] = read_json(workflow.folder(batch_id) / 'publications.json')[data['request_id']]['verification_only']
                 prepare_staged_job(job)
-                save(job); WORK.put((job, job['command']))
+                save(job)
+                if action == 'verify-delivery': workflow.recover_verification_queue(list(stored_jobs()), batch_id=batch_id)
+                WORK.put((job, job['command']))
                 return self.respond(202, batch_response(batch_id, job))
         except (ValueError, KeyError, TypeError, RuntimeError, OSError) as exc:
+            if verification_started:
+                with mutation_lock(), LOCK:
+                    workflow.recover_verification_queue(list(stored_jobs()), batch_id=batch_id)
             self.respond(400, {'error': str(exc)})
 
     def hook_preview(self, batch_id):

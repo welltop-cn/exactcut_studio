@@ -407,3 +407,10 @@ macOS 15.8.1 arm64 / conda Python 3.12.12，命令（source 下）：`/Users/mat
 TDD：新 `test_round2_auth.py` 先见 9 failed / 2 passed：ingest、resync、PUT、DELETE 在两种过期码下均双发；“服务端已落账但报 100006”也创建两次。实现仅将已知 GET app_usage / material sync_status 判为可重试读；guarded 写只发一次，未知写结果由原 intent 保险进入 unverified，禁止第二次 ingest。读查询仍一次 login 后成功，原 headers 保留；普通非 guarded 历史重试策略未改。
 
 聚焦 53 passed / 13.11s；同 R2-A 隔离命令完整 626 passed / 77.21s，`git diff --check` 通过。fixtures 中真实 CfAdsClient + workflow poll + immutable result + finish_job 验证外部创建次数=1、job unverified、intent pending；无真实请求。
+
+
+### R2-C / P1-3：核实入队交接事务
+
+TDD：`test_round2_verification.py` 红灯 4 failed / 1 passed（保存前故障 2、启动 orphan 2；保存后故障原本可认领是兼容基线）。核实 publication 的同一次原子 JSON 写中新增可选 `verification_queue`，记录预分配 job ID 与原 unverified/pending 快照；这是一份持久“待执行核实”事务，只有匹配的只读 poll job 落盘才提交。HTTP 异常补偿、每 tick/启动扫描共用恢复函数：缺 job 回原状态，已落盘 job 提交并可认领。旧无标记但 history/verification intent 已写且无核实 job 的交接也恢复为 unverified/pending，保留原回执与只读标识；禁止转成普通上传。
+
+聚焦 69 passed / 17.55s；同 R2-A 的 macOS 临时数据根隔离命令，完整 631 passed / 80.14s，`git diff --check` 通过。publication 后/detail 或 save 前异常、保存后响应丢失、标记/旧 orphan 重启恢复均覆盖；同 token 重试 202（已落盘则200），只读 poll 原对象，ingest/OSS/飞书创建增量0、普通上传拒绝。

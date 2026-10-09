@@ -1,6 +1,7 @@
 """Durable review-first production workflow. Publishing never renders a video."""
 from __future__ import annotations
 import base64
+import copy
 import fcntl
 from contextlib import contextmanager
 import json
@@ -651,7 +652,7 @@ def verification_binding(entry):
     return {'record_id': record_id, 'material_id': material_id, 'approved_sha256': sha, 'oss_url': url, 'oss_key': key}
 
 
-def queue_verify_delivery(batch_id, request_id, sha256, *, _evidence=None):
+def queue_verify_delivery(batch_id, request_id, sha256, *, _evidence=None, _job_id=None):
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
     if runtime(path)['status'] in ACTIVE - {'publishing'}:
@@ -663,6 +664,10 @@ def queue_verify_delivery(batch_id, request_id, sha256, *, _evidence=None):
         if not delivery_blocked(entry): raise ValueError('仅待核实交付可继续查询')
         binding = verification_binding(entry)
         if binding['approved_sha256'] != sha256: raise ValueError('确认校验值与原交付不一致')
+        if _job_id:
+            # A same-file write-ahead handoff: only a durable matching poll job
+            # commits this transition. A crash before save restores the prior intent.
+            entry['verification_queue'] = {'job_id': _job_id, 'previous': copy.deepcopy(entry)}
         entry.setdefault('verification_history', []).append(entry.get('intent') or {})
         entry.update(verification_only=binding, status='fbbm_queued', poll_started=time.time())
         entry['intent'] = {'phase': 'verification', 'status': 'verified', **binding, 'created_at': now_iso()}
@@ -671,6 +676,40 @@ def queue_verify_delivery(batch_id, request_id, sha256, *, _evidence=None):
         write_json_atomic(path / 'publications.json', publications)
     update(path, 'publishing', f'{request_id}：只读核实原记录，等待查询位置', active_request=request_id)
     return [sys.executable, '-u', '-m', 'exactcut.workflow', 'poll', batch_id, request_id, instance_marker()]
+
+
+def recover_verification_queue(jobs, *, batch_id=None):
+    """Commit saved verification jobs; compensate orphaned current/legacy handoffs."""
+    paths = [folder(batch_id)] if batch_id else [file.parent for file in BATCHES.glob('*/publications.json')]
+    for path in paths:
+        file = path / 'publications.json'
+        if not file.exists(): continue
+        with publication_lock(path):
+            publications = read_json(file)
+            changed = repaired = False
+            for rid, entry in publications.items():
+                transaction = entry.get('verification_queue')
+                legacy = (entry.get('status') == 'fbbm_queued' and entry.get('verification_only')
+                          and entry.get('intent', {}).get('phase') == 'verification')
+                if not transaction and not legacy: continue
+                matched = any(job.get('batch_id') == path.name and job.get('request_id') == rid
+                              and job.get('action') == 'verify-delivery' and job.get('phase') == 'poll'
+                              and job.get('verification_only') == entry.get('verification_only')
+                              and job.get('status') in {'queued', 'running', 'completed'}
+                              and (not transaction or job.get('id') == transaction.get('job_id')) for job in jobs)
+                if matched:
+                    if transaction: entry.pop('verification_queue'); changed = True
+                    continue
+                if transaction:
+                    entry = transaction['previous']
+                else:
+                    entry.update(status='unverified', error='核实任务未落盘，可再次只读核实')
+                    entry['intent']['status'] = 'pending'
+                publications[rid] = entry
+                changed = repaired = True
+            if changed: write_json_atomic(file, publications)
+        if repaired:
+            update(path, 'interrupted', '核实交接未完成，已恢复待核实；禁止上传重放', executor_running=False)
 
 
 def add_feedback(batch_id, data):
