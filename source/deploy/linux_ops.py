@@ -20,6 +20,7 @@ from urllib.request import build_opener, ProxyHandler
 
 
 ACTIVE = {'queued', 'downloading', 'indexing', 'producing', 'publishing', 'running'}
+PHASE_TERMINAL = ('completed', 'failed', 'interrupted')
 
 
 def read(path, default=None):
@@ -69,13 +70,19 @@ def operation_lock(root):
         yield
 
 
+def validate_resources(settings):
+    cpus, memory = settings.get('cpus'), settings.get('memory')
+    if (isinstance(cpus, bool) or not isinstance(cpus, (int, float)) or not math.isfinite(cpus)
+            or cpus <= 0 or not isinstance(memory, str) or not re.fullmatch(r'[1-9][0-9]*[mg]', memory)):
+        raise ValueError('无效或缺失资源限制')
+
+
 def initialize(root, profile, *, instance, backend_port, public_port, cpus, memory):
     if not root.is_absolute() or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', instance):
         raise ValueError('部署目录必须绝对路径，实例名仅允许小写字母、数字、下划线和连字符')
     if not 1024 <= backend_port <= 65535 or not 1 <= public_port <= 65535 or backend_port == public_port:
         raise ValueError('前台与后端端口必须不同；后端1024–65535，公网1–65535')
-    if not math.isfinite(cpus) or cpus <= 0 or not re.fullmatch(r'[1-9][0-9]*[mg]', memory):
-        raise ValueError('无效资源限制')
+    validate_resources({'cpus': cpus, 'memory': memory})
     runtime = read(profile)
     if runtime.get('environment') != 'production':
         raise RuntimeError('运行配置必须属于production')
@@ -101,6 +108,10 @@ def initialize(root, profile, *, instance, backend_port, public_port, cpus, memo
 
 
 class Docker:
+    def stage_protocol(self, image):
+        item = json.loads(output('docker', 'image', 'inspect', image))[0]
+        return (item.get('Config', {}).get('Labels') or {}).get('io.exactcut.stage-protocol') == '1'
+
     def inspect_image(self, image):
         item = json.loads(output('docker', 'image', 'inspect', image))[0]
         return item['Id'], (item.get('Config', {}).get('Labels') or {}).get('org.opencontainers.image.revision')
@@ -110,6 +121,7 @@ class Docker:
                            'label=com.docker.compose.project=' + settings['instance'], '--format', '{{.ID}}'))
 
     def compose(self, root, release, settings, *arguments):
+        validate_resources(settings)
         # --env-file prevents Compose's automatic discovery of a neighboring legacy .env.
         env = dict(os.environ, EXACTCUT_DEPLOY_ROOT=str(root), EXACTCUT_INSTANCE=settings['instance'],
                    EXACTCUT_BACKEND_PORT=str(settings['backend_port']), EXACTCUT_CPUS=str(settings['cpus']),
@@ -173,6 +185,57 @@ def active_records(root):
     return [str(path.relative_to(root)) for path in records if read(path).get('status') in ACTIVE]
 
 
+def phase_blockers(root):
+    """Old executors cannot interpret unfinished stages or uncertain delivery intents."""
+    state = root / 'data/.web-state'
+    blockers = []
+    for path in (state / 'jobs').glob('*.json'):
+        try:
+            job = read(path)
+            if not isinstance(job, dict): raise ValueError('job must be an object')
+            if 'phase' not in job: continue
+            blocked = job.get('status') not in PHASE_TERMINAL
+            if not blocked and job.get('batch_id') and job.get('request_id'):
+                publications = read(state / 'batches' / job['batch_id'] / 'publications.json')
+                entry = publications.get(job['request_id'], {})
+                blocked = entry.get('status') == 'unverified' or entry.get('intent', {}).get('status') == 'pending'
+            if blocked: blockers.append(str(path.relative_to(root)))
+        except (OSError, ValueError, TypeError, AttributeError):
+            blockers.append(str(path.relative_to(root)))
+    return blockers
+
+
+def supports_stages(engine, release):
+    inspect = getattr(engine, 'stage_protocol', None)
+    return inspect(release['image']) is True if inspect else False
+
+
+def require_stage_compatibility(root, release, engine):
+    if not supports_stages(engine, release) and phase_blockers(root):
+        raise RuntimeError('目标镜像不支持阶段任务协议；未完成阶段或待核实交付阻止切换')
+
+
+def check_switch(root, version, *, engine=None):
+    """Read-only code guard and drain diagnostics; does not acquire maintenance."""
+    engine = engine or Docker()
+    result = {'target': version, 'target_stage_protocol': False, 'phase_blockers': [],
+              'active_tasks': [], 'allowed': False}
+    try:
+        target = verify(root, version, engine)
+        validate_resources(read(root / 'config/deployment.json'))
+        result['target_stage_protocol'] = supports_stages(engine, target)
+        result['phase_blockers'] = phase_blockers(root)
+        result['active_tasks'] = active_records(root)
+        result['allowed'] = (not result['active_tasks'] and
+                             (result['target_stage_protocol'] or not result['phase_blockers']))
+    except subprocess.CalledProcessError as exc:
+        # Provider output can contain credentials; diagnostics expose only the type.
+        result['guard_error'] = type(exc).__name__
+    except (RuntimeError, ValueError, OSError, TypeError, AttributeError) as exc:
+        result['guard_error'] = str(exc)
+    return result
+
+
 def await_idle(root, timeout):
     deadline = time.monotonic() + timeout
     while active_records(root):
@@ -211,7 +274,9 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
     engine = engine or Docker()
     with operation_lock(root):
         settings = read(root / 'config/deployment.json')
+        validate_resources(settings)
         target = verify(root, version, engine)
+        require_stage_compatibility(root, target, engine)
         current = read(root / 'current.json')
         if current.get('version') == version:
             raise RuntimeError('已经运行此版本')
@@ -227,7 +292,9 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
         if not config.is_file() or (config.stat().st_mode & 0o077):
             raise RuntimeError('生产密钥配置必须存在且权限为0600')
         with write_barrier(root, timeout) as gate:
+            require_stage_compatibility(root, target, engine)
             await_idle(root, timeout)
+            require_stage_compatibility(root, target, engine)
             attempted = False
             receipt = {'at': datetime.now(timezone.utc).isoformat(), 'from': current.get('version'), 'to': version}
             history = root / 'history' / f'{time.time_ns()}-{version}.json'
@@ -236,6 +303,7 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                 if old:
                     engine.stop(root, old, settings)
                     await_idle(root, 0)
+                require_stage_compatibility(root, target, engine)
                 engine.apply(root, target, settings)
                 check = engine.health(settings, version, health_timeout)
                 write(root / 'data/.web-state/data-schema.json', {'version': 1})
@@ -249,6 +317,7 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                     try:
                         engine.stop(root, target, settings)
                         if old:
+                            require_stage_compatibility(root, old, engine)
                             engine.apply(root, old, settings)
                             engine.health(settings, old['version'], health_timeout)
                         else:
@@ -313,6 +382,8 @@ def build(root, repo, version):
         image_id, revision = Docker().inspect_image(image)
         if revision != commit:
             raise RuntimeError('镜像提交标签不匹配')
+        if not Docker().stage_protocol(image_id):
+            raise RuntimeError('镜像缺少阶段任务协议标签')
         test_image = 'exactcut-validation:' + version.lower()
         # BuildKit treats a bare sha256 ID in FROM as a Docker Hub repository.
         # Use the local tag only for the validation build, then recheck its ID.
@@ -402,6 +473,7 @@ def main():
         item.add_argument('--drain-timeout', type=float, default=300)
         item.add_argument('--health-timeout', type=float, default=60)
     sub.add_parser('status')
+    sub.add_parser('check-switch').add_argument('version')
     sub.add_parser('nginx')
     sub.add_parser('recover')
     args = parser.parse_args()
@@ -413,6 +485,11 @@ def main():
                             public_port=args.public_port, cpus=args.cpus, memory=args.memory)
     elif args.command == 'build':
         result = build(root, args.repo.resolve(), args.version)
+    elif args.command == 'check-switch':
+        result = check_switch(root, args.version)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result['allowed']: raise SystemExit(1)
+        return
     elif args.command in {'publish', 'rollback'}:
         version = args.version or read(root / 'current.json').get('previous')
         if not version:
@@ -424,6 +501,8 @@ def main():
             engine = Docker()
             release = verify(root, current.get('version'), engine)
             settings = read(root / 'config/deployment.json')
+            validate_resources(settings)
+            require_stage_compatibility(root, release, engine)
             engine.apply(root, release, settings)
             result = engine.health(settings, release['version'], 60)
             (root / 'data/.web-state/maintenance.json').unlink(missing_ok=True)
@@ -434,6 +513,7 @@ def main():
     else:
         result = {'current': read(root / 'current.json'), 'settings': read(root / 'config/deployment.json'),
                   'active_tasks': active_records(root),
+                  'phase_blockers': phase_blockers(root),
                   'maintenance': (root / 'data/.web-state/maintenance.json').exists()}
     print(json.dumps(result, ensure_ascii=False, indent=2))
 

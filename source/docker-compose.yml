@@ -6,6 +6,9 @@ services:
       dockerfile: source/Dockerfile
     image: exactcut-web:development
     init: true
+    cpus: 1.0
+    mem_limit: 2g
+    pids_limit: 256
     ports:
       - "127.0.0.1:8793:8792"
     env_file:

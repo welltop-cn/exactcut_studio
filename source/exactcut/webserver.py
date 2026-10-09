@@ -253,6 +253,55 @@ def requeue_stage(job):
         workflow.update(workflow.BATCHES / job['batch_id'], 'queued', '执行中断，等待继续本阶段', executor_running=False)
 
 
+def resolve_verified_delivery(job, result):
+    """Retain uncertain attempts as audited terminal history after a bound read-only proof."""
+    if (job.get('action') != 'verify-delivery' or job.get('phase') != 'poll' or not result
+            or result.get('status') != 'done' or result.get('exit_code') != 0): return
+    entry = read_json(workflow.BATCHES / job['batch_id'] / 'publications.json').get(job['request_id'], {})
+    if (entry.get('status') != 'fbbm_ready' or entry.get('intent', {}).get('status') != 'verified'
+            or result.get('publication') != entry or not job.get('verification_only')): return
+    try:
+        binding = workflow.verification_binding(entry)
+        if binding != job['verification_only']: return
+    except (ValueError, TypeError, AttributeError): return
+    for original in stored_jobs():
+        if (original['id'] == job['id'] or original.get('batch_id') != job['batch_id']
+                or original.get('request_id') != job['request_id'] or original.get('status') != 'unverified'
+                or original.get('phase') not in {'upload', 'poll'} or job_alive(original)): continue
+        try:
+            evidence_path = stage_results.result_path(original, JOBS)
+            if evidence_path.exists():
+                evidence = read_json(evidence_path)
+                if (evidence.get('job_id') != original['id'] or evidence.get('phase') != original['phase']
+                        or evidence.get('attempt') != original.get('attempt') or evidence.get('status') != 'unverified'
+                        or evidence.get('evidence_sha256') != json_sha256({key: value for key, value in evidence.items() if key != 'evidence_sha256'})
+                        or workflow.verification_binding(evidence.get('publication', {})) != binding): continue
+            elif original.get('action') == 'verify-delivery' and original.get('verification_only') == binding:
+                # A local launcher failure has no child result, but already saved the exact read-only identity.
+                pass
+            else:
+                # A child may die after its receipt but before writing its result. Bind the
+                # serialized attempt to its admitted inputs AND an original historical receipt;
+                # current ready state or a newly supplied material ID alone is insufficient.
+                fingerprint = original.get('input_fingerprint')
+                if (not original.get('attempt') or not isinstance(fingerprint, str)
+                        or not re.fullmatch(r'[0-9a-f]{64}', fingerprint)
+                        or fingerprint != stage_results.fingerprint(original, workflow.BATCHES, workflow.ROOT)): continue
+                matched = False
+                for intent in entry.get('verification_history', []):
+                    if intent.get('phase') != original['phase'] or intent.get('status') != 'pending': continue
+                    receipt = intent.get('receipt') or {}
+                    if not receipt.get('material_id') or not (receipt.get('record_id') or receipt.get('feishu_record_id')): continue
+                    if workflow.verification_binding({'intent': intent, 'publication': entry.get('publication')}) == binding:
+                        matched = True
+                        break
+                if not matched: continue
+        except (OSError, ValueError, KeyError, TypeError, AttributeError): continue
+        original.update(status='interrupted', resolved_by=job['id'], resolved_at=workflow.now_iso(),
+                        resolution='verified_delivery')
+        save(original)
+
+
 def finish_job(job, code=None, message='执行进程已结束，可查看日志后重试', *, local_failure=False, scheduler=False):
     verify = stage_results.scheduler_verified if scheduler else stage_results.verified
     result = verify(job, JOBS, workflow.BATCHES, workflow.ROOT) if job.get('attempt') else None
@@ -291,6 +340,7 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
         workflow.update(path, executor_running=False, execution_ended_at=workflow.now_iso())
         if code == 0:
             advance_stage(job)
+            resolve_verified_delivery(job, result)
         elif job.get('phase') in {'upload', 'poll'}:
             publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
             rid = job.get('request_id')

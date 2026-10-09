@@ -15,6 +15,8 @@
 
 在 `source/` 下使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12` 运行完整 pytest。启动 pytest 前清除外部凭据及继承的 `EXACTCUT_*` 环境，使用独立临时 `EXACTCUT_DATA_ROOT`，环境为 development。
 
+本轮实测开发环境为 macOS 15.8.1 arm64，conda-forge Python 3.12.12；未更换解释器或使用生产数据根。
+
 不要给整个测试进程设置固定 `EXACTCUT_SOURCE_ROOT`：已有 fixture 会切换各自的数据根，固定源根会让正片缓存跨用例污染。没有独立数据根时，production 模拟可能碰到工作区 development 标记；不要删除本地标记绕过隔离。
 
 基线完整测试在上述隔离方式下退出码 0。新增行为用 fixtures、临时数据根和模拟外部客户端验证，不调用真实 OSS、飞书或 FBBM。
@@ -138,23 +140,254 @@ TDD：首轮 12 RED→12 GREEN；HTTP 首轮 5 failed/15 passed→GREEN；只读
 
 本组最终 macOS 完整测试 **559 passed，75.34 秒，退出码 0**；使用上文隔离命令，无跳过。`git diff --check` 通过，前端 diff SHA 保持不变。受控慢摘要只证明锁隔离，不测真实 ≥1 GiB 哈希吞吐；生产仍未执行。
 
+### D：旧协议回退守卫、部署额度与端到端证据（#9、#10）
+
+Linux 发布管理器新增只读 `check-switch VERSION`，按固定目标镜像的 `io.exactcut.stage-protocol=1` 标签识别阶段协议；旧镜像缺标签时，有未完成 phase job 就拒绝。queued/delayed、暂停/归档、unverified、未知状态和坏 JSON 均阻止旧代码；普通 completed/failed/interrupted 历史可保留，关联的 pending/unverified 交付仍阻止。正式切换在维护锁获取后、排空后、停服后均重查，自动健康失败恢复也不能切到不兼容旧执行器。Docker inspect 失败返回脱敏 JSON、非零退出；只读检查不会创建维护标记或变更容器。
+
+核实完成后保留原 job、intent history 和不可变结果，用 `resolved_by`、`resolved_at`、`resolution=verified_delivery` 把已证实的旧 unverified job 收敛为 interrupted 历史；不会把旧 upload 标成 completed 再派发后继。完成核实的新 poll 必须有已验证成功结果、原身份绑定及 ready 回读；原进程 S/T 时不能收敛。原结果文件存在时，必须验证摘要与完整回执，损坏/冲突不回退到较弱证据。原文件缺失时，只读任务用原保存绑定；普通任务须有匹配的准入指纹及同阶段历史 pending intent 中保存的 record/material 回执。不能仅按“同 batch”或“当前 ready”放行；身份证据也丢失时仍拒绝旧代码回退，需人工调查并保留新代码。
+
+生产 Compose 保持 14 CPU / 24g / 512。原管理器已从 deployment.json 显式传 CPU/内存额度并覆盖继承环境，本轮补真实数值回归和缺失/非法额度提前拒绝；不接受审查中把此美东实例默默下调为1/2的建议。dev Compose 约束为1 CPU / 2g / 256。FFmpeg 的4是编码器线程参数，输入解码/滤镜另设1，进程 NLWP 不保证为4；生产操作单分别记录参数上限和 `ps -T` 实测总线程/RSS，不把三路编码器的12作为全部线程实测结论。
+
+新增端到端 fixture 使用实际 workflow、worker_tick、阶段结果和磁盘账本，只替换进程、媒体/外部客户端边界；覆盖完整 fetch→render→人工确认→upload→poll→ready、两 owner/两剧并行且产物隔离、同 batch 串行、全容量1、FBBM等待让位、带部分产物的 render 崩溃恢复、暂停/归档隔离，以及核实后旧回退可用且外部写不重放。
+
+TDD：初始发布守卫/额度用例 **22 failed / 5 existing passed**→GREEN。停服窗口新 phase 及核实后原 job 未收敛两个缺陷 **2 RED→2 GREEN**。独立规范复核发现“回执先于结果”的缺口与 Docker 错误非 JSON，追加 **5 failed / 4 passed→9 passed**；活/暂停原执行器收敛保护 **2 failed / 2 passed→4 passed**。原有完整链11例首先 GREEN（此前 fixture 的媒体时长错误不计业务 RED）；其余覆盖补强亦不伪造红灯。最终六文件专项 **173 passed，16.60 秒**；独立规范复审 **140 passed，16.25 秒**，质量复核 **123 passed，17.36 秒**，均批准。
+
+本组冻结后 macOS 完整测试 **613 passed，76.98 秒，退出码 0**，无跳过。新增发布/集成用例合计54例；`git diff --check` 通过。下方11个 shell 块通过 `bash -n`，内嵌 Python 通过 compile，仅检查语法，未执行生产命令。三个前端原有 diff SHA 保持不变；schema 1 与生产机器额度未更改。生产真实两用户并发、峰值 RSS/线程、供应商额度及真实重启恢复仍未执行，由编排者填写操作单证据。回执/原身份同时丢失或冲突的交付继续人工调查，不能通过删记录回退。
+
+提交后另从本组已提交版本创建临时 `git clone --no-hardlinks`、detach checkout 并确认 `git status --porcelain` 为空。在 clone 的 source/ 下执行同一完整隔离命令，另将 `PYTHONPATH` 指向 clone/source，阻断原工作树导入：**613 passed，77.31 秒，退出码 0**，无跳过。该次验证的 `HEAD:source` 为 `5413b6082796a437e8fc003cebda4499e282550f`；随后仅把本条记录补入同组提交，source tree 不变。原有三个前端 dirty diff 未进入 clone，证明它们没有掩盖本轮回归。
+
+### 本轮审查项与回归入口
+
+| 审查项 | 决定及可复现测试入口（在 source/ 下运行） |
+| --- | --- |
+| #1 暂停名额 | 修复；`tests/test_round1_scheduler.py` 的停止子进程、恢复越限及活身份认领用例 |
+| #2 大片哈希 | 修复 worker/startup 和 HTTP 两条锁路径；`tests/test_round1_evidence.py` 与 `tests/test_round1_delivery.py` 的 1 GiB 慢摘要及身份栅栏用例 |
+| #3 completed 无后继 | 修复为显式失败；`test_completed_missing_result_does_not_stick`、`test_completed_invalid_artifact_has_visible_failure` |
+| #4 待核实与重登 | 修复；`tests/test_round1_delivery.py` 的只读回执、超时/本地启动失败重试和 100006/100009 用例 |
+| #5 旧 CLI 发布 | 早期非零拒绝；`test_legacy_live_execute_rejected_before_manifest_and_external_write` |
+| #6 缺省与日志 | 函数 fallback 修复；实际 load_config 已合并安全默认，以代码证据反驳“runtime 缺段必然总量4”；`test_missing_total_is_conservative_without_default_merge`、启动三种配置日志用例 |
+| #7 磁盘预约 | 修复；`test_delivery_reserves_approved_final_bytes`、`test_same_disk_render_reserves_single_output_and_temporary_peak` |
+| #8 poll、公平、排队位置 | 修复；`tests/test_round1_scheduler.py` 的四 poll + render、持久 owner 游标和只读队列位置用例 |
+| #9 回退守卫 | 新管理器按目标镜像阶段协议检查；`tests/test_round1_release.py` 与 `tests/test_round1_integration.py` 的旧镜像拒绝、配置开关、核实收敛与停服竞态用例 |
+| #10 配额与线程 | 按用户决定保持生产 14/24，验证显式部署额度并约束 dev；编码线程上限与实际总线程分别记录，不声称 ffmpeg 进程总线程为4 |
+
 ## 回退
 
-回退只调整运行配置或代码，保留当前数据根、任务记录及 schema 1 数据，不恢复旧数据库。切换代码前应按发布管理器现有规则等待活动执行器结束；本任务不执行发布。
+回退只调整运行配置或代码，保留当前数据根、任务记录及 schema 1 数据，不恢复旧数据库。**代码回退必须先排空队列和活动执行器**，包含 delayed poll、暂停/归档的未完成任务及待核实交付；不能删除 job/intent 或强杀来绕过守卫。旧版本不认识阶段命令，新的发布管理器需先检查目标镜像协议能力。
 
-使用 `EXACTCUT_CONFIG_FILE` 指向的集中运行配置，将 `concurrency.enabled` 设为 `false`，并把 `render`、`fetch`、`upload`、`poll`、`max_active_children` 均设为 1，即可恢复全局串行准入与新任务的旧入口。已经提交的阶段任务仍能继续，交付 intent 与“待核实”保护保留。生产的 `source/config/production.json` 是初始化模板，修改模板不会自动覆盖既有 `/srv/exactcut/config/runtime.json`；后续发布/回退应通过现有配置流程确认实际生效值，不能只看源码模板。容器机器额度仍保持 14 CPU / 24 GiB，容量回退不需下调它们。
+保守配置在新代码上把 `fetch`、`render`、`upload`、`poll`、`max_active_children`、`hook_previews`、AI `burst` 设为 1；`enabled=false` 只让新提交走旧入口，**不会转换已持久化的 phase job**。已有阶段任务继续单次查询与 not_before 重入，交付 intent 和待核实保护保留，不能把关闭开关当作旧代码已可安全运行的证据。
 
-## 生产验收模板（未执行）
+集中运行配置为 `EXACTCUT_CONFIG_FILE` 指向的 runtime。production.json 是初始化模板，改模板不会覆盖既有 `/srv/exactcut/config/runtime.json`。按下方维护配置事务只替换 concurrency 段，随后通过新 release ID 重建容器挂载，核对容器内配置 hash 和实际生效日志。容器机器额度继续 14 CPU / 24 GiB，保守容量回退不下调它们。
 
-本次仅在本地 fixtures 与临时数据根验证，不发布、不访问生产、不执行真实外部上传。生产容量是用户指定的初始配置，尚无本轮真实业务吞吐、内存峰值或并行编码测量。
+## 生产验收操作单（本会话未执行；由编排者执行）
 
-后续发布由现有发布管理器处理，记录干净提交、固定镜像、release ID、健康检查和回退版本；保留 `deployment.json` 中 14 CPU / 24 GiB。使用独立验收账号及授权素材，按下表记录证据；外部写验收需另行授权，不能把本地模拟结果填入生产栏。
+全部命令在美东实例 `8.221.122.75` 的维护会话中由编排者执行。保持部署根 `/srv/exactcut`、现有账号/数据、14 CPU / 24 GiB 不变；不运行 init、不恢复旧数据库、不在生产数据目录开发。真实素材制作/上传仅使用编排者指定的两名验收用户及两部已授权的不同剧，逐条人工审片后确认。以下命令不含密钥；证据目录需私有，不分享 production.env、密码、Cookie、token 或供应商错误正文。
 
-| 场景 | 操作与观察 | 必须记录的证据 | 当前状态 |
-| --- | --- | --- | --- |
-| 两用户并行 | 不同 batch 同时提交，确认两个 render 可存活且同 batch 始终单执行器 | job/owner/batch/lane、PID、启动/结束时间、CPU/内存/线程峰值 | 未执行 |
-| 等待让位 | A 等 FBBM，B 继续制作；A poll 查询结束至 `not_before` 前没有活进程 | 阶段结果、队列时间、进程清单 | 未执行 |
-| 公平与暂停 | A 连续提交，B 获得执行机会；暂停/归档 A 后 B 继续，resident 总量受限 | 准入顺序、暂停控制及磁盘预约账本 | 未执行 |
-| 重启恢复 | 各阶段执行中和结束后重启，核对活身份认领、断点重排及不重复交付 | attempt/result_ref、产物 SHA、intent、远端回执与外部调用次数 | 未执行 |
-| 结果不明 | 受控模拟外部写后回读失败，确认“待核实”且不自动重放 | intent/回执、错误、后续调用次数 | 未执行 |
-| 保守回退 | 维护窗口将容量恢复 1 或关闭并发开关；继续读取 schema 1 旧任务 | 生效配置、队列推进、数据保留及健康检查 | 未执行 |
+### 1. 准备已提交的干净版本
+
+本机工作区含用户原有未提交修改，不得直接拿它 build。编排者从最终提交建立干净 clone，或把该提交 git bundle 经现有安全传输渠道送到服务器。不能复制当前 dirty 工作树。
+
+本机（将 COMMIT 填为本轮最终提交的完整 SHA）：
+
+```sh
+COMMIT='填写本轮最终完整提交 SHA'
+TASK_EXPORT="$(mktemp -d /tmp/exactcut-acceptance.XXXXXX)"
+git clone --no-hardlinks /Users/matao/code/exact-cut-fbbm-handoff "$TASK_EXPORT/engineering"
+git -C "$TASK_EXPORT/engineering" checkout --detach "$COMMIT"
+test -z "$(git -C "$TASK_EXPORT/engineering" status --porcelain)"
+git -C "$TASK_EXPORT/engineering" bundle create "$TASK_EXPORT/engineering.bundle" HEAD
+# 按现有安全通道传输 engineering.bundle；本会话未传输。
+```
+
+服务器工程 clone 放在 `/srv/exactcut/preparation/` 下独立新目录（root 所有，避免 dubious ownership）；已有 engineering 和已归档 release 不覆盖。后续命令在维护终端 `sudo -i` 中执行：
+
+```sh
+set -eu
+COMMIT='与本机相同的完整提交 SHA'
+VERSION="us-east-concurrency-$(date -u +%Y%m%dT%H%M%SZ)"
+ENGINEERING="/srv/exactcut/preparation/engineering-$VERSION"
+BUNDLE='/填写已收到的/engineering.bundle'
+git clone "$BUNDLE" "$ENGINEERING"
+git -C "$ENGINEERING" checkout --detach "$COMMIT"
+test -z "$(git -C "$ENGINEERING" status --porcelain)"
+test "$(git -C "$ENGINEERING" rev-parse HEAD)" = "$COMMIT"
+install -m 755 "$ENGINEERING/source/deploy/linux_ops.py" /srv/exactcut/bin/linux-ops
+/srv/exactcut/bin/linux-ops --root /srv/exactcut status
+/srv/exactcut/bin/linux-ops --root /srv/exactcut build "$VERSION" --repo "$ENGINEERING"
+# 发布前先完成下方“容量配置事务”，初次 MODE=safe；然后才 publish。
+```
+
+安装新管理器必须先于回退保护验收：旧管理器不知道阶段协议，不具备新守卫。build 在无生产密钥/业务数据挂载的测试容器运行 Linux 全量回归并保存 tests.log；publish 维护、排空、固定镜像切换和 healthz 验证均走管理器。任务不能排空时退出维护发布，不强杀、不绕过维护标记。
+
+### 2. 核对运行额度与证据
+
+先在容量全 1 下上线核对，随后在维护窗口仅更新 runtime 的 concurrency 段为最终 production 模板，不覆盖 web、storage 等现网设置。下面的容量配置事务须在各验收 batch 已核实、排空后执行。runtime 被单文件 bind mount，原子替换后用新的 release ID 发布（同一提交即可），使 Compose 重建容器、重新挂载文件。`recover` 的普通 up 不保证重建，不能用它代替这一步。记录配置变更前后 hash、容器内配置 hash 和实际启动日志；不一致时停止放量。
+
+首次使用 `MODE=safe`、已 build 的 VERSION；放量使用 `MODE=tuned`；保守回退使用 `MODE=legacy`（关闭新任务阶段拆分且各容量 1）。每次都须有独立 VERSION；首次之外先再次 build：
+
+```sh
+# 首次保留上一节 VERSION/ENGINEERING；后续创建新 VERSION，再运行 build。
+# VERSION="us-east-concurrency-tuned-$(date -u +%Y%m%dT%H%M%SZ)"
+# /srv/exactcut/bin/linux-ops --root /srv/exactcut build "$VERSION" --repo "$ENGINEERING"
+MODE=safe
+export MODE ENGINEERING
+python3 - <<'PY'
+import importlib.util, os
+from importlib.machinery import SourceFileLoader
+from pathlib import Path
+spec = importlib.util.spec_from_loader('release_ops', SourceFileLoader('release_ops', '/srv/exactcut/bin/linux-ops'))
+ops = importlib.util.module_from_spec(spec); spec.loader.exec_module(ops)
+root = Path('/srv/exactcut')
+mode = os.environ['MODE']
+if mode not in {'safe', 'tuned', 'legacy'}: raise SystemExit('未知容量模式')
+profile = 'production.json' if mode == 'tuned' else 'default.json'
+capacity = ops.read(Path(os.environ['ENGINEERING']) / 'source/config' / profile)['concurrency']
+capacity['enabled'] = mode != 'legacy'
+with ops.operation_lock(root), ops.write_barrier(root, 900):
+    ops.await_idle(root, 900)
+    if ops.phase_blockers(root): raise SystemExit('阶段队列未排空或交付待核实；停止修改容量')
+    current = ops.read(root / 'config/runtime.json')
+    assert current.get('environment') == 'production'
+    settings = ops.read(root / 'config/deployment.json')
+    assert float(settings['cpus']) == 14 and settings['memory'].lower() == '24g'
+    print('runtime before:', ops.sha(root / 'config/runtime.json'))
+    current['concurrency'] = capacity
+    ops.write(root / 'config/runtime.json', current)
+    print('runtime after:', ops.sha(root / 'config/runtime.json'))
+PY
+/srv/exactcut/bin/linux-ops --root /srv/exactcut publish "$VERSION" --drain-timeout 900
+/srv/exactcut/bin/linux-ops --root /srv/exactcut status
+```
+
+事务只修改 concurrency；配置写成功但 publish 失败时旧容器可能仍挂着旧 inode。记录这一状态，在维护窗口恢复容量配置或重新发布，不直接覆盖 release 源码、不把旧数据库恢复当回退。
+
+```sh
+EVIDENCE="/srv/exactcut/preparation/evidence-$VERSION"
+install -d -m 700 "$EVIDENCE"
+date -u +%FT%TZ > "$EVIDENCE/started-at.txt"
+cp /srv/exactcut/current.json "$EVIDENCE/current.json"
+cp /srv/exactcut/config/deployment.json "$EVIDENCE/deployment.json"
+sha256sum /srv/exactcut/config/runtime.json > "$EVIDENCE/runtime.sha256"
+INSTANCE=$(python3 -c 'import json; print(json.load(open("/srv/exactcut/config/deployment.json"))["instance"])')
+CONTAINER=$(docker ps -q --filter "label=com.docker.compose.project=$INSTANCE" --filter label=com.docker.compose.service=web)
+test -n "$CONTAINER"
+docker inspect --format '{{.Id}} {{.Config.Image}} NanoCpus={{.HostConfig.NanoCpus}} Memory={{.HostConfig.Memory}} PidsLimit={{.HostConfig.PidsLimit}}' "$CONTAINER" > "$EVIDENCE/container-limits.txt"
+docker logs --since 10m "$CONTAINER" 2>&1 | sed -n '/Effective concurrency settings:/p' > "$EVIDENCE/effective-concurrency.txt"
+docker exec "$CONTAINER" sha256sum /run/exactcut/runtime.json > "$EVIDENCE/container-runtime.sha256"
+# 期望 NanoCpus=14000000000、Memory=25769803776、PidsLimit=512。
+# 生产有效 lane=fetch2/render3/upload2/poll4，总量8；保守配置 lane及总量均1。
+```
+
+发布管理器 `Docker.compose` 从 deployment.json 显式提供 EXACTCUT_CPUS/EXACTCUT_MEMORY，覆盖继承环境；生产 compose 默认仍为批准的14/24g。dev compose 保守1/2g/256。`-threads 4` 约束输出编码器，不代表 ffmpeg 全进程总线程为4：输入解码、滤镜、音频和库线程均可另占线程，不能把“三路总线程12”当验收事实。
+
+三路 render 运行期间连续采样（记录每路线程峰值及 RSS，核对实际参数；总线程数阈值需编排者根据实际输入数先写明，超阈值停止增加并发）：
+
+```sh
+# procps 已在运行镜像安装；ps -T/ -eLf 在 Linux 容器内观察线程。
+for sample in $(seq 1 60); do
+  date -u +%FT%TZ
+  docker exec "$CONTAINER" sh -c 'for pid in $(pgrep -x ffmpeg || true); do if ps -p "$pid" -o pid=,ppid=,nlwp=,rss=,pcpu=,args=; then ps -T -p "$pid" -o pid=,spid=,stat=,pcpu=,comm= || echo "pid=$pid exited during thread sample"; fi; done'
+  docker stats --no-stream --format '{{.ID}} CPU={{.CPUPerc}} Memory={{.MemUsage}} PIDs={{.PIDs}}' "$CONTAINER"
+  uptime
+  sleep 1
+done > "$EVIDENCE/render-thread-samples.txt"
+```
+
+### 3. 场景执行与证据字段
+
+工作台入口 `http://8.221.122.75/exactcut/`，用两个独立浏览器会话登录两个验收账号。每个账号选择不同项目/剧号，各创建至少一个 batch；记录用户名、batch_id、request_id、job_id 及准确提交时间。人工审片后逐条确认，不用旧 execute --publish。
+
+每个观察点保存时间、任务/阶段结果/磁盘预约快照（避免复制密码/账号数据库）：
+
+```sh
+SNAPSHOT="$EVIDENCE/$(date -u +%Y%m%dT%H%M%SZ)"
+install -d -m 700 "$SNAPSHOT"
+cp -a /srv/exactcut/data/.web-state/jobs "$SNAPSHOT/jobs"
+cp -a /srv/exactcut/data/.web-state/stage-results "$SNAPSHOT/stage-results"
+cp /srv/exactcut/data/.web-state/reservations.json "$SNAPSHOT/reservations.json"
+# 仅复制两名验收用户的 batch，不复制整个数据根、accounts.sqlite 或环境文件。
+for bid in "$BATCH_A" "$BATCH_B"; do
+  case "$bid" in (*[!0-9a-f]*|'') exit 1;; esac
+  test "${#bid}" -eq 32
+  install -d -m 700 "$SNAPSHOT/$bid"
+  for name in runtime.json control.json confirmed.json publications.json; do
+    if test -f "/srv/exactcut/data/.web-state/batches/$bid/$name"; then
+      cp "/srv/exactcut/data/.web-state/batches/$bid/$name" "$SNAPSHOT/$bid/"
+    fi
+  done
+done
+docker exec "$CONTAINER" ps -ww -eo pid,ppid,pgid,stat,nlwp,rss,args > "$SNAPSHOT/processes.txt"
+date -u +%FT%TZ > "$SNAPSHOT/at.txt"
+```
+
+| 场景（均未执行） | 直接操作及通过标准 | 必填证据 |
+| --- | --- | --- |
+| 完整链 | A fetch→render，等人工确认期间无执行器，确认后 upload→poll→ready；等待每次 poll 回到 not_before | 各 phase/job/attempt/result_ref、产物 SHA、审核 SHA、intent 与原 feishu_record_id/material_id、阶段开始/结束时间 |
+| 两用户并行 | A/B 两部不同剧同时制作，至少观察两路 render 存活；同 batch 每时刻最多一个根执行器，队列位置可见 | owner/batch/project/lane/PID/token、准入延迟、queue_position、RSS与线程样本 |
+| 等待让位 | A 上传后 FBBM 未就绪，两个 poll 查询之间没有 A 活执行器/预约；B render 在此期间开始并推进 | A not_before/状态/空窗、B started、进程表、预约账本；不能仅凭网页文案判断 |
+| 暂停/归档隔离 | render容量3时暂停A，确认A的T进程仍占一个render与resident；B在剩余名额继续；归档A不改B | control paused/archived、SIGSTOP/CONT前后进程状态、B结果、resident≤总量；容量1时暂停A不会让同lane B越限 |
+| 崩溃恢复 | 在A render与B delayed poll状态下注入一次容器崩溃，再经管理器 recover核对；fetch已完成不重做，render从未完成阶段重排，poll沿原交付ID；不重复上传/ingest | 注入时间/旧新容器ID/health、恢复attempt/源结果SHA、intent/回执、远端创建计数或审计；未知结果应待核实而非重放 |
+| 待核实放行 | 只对已有完整回执的指定条目使用管理员受控核实入口；只查询原record/material，任何ID或SHA冲突都拒绝 | 动作/audit/原ID/批准SHA、前后intent与状态、外部ingest/OSS写/飞书create计数增量=0 |
+| 保守配置回退 | 维护排空后仅把所有容量/总量/预览/AI burst设1；重挂载runtime，查看实际日志；一次只启动一个，delayed poll仍让位 | 前后runtime hash、容器hash、生效日志、连续进程采样、schema1数据未还原 |
+| 旧代码回退守卫 | 新管理器对不支持phase的旧release执行只读检查；有queued/delayed/paused/unverified phase任务时必须拒绝且容器不变 | check-switch返回码/错误、target capability、未完成job清单、检查前后current/containerID |
+
+管理员沿原回执核实的可执行请求（仅已有完整原回执的待核实条目；`curl --user admin` 交互输入密码，命令和证据不含密码）：
+
+```sh
+# 先从验收台/当前正式成片确认这三个值；不要填写新的远端 ID。
+BATCH_A='填写32位batch_id'
+REQUEST_ID='填写原request_id'
+APPROVED_SHA='填写原正式成片64位SHA256'
+export BATCH_A REQUEST_ID APPROVED_SHA EVIDENCE
+python3 - <<'PY'
+import json, os, uuid
+from pathlib import Path
+Path(os.environ['EVIDENCE'], 'verify-request.json').write_text(json.dumps({
+    'request_id': os.environ['REQUEST_ID'], 'sha256': os.environ['APPROVED_SHA'],
+    'submission_token': uuid.uuid4().hex,
+}))
+PY
+BACKEND_PORT=$(python3 -c 'import json; print(json.load(open("/srv/exactcut/config/deployment.json"))["backend_port"])')
+curl --fail-with-body --user admin -H 'X-Exactcut-Request: 1' -H 'Content-Type: application/json' \
+  --data-binary "@$EVIDENCE/verify-request.json" \
+  "http://127.0.0.1:$BACKEND_PORT/exactcut/api/batches/$BATCH_A/verify-delivery" \
+  -o "$EVIDENCE/verify-response.json"
+```
+
+同 token 重复提交应返回原 job；核实查询失败后需要新的 token，但 record/material/批准 SHA 不能改变。接口没有新的上传放行选项，回执不足或远端 ADS 映射为空必须人工核对，不能删 intent 再上传。保存前后 publications、job、audit 动作时间与远端审计，确认外部创建增量为 0。
+
+### 4. 受控崩溃和回退
+
+崩溃注入是验收故障操作，不是发布：先确认当前固定 release、容器唯一且两个验收 batch 无其他用户任务，告知维护窗口。保存上述快照后仅杀已核对的 web 容器；restart策略会重启，随后由当前管理器 recover校验登记版本及健康。不得 kill 任意宿主PID，不在外部上传写入中随意注入故障；如测试交付崩溃窗口，必须单独限定验收素材并保存远端审计。
+
+```sh
+# 执行前再次核对 CONTAINER/current.json；当前管理器已安装。
+docker kill --signal=KILL "$CONTAINER"
+/srv/exactcut/bin/linux-ops --root /srv/exactcut recover
+/srv/exactcut/bin/linux-ops --root /srv/exactcut status
+# 重取容器 ID，记录恢复后的jobs/result/intent/process快照。
+```
+
+旧代码回退必须先排空**队列及活动执行器**，包含 not_before 延迟 poll、暂停/归档仍未完成任务及待核实交付。不能靠 enabled=false转换已落盘phase命令；不能删除job/intent绕过守卫。仅在原对象/记录核实完成、队列排空并确认目标可读schema1后执行管理器rollback，保留当前数据。守卫在现用 Linux 发布管理器；历史 Mac launchctl 管理器不在本轮美东验收路径中。
+
+只读守卫干跑先在有未完成 phase job 时取证，预期退出 1、`allowed=false`；故意检查被拒绝不能让上方 `set -e` 提前结束：
+
+```sh
+OLD_VERSION='填写已核验的不支持阶段协议的历史release ID'
+if /srv/exactcut/bin/linux-ops --root /srv/exactcut check-switch "$OLD_VERSION" > "$EVIDENCE/old-switch-blocked.json"; then
+  echo '意外放行，停止验收' >&2
+  exit 1
+fi
+# JSON字段：target/target_stage_protocol/phase_blockers/active_tasks/allowed，失败可含guard_error。
+# 核对target_stage_protocol=false，blocked清单确有验收phasejob；current/container ID应无变化。
+```
+
+完成全部核实并排空后再执行（目标版本、镜像 ID、commit 和 schema 1 已核验）：
+
+```sh
+/srv/exactcut/bin/linux-ops --root /srv/exactcut check-switch "$OLD_VERSION" > "$EVIDENCE/old-switch-drained.json"
+/srv/exactcut/bin/linux-ops --root /srv/exactcut rollback "$OLD_VERSION" --drain-timeout 900
+/srv/exactcut/bin/linux-ops --root /srv/exactcut status > "$EVIDENCE/after-rollback.json"
+```
+
+新镜像的固定 ID 上有 `io.exactcut.stage-protocol=1`，缺标签视为旧协议，不信任可随意编辑的 metadata 布尔值；`data-schema.json` 仍为 1。必须先安装新管理器，旧管理器本身没有这个守卫。`check-switch` 仅为只读快照诊断，正式 transition 会在维护锁内重查，不能用成功干跑绕过正式发布流程。
