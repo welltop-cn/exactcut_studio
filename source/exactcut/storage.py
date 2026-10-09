@@ -144,13 +144,26 @@ def render_budget(timeline,render):
     return int(duration/1000*rate*4)
 
 
+
+def render_allocations(project, output, budget):
+    # Conservative per-device allowances, not hard byte limits for CRF encoding:
+    # one output peak for final + smaller preview (1/4), and one temporary peak
+    # for reusable base cache (1/4) + cut units/joined intermediate in TMPDIR (1/2).
+    # Preview runs after render temporaries are removed, so these are sequential
+    # peak allowances. Their sum is render_budget even on a single device.
+    paths = {}
+    for directory, size in ((project, budget // 4), (output, budget // 4),
+                            (Path(os.environ.get('TMPDIR', '/tmp')), budget - 2 * (budget // 4))):
+        paths[str(directory)] = paths.get(str(directory), 0) + size
+    return paths
+
 def prepare_render(project,output,timeline,render):
     root=data_root()
     # Only the environment's own data root is eligible for automatic pruning.
     if project.is_relative_to(root):cleanup(root)
     budget=render_budget(timeline,render)
-    for path in {project,output.parent,Path(os.environ.get('TMPDIR','/tmp'))}:
-        require_space(path,budget)
+    for allocation in device_allocations(render_allocations(project, output.parent, budget)).values():
+        require_space(Path(allocation['path']), allocation['bytes'])
 
 
 @contextmanager
@@ -194,7 +207,7 @@ def release(job_id, jobs=None):
     with reservation_lock(jobs) as ledger: ledger['jobs'].pop(job_id, None)
 
 
-def rebuild_reservations(jobs, live_ids, batches=None, root=None, *, inline_ids=()):
+def rebuild_reservations(jobs, live_ids, batches=None, root=None, *, inline_ids=(), scheduler=False):
     """Durable admission survives the spawn-before-PID crash window."""
     from .util import read_json, write_json_atomic
     with reservation_lock(jobs) as ledger:
@@ -214,7 +227,7 @@ def rebuild_reservations(jobs, live_ids, batches=None, root=None, *, inline_ids=
                         paths[directory] = paths.get(directory, 0) + allocation['bytes']
                     allocations = device_allocations(paths)
                 elif batches is not None and root is not None:
-                    try: paths = job_budget(job, batches, root)
+                    try: paths = (scheduler_job_budget if scheduler else job_budget)(job, batches, root)
                     except (ValueError, RuntimeError, OSError):
                         # Existing executors cannot be denied admission retroactively.
                         peak = policy()['episode_budget_bytes'] * 4
@@ -228,12 +241,13 @@ def rebuild_reservations(jobs, live_ids, batches=None, root=None, *, inline_ids=
         ledger['jobs'] = recovered
 
 
-def job_budget(job, batches, root):
+def job_budget(job, batches, root, *, config=None):
     """Reserve fetch bytes and render's independent output/work/cache peaks."""
     from .runtime import source_root
     from .util import read_json
     path = batches / job.get('batch_id', '')
-    phase = job.get('phase') or job.get('lane')
+    from .concurrency import lane
+    phase = job.get('phase') or lane(job)
     if phase == 'fetch':
         count = len(job.get('episodes', []))
         if (path / 'confirmed.json').exists():
@@ -241,24 +255,62 @@ def job_budget(job, batches, root):
             from .workflow import download_plan
             count = len(download_plan(BatchManifest.model_validate(read_json(path / 'confirmed.json')))['required'])
         return {str(source_root()): count * policy()['episode_budget_bytes']}
+    if phase in {'upload', 'poll'} and job.get('batch_id'):
+        from .workflow import preview_file
+        video, _ = preview_file(job['batch_id'], job['request_id'])
+        return {str(video.parent): video.stat().st_size}
     manifest = None
     if phase == 'render' and not job.get('batch_id'):
         from .compiler import compile_workbook
         command = job.get('command') or []
         if '--input' in command and '--project' in command:
             project = Path(command[command.index('--project') + 1])
-            manifest = compile_workbook(Path(command[command.index('--input') + 1]), load_config())
+            manifest = compile_workbook(Path(command[command.index('--input') + 1]), load_config() if config is None else config)
             path = project / 'outputs' / manifest.business_date
     if phase == 'render' and ((path / 'confirmed.json').exists() or manifest is not None):
         from .models import BatchManifest
         from .media import resolve_full_episodes
         manifest = manifest or BatchManifest.model_validate(read_json(path / 'confirmed.json'))
-        render = load_config()['render']
+        render = (load_config() if config is None else config)['render']
         project = root / 'projects' / manifest.drama_id
         manifest = resolve_full_episodes(manifest, project)
         budget = sum(render_budget([item.model_dump(mode='json') for item in request.timeline], render) for request in manifest.requests)
-        allocations = {}
-        for directory in (project, path / 'production', Path(os.environ.get('TMPDIR', '/tmp'))):
-            allocations[str(directory)] = allocations.get(str(directory), 0) + budget
-        return allocations
+        return render_allocations(project, path / 'production', budget)
     return {str(root): 0}
+
+
+
+def scheduler_job_budget(job, batches, root):
+    """Workbook compilation and full-episode probes share bounded off-lock prep."""
+    from . import stage_results
+    from .concurrency import lane
+    from .util import read_json, json_sha256
+    if lane(job) != 'render': return job_budget(job, batches, root)
+    files = []
+    path = batches / job.get('batch_id', '') / 'confirmed.json'
+    if job.get('batch_id') and path.exists():
+        manifest = read_json(path)
+        if not any(item.get('full_episode') or item.get('to_end')
+                   for request in manifest['requests'] for item in request['timeline']):
+            return job_budget(job, batches, root)
+        files = [path, *[p for p in stage_results.source_paths({**job, 'phase': 'render'}, batches, root).values() if p is not None]]
+    elif not job.get('batch_id') and '--input' in (job.get('command') or []):
+        command = job['command']
+        files = [Path(command[command.index('--input') + 1])]
+        # Legacy workbooks may request whole episodes; fence their local originals too.
+        if '--project' in command:
+            project = Path(command[command.index('--project') + 1])
+            files += list((project / 'source/videos').glob('*.mp4'))
+    if not files: return job_budget(job, batches, root)
+    snapshot = {str(file): stage_results.file_identity(file) for file in files}
+    config = load_config()
+    key = ('budget', json_sha256({'job': job, 'snapshot': snapshot, 'config': config}))
+    def prepare():
+        value = job_budget(dict(job), batches, root, config=config)
+        if snapshot != {str(file): stage_results.file_identity(file) for file in files}:
+            raise ValueError('制作输入在预算准备期间发生变化')
+        return value
+    value = stage_results.background(key, prepare)
+    if snapshot != {str(file): stage_results.file_identity(file) for file in files}:
+        raise stage_results.EvidencePending('制作输入变化，等待重新准备预算')
+    return value
