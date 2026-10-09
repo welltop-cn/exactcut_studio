@@ -906,7 +906,8 @@ if __name__ == '__main__':
         from .stage_results import run_child
         raise SystemExit(run_child(globals()[sys.argv[1]], sys.argv[2], sys.argv[3]))
     if sys.argv[1] == 'produce':
-        raise SystemExit(produce(sys.argv[2]))
+        from .stage_results import run_child
+        raise SystemExit(run_child(produce, sys.argv[2]))
     if sys.argv[1] == 'preview':
         raise SystemExit(make_batch_previews(sys.argv[2]))
     raise SystemExit(publish(sys.argv[2], sys.argv[3]))

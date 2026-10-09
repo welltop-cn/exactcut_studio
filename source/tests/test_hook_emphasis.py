@@ -19,6 +19,12 @@ RESPONSE = {'style': 'cold_mystery', 'highlights': [
 ], 'reason': '强调受害者的真实身份与归来的反转身份'}
 
 
+@pytest.fixture(autouse=True)
+def independent_ai_model_budget(monkeypatch):
+    # Model-contract tests mock transport; the real bucket is tested in test_step3_resources.
+    monkeypatch.setattr(semantic.ai_rate, 'acquire', lambda: None)
+
+
 def permit_mock(monkeypatch):
     monkeypatch.setattr(semantic, 'require_ai', lambda: None)
     monkeypatch.setattr(semantic, 'load_env_file', lambda path: None)

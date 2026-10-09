@@ -10,7 +10,20 @@ from .errors import ValidationError
 from .runtime import source_root
 
 
+def bounded_ffmpeg(command: list[str]) -> list[str]:
+    """Our media commands have one output; decoder options belong to each input."""
+    if not command or Path(command[0]).name != 'ffmpeg':
+        return command
+    bounded = [command[0], '-filter_threads', '1', '-filter_complex_threads', '1']
+    for value in command[1:-1]:
+        if value == '-i':
+            bounded.extend(['-threads', '1'])
+        bounded.append(value)
+    return [*bounded, '-threads', '4', command[-1]]
+
+
 def run_checked(command: list[str], *, capture: bool = True, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
+    command = bounded_ffmpeg(command)
     try:
         result = subprocess.run(command, text=True, capture_output=capture, timeout=timeout)
     except subprocess.TimeoutExpired as exc:

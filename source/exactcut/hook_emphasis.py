@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Literal
 
 import httpx
+from . import ai_rate
 from pydantic import BaseModel, ConfigDict
 
 from .errors import ValidationError
@@ -122,6 +123,7 @@ def responses_json(instructions: str, content, schema: dict, name: str, model: s
             'input': [{'role': 'user', 'content': content}],
             'text': {'format': {'type': 'json_schema', 'name': name, 'strict': True, 'schema': schema}}}
     try:
+        ai_rate.acquire()
         with httpx.Client(timeout=httpx.Timeout(45, connect=10)) as client:
             response = client.post(os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1').rstrip('/') + '/responses',
                                    headers={'Authorization': f'Bearer {key}'}, json=body)
@@ -165,24 +167,50 @@ def _request_analysis(clean: str, model: str, correction: str | None = None) -> 
                           Analysis.model_json_schema(), 'hook_emphasis', model)
 
 
-def analyze_grounded(clean: str, model: str):
+def analyze_grounded(clean: str, model: str, *, progress_path: Path | None = None):
+    from .stage_results import ResourceDeferred
+    identity = {'version': VERSION, 'text': clean, 'model': model,
+                'prompt_sha256': hashlib.sha256(SYSTEM.encode()).hexdigest()}
     correction = None
-    for attempt in range(2):
+    first_attempt = 0
+    if progress_path is not None and progress_path.exists():
         try:
-            response = (_request_analysis(clean,model,correction) if correction else _request_analysis(clean,model))
-        except TransientHookAIError:
-            if attempt:
-                raise
-            time.sleep(1)
-            continue
-        try:
-            result = grounded_analysis(clean,response)
-            return response,result
-        except (ValidationError,ValueError,TypeError) as exc:
-            if attempt:
-                raise ValidationError('AI 未生成合规重点，请重试或改用手工选词／不强调；未修改原文') from exc
-            # Model output is untrusted data; do not promote its error text to instructions.
-            correction = '重点未通过原文匹配、数量、字符范围或覆盖率校验'
+            progress = json.loads(progress_path.read_text())
+            if isinstance(progress, dict) and progress.get('identity') == identity and progress.get('correction_pending') is True:
+                first_attempt = 1
+                correction = '重点未通过原文匹配、数量、字符范围或覆盖率校验'
+        except (ValueError, TypeError, OSError):
+            pass
+    try:
+        for attempt in range(first_attempt, 2):
+            try:
+                response = (_request_analysis(clean,model,correction) if correction else _request_analysis(clean,model))
+            except TransientHookAIError:
+                if attempt:
+                    raise
+                time.sleep(1)
+                continue
+            try:
+                result = grounded_analysis(clean,response)
+                return response,result
+            except (ValidationError,ValueError,TypeError) as exc:
+                if attempt:
+                    raise ValidationError('AI 未生成合规重点，请重试或改用手工选词／不强调；未修改原文') from exc
+                # Persist only a trusted marker, never model output/error text as instructions.
+                correction = '重点未通过原文匹配、数量、字符范围或覆盖率校验'
+                if progress_path is not None:
+                    write_json_atomic(progress_path, {'identity': identity, 'correction_pending': True})
+    except ResourceDeferred:
+        raise
+    except Exception:
+        if progress_path is not None and progress_path.exists():
+            try:
+                progress = json.loads(progress_path.read_text())
+                if isinstance(progress, dict) and progress.get('identity') == identity and progress.get('correction_pending') is True:
+                    progress_path.unlink()
+            except (ValueError, TypeError, OSError):
+                pass
+        raise
 
 
 def resolve_emphasis(text: str, cache_dir: Path) -> dict:
@@ -208,7 +236,7 @@ def resolve_emphasis(text: str, cache_dir: Path) -> dict:
                     return {**validated, 'model': model, 'analyzed_at': cached['analyzed_at'], 'cache_key': digest, 'cache_reused': True}
             except (ValueError, KeyError, TypeError, ValidationError):
                 pass
-        response, result = analyze_grounded(clean, model)
+        response, result = analyze_grounded(clean, model, progress_path=path)
         analyzed_at = now_iso()
         write_json_atomic(path, {'identity': identity, 'response': response, 'analyzed_at': analyzed_at})
         return {**result, 'model': model, 'analyzed_at': analyzed_at, 'cache_key': digest, 'cache_reused': False}

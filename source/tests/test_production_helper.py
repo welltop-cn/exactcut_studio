@@ -9,6 +9,12 @@ from exactcut import production_helper as h
 from exactcut.webserver import Handler
 
 
+@pytest.fixture(autouse=True)
+def independent_helper_model_budget(monkeypatch):
+    from exactcut import ai_rate
+    monkeypatch.setattr(ai_rate, 'acquire', lambda: None)
+
+
 def test_scope_and_history_are_enforced():
     h._HISTORY.clear()
     response={'output':[{'type':'message','content':[{'type':'output_text','text':json.dumps({'in_scope':False,'answer':'unrelated answer','sources':[]})}]}]}

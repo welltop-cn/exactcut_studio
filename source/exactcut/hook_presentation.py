@@ -161,7 +161,9 @@ def placement(frames: list[bytes], options: HookOptions, emphasis: dict, cache_d
         decision=select_position([r.model_dump() for r in checked.regions])
         return {**decision,'source':'ai_sampled_frames','reason':checked.reason[:300],'cache_key':key,
                 'frames_checked':len(frames)}
-    except (ValueError, RuntimeError, OSError):
+    except (ValueError, RuntimeError, OSError) as exc:
+        from .stage_results import ResourceDeferred
+        if isinstance(exc, ResourceDeferred): raise
         return {**default,'warning':'AI 画面检查暂时不可用，已采用顶部安全区；请预览核对遮挡'}
 
 

@@ -1,5 +1,8 @@
 """Production connection checks without uploads, table writes or material ingestion."""
 import argparse
+import fcntl
+import hashlib
+import math
 import json
 import os
 import time
@@ -8,8 +11,9 @@ import oss2
 
 from .hook_emphasis import responses_json
 from .publish import CfAdsClient, FeishuClient, FEISHU_FIELD_DEFS, STATUS_FIELD
-from .runtime import environment, project_env_file
-from .util import load_env_file, now_iso
+from .runtime import data_root, environment, project_env_file, protect_path
+from .util import load_env_file, now_iso, read_json, write_json_atomic
+from .stage_results import ResourceDeferred
 
 
 REQUIRED = {
@@ -57,16 +61,53 @@ def check_oss(drama_id, sample_mib):
 def check_ai():
     fallback = os.environ.get('EXACTCUT_HELP_MODEL') or 'gpt-5.6-sol'
     intake = os.environ.get('EXACTCUT_INTAKE_MODEL') or fallback
-    models = dict.fromkeys([os.environ.get('EXACTCUT_HOOK_MODEL') or intake, intake, fallback])
+    models = list(dict.fromkeys([os.environ.get('EXACTCUT_HOOK_MODEL') or intake, intake, fallback]))
     schema = {'type': 'object', 'properties': {'ok': {'type': 'boolean'}},
               'required': ['ok'], 'additionalProperties': False}
-    for model in models:
-        result = responses_json('This is a connection test. Return {"ok":true}.', 'Connection test only.',
-                                schema, 'connection_test', model)
-        if result != {'ok': True}:
-            raise RuntimeError('invalid structured Responses output')
-    return {'status': 'ok', 'models': list(models), 'structured_responses': True,
-            'application_scenarios': 'not_verified'}
+    prompt, content = 'This is a connection test. Return {"ok":true}.', 'Connection test only.'
+    identity = {'models': models, 'prompt': prompt, 'content': content, 'schema': schema,
+                'endpoint': os.environ.get('OPENAI_BASE_URL', 'https://api.openai.com/v1').rstrip('/'),
+                'auth_fingerprint': hashlib.sha256(os.environ.get('OPENAI_API_KEY', '').strip().encode()).hexdigest()}
+    directory = data_root() / '.web-state'
+    protect_path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    progress_path, lock_path = directory / 'ai-preflight.json', directory / 'ai-preflight.lock'
+    protect_path(progress_path); protect_path(lock_path)
+    with lock_path.open('a') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise ResourceDeferred(time.time() + 1, 'AI 连接检查正在进行，请稍后继续') from None
+        now = time.time()
+        checked = {}
+        if progress_path.exists():
+            try:
+                progress = read_json(progress_path)
+                if progress.get('identity') == identity:
+                    checked = {model: stamp for model, stamp in progress.get('checked', {}).items()
+                               if model in models and not isinstance(stamp, bool)
+                               and isinstance(stamp, (int, float)) and math.isfinite(stamp)
+                               and 0 <= now - stamp <= 300}
+            except (ValueError, TypeError, AttributeError, OSError):
+                pass
+        try:
+            for model in models:
+                if model in checked:
+                    continue
+                result = responses_json(prompt, content, schema, 'connection_test', model)
+                if result != {'ok': True}:
+                    raise RuntimeError('invalid structured Responses output')
+                checked[model] = time.time()
+                write_json_atomic(progress_path, {'version': 1, 'identity': identity, 'checked': checked})
+        except ResourceDeferred:
+            raise
+        except Exception:
+            progress_path.unlink(missing_ok=True)
+            raise
+        # Progress is only for a deferred diagnostic. A completed invocation never caches success.
+        progress_path.unlink(missing_ok=True)
+        return {'status': 'ok', 'models': models, 'structured_responses': True,
+                'model_checked_at': checked, 'application_scenarios': 'not_verified'}
 
 
 def check_feishu():
@@ -105,6 +146,8 @@ def run_checks(drama_id, sample_mib):
         try:
             result = probe()
         except Exception as exc:
+            from .stage_results import ResourceDeferred
+            if isinstance(exc, ResourceDeferred): raise
             # Providers can echo passwords or tokens in errors; never print response bodies.
             result = {'status': 'failed', 'error_type': type(exc).__name__}
             status = getattr(exc, 'status', None)
@@ -126,7 +169,13 @@ def main():
     if environment() != 'production':
         raise RuntimeError('External preflight requires production environment')
     load_env_file(project_env_file())
-    report = run_checks(args.drama_id, args.sample_mib)
+    try:
+        report = run_checks(args.drama_id, args.sample_mib)
+    except ResourceDeferred as exc:
+        report = {'status': 'waiting_resource', 'not_before': exc.not_before,
+                  'checked_at': now_iso(), 'environment': environment()}
+        print(json.dumps(report, ensure_ascii=False, indent=2))
+        return 75
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0 if report['status'] == 'ok' else 1
 

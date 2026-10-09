@@ -15,7 +15,9 @@ import httpx
 from PIL import Image, ImageDraw
 
 from .errors import SafetyError
-from .media import duration_ms, load_shots, resolve_episode_video
+from .media import bounded_ffmpeg, duration_ms, load_shots, resolve_episode_video
+from . import ai_rate
+from .stage_results import ResourceDeferred
 from .util import file_sha256, json_sha256, now_iso, write_json_atomic
 
 
@@ -74,7 +76,9 @@ def _gemini_client() -> Any:
         raise SafetyError("缺少 GEMINI_API_KEY")
     from google import genai
 
-    return genai.Client(api_key=api_key)
+    from google.genai import types
+    return genai.Client(api_key=api_key, http_options=types.HttpOptions(
+        retry_options=types.HttpRetryOptions(attempts=1)))
 
 
 def _extract_frame(video: Path, timestamp_ms: int) -> Image.Image:
@@ -82,7 +86,7 @@ def _extract_frame(video: Path, timestamp_ms: int) -> Image.Image:
         "ffmpeg", "-v", "error", "-ss", f"{timestamp_ms / 1000:.3f}", "-i", str(video),
         "-frames:v", "1", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
     ]
-    result = subprocess.run(command, capture_output=True)
+    result = subprocess.run(bounded_ffmpeg(command), capture_output=True)
     if result.returncode or not result.stdout:
         raise SafetyError(f"无法提取安全检查帧：{video.name}@{timestamp_ms}ms")
     return Image.open(io.BytesIO(result.stdout)).convert("RGB")
@@ -114,6 +118,7 @@ def _gemini_images_json(client: Any, model: str, prompt: str, images: list[bytes
 
     contents = [types.Part.from_text(text=prompt)]
     contents.extend(types.Part.from_bytes(data=image, mime_type="image/jpeg") for image in images)
+    ai_rate.acquire()
     response = client.models.generate_content(
         model=model,
         contents=contents,
@@ -199,10 +204,26 @@ def editorial_preflight(project_dir: Path, request: Any, config: dict[str, Any],
         sheet = _contact_sheet(frames)
         last_error: Exception | None = None
         decision = None
-        for attempt in range(int(state.get("request_attempts", 3))):
+        identity = {'fingerprint': fingerprint, 'item': item, 'samples': samples}
+        shot_path = report_path.parent / 'safety-shot-cache' / (json_sha256(identity) + '.json')
+        if shot_path.exists():
+            try:
+                cached = json.loads(shot_path.read_text(encoding='utf-8'))
+                if (cached['identity'] == identity and cached['response_sha256'] == json_sha256(cached['response'])
+                        and cached['response'].get('decision') in {'pass', 'reject'}):
+                    decision = cached['response']
+            except (ValueError, KeyError, TypeError, OSError):
+                pass
+        for attempt in range(0 if decision is not None else int(state.get("request_attempts", 3))):
             try:
                 decision = _gemini_images_json(client, state["editorial_model"], REDLINE_PROMPT, [sheet])
+                if decision.get('decision') not in {'pass', 'reject'}:
+                    raise SafetyError('物理镜头安全检查返回无效决定')
+                write_json_atomic(shot_path, {'identity': identity, 'response': decision,
+                                             'response_sha256': json_sha256(decision)})
                 break
+            except ResourceDeferred:
+                raise
             except Exception as exc:
                 last_error = exc
                 time.sleep(attempt + 1)
@@ -253,27 +274,44 @@ def final_video_gemini(video: Path, config: dict[str, Any], report_path: Path) -
     state = config["safety"]
     digest = file_sha256(video)
     policy = json_sha256({"prompt": FINAL_VIDEO_PROMPT, "model": state["final_video_model"]})
+    identity = {'video_sha256': digest, 'policy_fingerprint': policy}
+    checkpoint = report_path.parent / 'gemini-uploads' / (json_sha256(identity) + '.json')
     if report_path.exists():
         cached = json.loads(report_path.read_text(encoding="utf-8"))
         if cached.get("video_sha256") == digest and cached.get("policy_fingerprint") == policy and cached.get("status") in {"passed", "rejected"}:
+            # A crash after persisting the report can leave only remote cleanup outstanding.
+            if checkpoint.exists():
+                try:
+                    upload = json.loads(checkpoint.read_text(encoding='utf-8'))
+                    if upload['identity'] == identity:
+                        _gemini_client().files.delete(name=upload['name'])
+                        checkpoint.unlink()
+                except Exception:
+                    pass
             return cached
     client = _gemini_client()
     from google.genai import types
 
     uploaded_name = None
     try:
-        with video.open("rb") as handle:
-            uploaded = client.files.upload(file=handle, config=types.UploadFileConfig(mime_type="video/mp4", display_name=video.name))
-        uploaded_name = uploaded.name
-        deadline = time.monotonic() + 1200
-        while True:
-            info = client.files.get(name=uploaded.name)
-            file_state = info.state.name if hasattr(info.state, "name") else str(info.state)
-            if file_state == "ACTIVE":
-                break
-            if file_state == "FAILED" or time.monotonic() >= deadline:
+        if checkpoint.exists():
+            upload = json.loads(checkpoint.read_text(encoding='utf-8'))
+            if upload['identity'] != identity or not isinstance(upload['name'], str) or not upload['name']:
+                raise SafetyError('Gemini 上传检查点无效')
+        else:
+            with video.open("rb") as handle:
+                uploaded = client.files.upload(file=handle, config=types.UploadFileConfig(mime_type="video/mp4", display_name=video.name))
+            upload = {'version': 1, 'identity': identity, 'name': uploaded.name, 'uploaded_at': time.time()}
+            write_json_atomic(checkpoint, upload)
+        uploaded_name = upload['name']
+        info = client.files.get(name=uploaded_name)
+        file_state = info.state.name if hasattr(info.state, "name") else str(info.state)
+        if file_state != "ACTIVE":
+            if file_state == "FAILED" or time.time() >= upload['uploaded_at'] + 1200:
                 raise SafetyError(f"Gemini无法处理成片，state={file_state}")
-            time.sleep(3)
+            raise ResourceDeferred(time.time() + 3, 'Gemini 正在处理成片，稍后继续安全检查')
+        # File lifecycle queries are not model requests. Charge immediately before inference.
+        ai_rate.acquire()
         response = client.models.generate_content(
             model=state["final_video_model"],
             contents=[types.Part.from_uri(file_uri=info.uri, mime_type="video/mp4"), types.Part.from_text(text=FINAL_VIDEO_PROMPT)],
@@ -286,15 +324,18 @@ def final_video_gemini(video: Path, config: dict[str, Any], report_path: Path) -
             "status": "rejected" if violations else "passed", "allowed": not violations,
             "model": state["final_video_model"], **analysis,
         }
+    except ResourceDeferred:
+        # Keep the remote handle and local checkpoint across processing/quota deferrals.
+        raise
     except Exception as exc:
         report = {"checked_at": now_iso(), "video_sha256": digest, "policy_fingerprint": policy, "status": "unverified", "allowed": False, "error": str(exc)}
-    finally:
-        if uploaded_name:
-            try:
-                client.files.delete(name=uploaded_name)
-            except Exception:
-                pass
     write_json_atomic(report_path, report)
+    if uploaded_name:
+        try:
+            client.files.delete(name=uploaded_name)
+            checkpoint.unlink(missing_ok=True)
+        except Exception:
+            pass
     return report
 
 
@@ -344,6 +385,7 @@ def final_video_gpt_frames(video: Path, boundaries_ms: list[int], config: dict[s
     }
     endpoint = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/") + "/responses"
     try:
+        ai_rate.acquire()
         with httpx.Client(timeout=180) as client:
             response = client.post(endpoint, headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"}, json=request)
             response.raise_for_status()
@@ -354,8 +396,9 @@ def final_video_gpt_frames(video: Path, boundaries_ms: list[int], config: dict[s
             "status": "rejected" if rejected else "passed", "allowed": not rejected,
             "model": state["gpt_frame_model"], "sample_count": len(frames), "boundary_count": len(boundaries_ms), **analysis,
         }
+    except ResourceDeferred:
+        raise
     except Exception as exc:
         report = {"checked_at": now_iso(), "video_sha256": digest, "policy_fingerprint": policy, "status": "unverified", "allowed": False, "error": str(exc)}
     write_json_atomic(report_path, report)
     return report
-

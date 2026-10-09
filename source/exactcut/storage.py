@@ -194,11 +194,11 @@ def release(job_id, jobs=None):
     with reservation_lock(jobs) as ledger: ledger['jobs'].pop(job_id, None)
 
 
-def rebuild_reservations(jobs, live_ids, batches=None, root=None):
+def rebuild_reservations(jobs, live_ids, batches=None, root=None, *, inline_ids=()):
     """Durable admission survives the spawn-before-PID crash window."""
     from .util import read_json, write_json_atomic
     with reservation_lock(jobs) as ledger:
-        recovered = {}
+        recovered = {key: value for key, value in ledger['jobs'].items() if key in inline_ids}
         for file in jobs.glob('*.json'):
             job = read_json(file)
             if job['id'] in live_ids:

@@ -10,5 +10,18 @@
     "source_cache_gib": 8,
     "source_evict_below_gib": 16,
     "episode_budget_gib": 2
+  },
+  "concurrency": {
+    "enabled": true,
+    "fetch": 2,
+    "render": 3,
+    "upload": 2,
+    "poll": 1,
+    "max_active_children": 8,
+    "hook_previews": 1,
+    "ai": {
+      "requests_per_minute": 6,
+      "burst": 1
+    }
   }
 }

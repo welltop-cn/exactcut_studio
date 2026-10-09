@@ -70,6 +70,11 @@ def _manifest_from_args(args: argparse.Namespace, config: dict) -> tuple[object,
 
 
 def main(argv: list[str] | None = None) -> int:
+    from .stage_results import run_child
+    return run_child(_main, argv)
+
+
+def _main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
@@ -106,6 +111,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
         return 0
     except (ExactCutError, FileNotFoundError, ValueError, RuntimeError) as exc:
+        from .stage_results import ResourceDeferred
+        if isinstance(exc, ResourceDeferred): raise
         print(json.dumps({"status": "error", "error_type": type(exc).__name__, "error": str(exc)}, ensure_ascii=False, indent=2), file=sys.stderr)
         return 2
 

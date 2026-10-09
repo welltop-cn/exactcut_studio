@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Literal
 from zipfile import ZipFile
 import httpx
+from . import ai_rate
 from openpyxl import load_workbook
 from pydantic import BaseModel, ConfigDict, ValidationError
 from .intake import finish_draft
@@ -22,7 +23,7 @@ from .runtime import CODE_ROOT, data_root, require_ai, instance_marker, environm
 from .runtime import project_env_file
 
 ROOT = data_root()
-SLOTS = threading.BoundedSemaphore(2)
+SLOTS = threading.BoundedSemaphore(1)
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -105,6 +106,7 @@ def interpret(payload):
             'text':{'format':{'type':'json_schema','name':'excel_interpretation','strict':True,
                               'schema':Interpretation.model_json_schema()}}}
     try:
+        ai_rate.acquire()
         with httpx.Client(timeout=httpx.Timeout(85,connect=10)) as client:
             response = client.post(os.getenv('OPENAI_BASE_URL','https://api.openai.com/v1').rstrip('/')+'/responses',
                                    headers={'Authorization':f'Bearer {key}'}, json=body)

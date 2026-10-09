@@ -129,12 +129,13 @@ def analyze_frame_image(image: Image.Image) -> dict[str, Any]:
 
 
 def extract_first_frame_profile(video_path: Path, temp_dir: Path) -> dict[str, Any]:
+    from .media import bounded_ffmpeg
     frame_path = temp_dir / "hook_visual_first_frame.jpg"
     subprocess.run(
-        [
+        bounded_ffmpeg([
             "ffmpeg", "-y", "-v", "error", "-ss", "0.050", "-i", str(video_path),
             "-frames:v", "1", "-vf", "scale=270:480", "-q:v", "2", str(frame_path),
-        ],
+        ]),
         check=True,
         capture_output=True,
         text=True,

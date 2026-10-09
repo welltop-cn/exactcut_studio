@@ -27,9 +27,9 @@ services:
       EXACTCUT_PORT: "8792"
       EXACTCUT_BIND: 0.0.0.0
       EXACTCUT_RELEASE_ID: ${EXACTCUT_RELEASE_ID:?Set a release ID}
-    cpus: ${EXACTCUT_CPUS:-1.0}
-    mem_limit: ${EXACTCUT_MEMORY:-2g}
-    pids_limit: 256
+    cpus: ${EXACTCUT_CPUS:-14.0}
+    mem_limit: ${EXACTCUT_MEMORY:-24g}
+    pids_limit: 512
     logging:
       driver: json-file
       options:

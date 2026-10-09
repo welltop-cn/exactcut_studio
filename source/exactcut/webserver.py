@@ -31,7 +31,7 @@ WORK = queue.Queue()
 LOCK = threading.Lock()
 WORKER_HEARTBEAT = 0.0
 WORKER_FAILURES = 0
-HOOK_PREVIEWS = threading.BoundedSemaphore(2)
+INLINE_RENDERS = set()
 
 
 def web_base_path():
@@ -250,18 +250,19 @@ def requeue_stage(job):
 
 
 def finish_job(job, code=None, message='执行进程已结束，可查看日志后重试', *, local_failure=False):
+    result = stage_results.verified(job, JOBS, workflow.BATCHES, workflow.ROOT) if job.get('attempt') else None
+    if result and result['status'] == 'waiting_resource':
+        job['result_ref'] = str(stage_results.result_path(job, JOBS))
+        job.update(status='queued', not_before=result['not_before'])
+        for field in ('pid', 'pgid', 'process_token', 'admission', 'input_fingerprint'): job.pop(field, None)
+        storage.release(job['id'], JOBS)
+        save(job)
+        if job.get('batch_id'):
+            workflow.update(workflow.BATCHES / job['batch_id'], 'queued', '等待资源，稍后继续本阶段', executor_running=False, not_before=result['not_before'])
+        return
     if job.get('phase') and job.get('attempt'):
-        result = stage_results.verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
         if result:
             job['result_ref'] = str(stage_results.result_path(job, JOBS))
-            if result['status'] == 'waiting_resource':
-                job.update(status='queued', not_before=result['not_before'])
-                for field in ('pid', 'pgid', 'process_token', 'admission', 'input_fingerprint'): job.pop(field, None)
-                storage.release(job['id'], JOBS)
-                save(job)
-                if job.get('batch_id'):
-                    workflow.update(workflow.BATCHES / job['batch_id'], 'queued', '等待资源，稍后继续本阶段', executor_running=False, not_before=result['not_before'])
-                return
             code = result['exit_code']
             if result['status'] == 'unverified': code = 2
         elif not local_failure and not delivery_uncertain(job):
@@ -363,7 +364,7 @@ def recover_jobs(*, enqueue=False, owned=None):
                 save(job)
                 live.add(batch); live_ids.add(job['id'])
                 continue
-            if job.get('phase') and job.get('attempt') and job.get('process_token'):
+            if job.get('attempt') and job.get('process_token'):
                 result = stage_results.verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
                 if result:
                     finish_job(job, result['exit_code'])
@@ -402,6 +403,12 @@ def recover_jobs(*, enqueue=False, owned=None):
                     if batch: workflow.update(path, 'queued', '执行中断，等待继续本阶段', executor_running=False)
                     if enqueue: WORK.put((job, job['command']))
                     continue
+            if job.get('attempt') and not job.get('phase'):
+                result = stage_results.verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
+                if result and result['status'] == 'waiting_resource':
+                    finish_job(job, result['exit_code'])
+                    queued.add(batch)
+                    continue
             code = None
             if batch and (workflow.BATCHES / batch / 'runtime.json').exists():
                 state = workflow.runtime(workflow.BATCHES / batch)['status']
@@ -425,7 +432,7 @@ def recover_jobs(*, enqueue=False, owned=None):
                     result = read_json(file) if file.exists() else {}
                     code = 0 if result.get('status') == 'completed' else 2 if result.get('status') == 'failed' else None
             finish_job(job, code)
-    storage.rebuild_reservations(JOBS, live_ids, workflow.BATCHES, workflow.ROOT)
+    storage.rebuild_reservations(JOBS, live_ids, workflow.BATCHES, workflow.ROOT, inline_ids=INLINE_RENDERS)
     # Stage completion may have queued a successor after the recovery snapshot.
     queued.update(job.get('batch_id') for job in stored_jobs() if job.get('status') == 'queued')
     for file in workflow.BATCHES.glob('*/runtime.json'):
@@ -466,6 +473,66 @@ def fair_pending(pending):
                 yield owner, groups[owner].pop(0)
 
 
+def resource_usage(owned=None):
+    owned = owned or {}
+    counts = {key: 0 for key in concurrency.LANES}
+    counts['render'] = len(INLINE_RENDERS)
+    batches = set()
+    legacy_projects = {job.get('project') for job, _, _ in owned.values() if not job.get('batch_id') and job.get('project')}
+    tokens = set(INLINE_RENDERS)
+    for job, _, _ in owned.values():
+        token = job.get('process_token') or job['id']
+        tokens.add(token)
+        if batch_control.child_state(job) != 'T':
+            counts[concurrency.lane(job)] += 1
+        if job.get('batch_id'):
+            batches.add(job['batch_id'])
+    for path in workflow.BATCHES.glob('*'):
+        for child in batch_control.own_live_children(path):
+            batches.add(path.name)
+            token = child['process_token']
+            if token not in tokens and batch_control.child_state(child) != 'T':
+                counts[concurrency.lane(child)] += 1
+            tokens.add(token)
+    for job in stored_jobs():
+        if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
+            if job.get('project'): legacy_projects.add(job['project'])
+            token = job['process_token']
+            if token not in tokens and batch_control.child_state(job) != 'T':
+                counts[concurrency.lane(job)] += 1
+            tokens.add(token)
+    return counts, tokens, batches, legacy_projects
+
+
+def admit_hook_preview(project):
+    """Inline frame work shares render/memory slots and reserves its temporary peak."""
+    from .util import load_config
+    with LOCK, batch_control.LOCK:
+        limits = concurrency.settings()
+        counts, tokens, _, _ = resource_usage()
+        if (len(INLINE_RENDERS) >= limits['hook_previews'] or counts['render'] >= limits['render']
+                or len(tokens) >= limits['max_active_children']
+                or (not limits['enabled'] and sum(counts.values()))):
+            raise stage_results.ResourceDeferred(time.time() + 1, '制作或预览资源繁忙，请稍后重试')
+        token = 'inline-' + uuid.uuid4().hex
+        # Up to sixteen sampled frames, full-resolution overlays and copied JSON decisions.
+        render = load_config()['render']
+        peak = max(64 * 1024**2, int(render['width'] * render['height']) * 16 * 4)
+        cache_bytes = sum(p.stat().st_size for name in ('hook-emphasis', 'hook-placement')
+                          for p in (project / 'cache' / name).glob('*.json') if not p.is_symlink())
+        paths = {str(project): peak, str(Path(tempfile.gettempdir())): peak + cache_bytes}
+        if not storage.reserve(token, paths, JOBS):
+            raise stage_results.ResourceDeferred(time.time() + 1, '预览磁盘资源不足，请稍后重试')
+        INLINE_RENDERS.add(token)
+        return token
+
+
+def release_hook_preview(token):
+    with LOCK:
+        INLINE_RENDERS.discard(token)
+        storage.release(token, JOBS)
+
+
 def worker_tick(pending, owned):
     while True:
         try:
@@ -493,6 +560,7 @@ def worker_tick(pending, owned):
                 pending.remove(entry)
                 WORK.task_done()
         external_active = {key: 0 for key in concurrency.LANES}
+        external_active['render'] = len(INLINE_RENDERS)
         external_tokens = set()
         for job, _, _ in owned.values():
             if not job.get('batch_id') and batch_control.child_state(job) != 'T':
@@ -523,31 +591,7 @@ def worker_tick(pending, owned):
                 pending.append(WORK.get_nowait())
                 known.add(durable['id'])
         limits = concurrency.settings()
-        counts = {key: 0 for key in concurrency.LANES}
-        batches = set()
-        legacy_projects = {job.get('project') for job, _, _ in owned.values() if not job.get('batch_id') and job.get('project')}
-        tokens = set()
-        for job, _, _ in owned.values():
-            token = job.get('process_token') or job['id']
-            tokens.add(token)
-            if batch_control.child_state(job) != 'T':
-                counts[concurrency.lane(job)] += 1
-            if job.get('batch_id'):
-                batches.add(job['batch_id'])
-        for path in workflow.BATCHES.glob('*'):
-            for child in batch_control.own_live_children(path):
-                batches.add(path.name)
-                token = child['process_token']
-                if token not in tokens and batch_control.child_state(child) != 'T':
-                    counts[concurrency.lane(child)] += 1
-                tokens.add(token)
-        for job in stored_jobs():
-            if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
-                if job.get('project'): legacy_projects.add(job['project'])
-                token = job['process_token']
-                if token not in tokens and batch_control.child_state(job) != 'T':
-                    counts[concurrency.lane(job)] += 1
-                tokens.add(token)
+        counts, tokens, batches, legacy_projects = resource_usage(owned)
         for owner, entry in fair_pending(pending):
             job, cmd = entry
             file = JOBS / (job['id'] + '.json')
@@ -561,7 +605,7 @@ def worker_tick(pending, owned):
             if job.get('not_before', 0) > time.time():
                 continue
             resource = concurrency.lane(job)
-            if counts[resource] >= limits[resource] or sum(counts.values()) >= limits['max_active_children']:
+            if counts[resource] >= limits[resource] or len(tokens) >= limits['max_active_children']:
                 continue
             if not limits['enabled'] and sum(counts.values()):
                 continue
@@ -575,9 +619,8 @@ def worker_tick(pending, owned):
                 allocations = storage.job_budget(job, workflow.BATCHES, workflow.ROOT)
                 if not storage.reserve(job['id'], allocations, JOBS): continue
                 job['admission'] = {'paths': allocations, 'allocations': storage.device_allocations(allocations), 'at': time.time()}
-                if job.get('phase'):
-                    job['attempt'] = job.get('attempt', 0) + 1
-                    job['input_fingerprint'] = stage_results.fingerprint(job, workflow.BATCHES, workflow.ROOT)
+                job['attempt'] = job.get('attempt', 0) + 1
+                job['input_fingerprint'] = stage_results.fingerprint(job, workflow.BATCHES, workflow.ROOT)
             except (ValueError, RuntimeError, OSError) as exc:
                 finish_job(job, -1, str(exc), local_failure=True); pending.remove(entry); WORK.task_done(); continue
             log = None
@@ -608,6 +651,7 @@ def worker_tick(pending, owned):
                 if identity and batch:
                     batch_control.remember_child(workflow.folder(batch), identity)
                 counts[resource] += 1
+                tokens.add(token)
                 if batch:
                     batches.add(batch)
                 elif job.get('project'):
@@ -899,6 +943,8 @@ class Handler(BaseHTTPRequestHandler):
         match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/hook-preview', self.path)
         if match:
             return self.hook_preview(match[1])
+        if self.path == '/api/help':
+            return self.handle_post()
         with mutation_lock():
             self.handle_post()
 
@@ -910,7 +956,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.headers.get('X-Exactcut-Request') != '1':
             return self.respond(403, {'error':'无效请求来源'})
-        acquired = False
+        admission = None
         try:
             size = int(self.headers.get('Content-Length','0'))
             if not 1 <= size <= 10000:
@@ -942,12 +988,15 @@ class Handler(BaseHTTPRequestHandler):
                 protect_path(project)
                 request = manifest.requests[index]
                 fingerprint = json_sha256(snapshot['draft'])
-            acquired = HOOK_PREVIEWS.acquire(blocking=False)
-            if not acquired:
-                return self.respond(429,{'error':'已有两条 Hook 在预览，请稍后再试'})
+            admission = admit_hook_preview(project)
             # Network/model calls and media reads use temporary files, outside the write barrier.
             with tempfile.TemporaryDirectory(prefix='exactcut-hook-preview-') as temp:
-                result, doc, cache = compute(project,request,Path(temp))
+                deferred = None
+                try:
+                    result, doc, cache = compute(project,request,Path(temp))
+                except stage_results.ResourceDeferred as exc:
+                    deferred = exc
+                    cache = Path(temp) / 'cache'
                 with mutation_lock(), LOCK:
                     if maintenance_file().exists():
                         return self.respond(503,{'error':'正在发布维护，预览结果未保存，请稍后重试'})
@@ -961,13 +1010,17 @@ class Handler(BaseHTTPRequestHandler):
                     for directory in ('hook-emphasis','hook-placement'):
                         for file in (cache/directory).glob('*.json'):
                             write_json_atomic(project/'cache'/directory/file.name,read_json(file))
+                    if deferred is not None:
+                        return self.respond(429, {'error': str(deferred), 'not_before': deferred.not_before})
                     write_json_atomic(project/'cache/hook-previews'/f"{result['preview_key']}.json",doc)
                     return self.respond(200,result)
+        except stage_results.ResourceDeferred as exc:
+            self.respond(429, {'error': str(exc), 'not_before': exc.not_before})
         except (ValueError,KeyError,TypeError,RuntimeError,OSError) as exc:
             self.respond(400,{'error':str(exc)})
         finally:
-            if acquired:
-                HOOK_PREVIEWS.release()
+            if admission:
+                release_hook_preview(admission)
 
     def handle_post(self):
         if self.path != '/api/login' and not self.authorized():
@@ -1131,6 +1184,8 @@ class Handler(BaseHTTPRequestHandler):
                 (folder / name).write_bytes(content)
                 return self.respond(201, {'name': name})
             self.respond(404, {'error': '不存在'})
+        except stage_results.ResourceDeferred as exc:
+            self.respond(429, {'error': str(exc), 'not_before': exc.not_before})
         except (ValueError, KeyError, TypeError, RuntimeError) as exc:
             from .error_guidance import guidance, redact
             self.respond(400, {'error': redact(exc), 'error_info': guidance(str(exc))})
@@ -1143,6 +1198,7 @@ def main():
     env_file = project_env_file()
     if env_file.is_file() or os.environ.get('EXACTCUT_ENV_FILE'):
         load_env_file(env_file)
+    concurrency.settings()
     base_path = web_base_path()
     claim_data_root()
     worker_enabled = os.environ.get('EXACTCUT_WORKER_ENABLED', '1') == '1'

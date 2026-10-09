@@ -10,6 +10,8 @@ from test_workflow import workspace, imported, complete_asset
 
 @pytest.fixture
 def runner(tmp_path, monkeypatch):
+    from exactcut import concurrency
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {})
     monkeypatch.setattr(workflow, 'BATCHES', tmp_path / 'batches'); workflow.BATCHES.mkdir()
     monkeypatch.setattr(web, 'JOBS', tmp_path / 'jobs'); web.JOBS.mkdir()
     monkeypatch.setattr(web, 'WORK', queue.Queue())

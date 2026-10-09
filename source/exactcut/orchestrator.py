@@ -208,6 +208,10 @@ def execute_batch(
                     record["fbbm"] = ready
                     record["status"] = "fbbm_ready"
         except Exception as exc:
+            from .stage_results import ResourceDeferred
+            if isinstance(exc, ResourceDeferred):
+                record.update(status='waiting_resource', not_before=exc.not_before)
+                raise
             if staged.exists():
                 quarantine = failed_dir / f"{request.request_id}-{staged.name}"
                 if quarantine.exists():
