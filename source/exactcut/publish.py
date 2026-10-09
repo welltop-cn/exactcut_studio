@@ -253,11 +253,13 @@ class CfAdsClient:
         self.token = ""
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        attempts = 1 if GUARDED_DELIVERY.get() else 4
+        guarded = GUARDED_DELIVERY.get()
+        attempts = 2 if guarded else 4
+        custom_headers = kwargs.pop('headers', {})
         for attempt in range(attempts):
             if not self.token and path != "/api/v1/auth/login":
                 self.login()
-            headers = kwargs.pop("headers", {})
+            headers = dict(custom_headers)
             if self.token:
                 headers = {**headers, "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
             response = requests.request(method, f"{self.base}{path}", headers=headers, timeout=self.timeout, **kwargs)
@@ -265,11 +267,11 @@ class CfAdsClient:
                 payload = response.json()
             except ValueError as exc:
                 raise PublishError(f"CF-Ads返回非JSON：HTTP {response.status_code}") from exc
-            if payload.get("code") in (100006, 100009) and attempt == 0 and attempts > 1:
+            if payload.get("code") in (100006, 100009) and attempt == 0:
                 self.token = ""
                 self.login()
                 continue
-            if payload.get("code") not in (200, 200005, 200008) and attempt < attempts - 1:
+            if payload.get("code") not in (200, 200005, 200008) and not guarded and attempt < attempts - 1:
                 time.sleep(2**attempt)
                 continue
             return payload
@@ -412,6 +414,25 @@ def sync_record_once(record_id: str) -> dict[str, Any]:
     if video_id: expected["视频ID"] = str(video_id)
     verify_sync_fields(feishu, record_id, expected)
     return result
+
+
+def verify_record_once(binding):
+    """Read only the saved record/material: no ingest, resync, or Feishu writes."""
+    record_id, material_id = binding['record_id'], binding['material_id']
+    record = FeishuClient().get_record(record_id)
+    fields = record.get('fields') or {}
+    url_value = fields.get('OSS_URL')
+    oss_url = url_value.get('link') if isinstance(url_value, dict) else str(url_value or '')
+    remote_material = str(fields.get('ADS素材ID') or '').strip()
+    if (str(record.get('record_id') or record.get('id') or '') != record_id
+            or oss_url != binding['oss_url'] or remote_material != material_id):
+        raise PublishError('保存回执与飞书原记录身份、URL 或素材 ID 不一致，待核实')
+    material = CfAdsClient().sync_status(material_id)
+    status = str(material.get('facebook_bm_sync_status') or 'none')
+    video = material.get('facebook_bm_video_id')
+    return {'record_id': record_id, 'material_id': material_id, 'fb_status': status,
+            'video_id': video, 'thumbnail': material.get('facebook_thumbnail_url'),
+            'action': 'ready' if status == 'ready' and video else 'failed' if status in {'failed', 'none', ''} else 'syncing'}
 
 
 def wait_until_ready(record_id: str, config: dict[str, Any]) -> dict[str, Any]:

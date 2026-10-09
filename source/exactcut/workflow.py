@@ -592,18 +592,28 @@ def reject_review_sha(record, sha256):
         raise ValueError('不能使用审片文件的校验值上传，请确认正式成片')
 
 
-def queue_publish(batch_id, request_id, sha256):
+def approval_evidence(batch_id, request_id, sha256, evidence=None):
+    from .stage_results import digest_evidence, file_identity
+    video, record = preview_file(batch_id, request_id)
+    reject_review_sha(record, sha256)
+    evidence = digest_evidence(video) if evidence is None else evidence
+    if (sha256 != record.get('output_sha256') or evidence.get('sha256') != sha256
+            or evidence.get('path') != str(video) or evidence.get('stat') != file_identity(video)):
+        raise ValueError('成片版本已变化，请重新预览后再确认')
+    return evidence
+
+
+def queue_publish(batch_id, request_id, sha256, *, _evidence=None):
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
     if runtime(path)['status'] in ACTIVE - {'publishing'}:
         raise ValueError('当前批次正在制作，请完成后再提交上传')
     reject_review_sha(result_records(path).get(request_id, {}), sha256)
     video, record = preview_file(batch_id, request_id)
-    if sha256 != record.get('output_sha256') or file_sha256(video) != sha256:
-        raise ValueError('成片版本已变化，请重新预览后再确认')
+    approval_evidence(batch_id, request_id, sha256, _evidence)
     with publication_lock(path):
         publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
-        if publications.get(request_id, {}).get('status') == 'unverified' or publications.get(request_id, {}).get('intent', {}).get('status') == 'pending':
+        if publications.get(request_id, {}).get('verification_history') or publications.get(request_id, {}).get('verification_only') or publications.get(request_id, {}).get('status') == 'unverified' or publications.get(request_id, {}).get('intent', {}).get('status') == 'pending':
             raise ValueError('外部交付结果待核实，禁止重复提交；请先核实原对象和记录')
         if publications.get(request_id, {}).get('status') == 'fbbm_ready':
             raise ValueError('此素材已上传 FBBM，无需重复提交')
@@ -615,6 +625,52 @@ def queue_publish(batch_id, request_id, sha256):
         write_json_atomic(path / 'publications.json', publications)
     update(path, 'publishing', f'{request_id} 已确认预览，等待上传 FBBM', active_request=request_id)
     return [sys.executable, '-u', '-m', 'exactcut.workflow', 'publish', batch_id, request_id, instance_marker()]
+
+
+def verification_binding(entry):
+    """Fail closed on ambiguous identity; only durable saved receipts are trusted."""
+    publication = entry.get('publication') or {}
+    intent = entry.get('intent') or {}
+    fbbm = entry.get('fbbm') or {}
+    existing = entry.get('verification_only') or {}
+    intents = [intent, *entry.get('verification_history', [])]
+    receipts = [value.get('receipt') or {} for value in intents]
+    def known(values, name):
+        values = {str(value) for value in values if value not in (None, '')}
+        if len(values) != 1: raise ValueError('交付回执缺失或冲突：' + name)
+        return values.pop()
+    record_id = known([publication.get('feishu_record_id'), fbbm.get('record_id'), existing.get('record_id'),
+                       *[value.get('feishu_record_id') for value in intents],
+                       *[value.get('feishu_record_id') for value in receipts], *[value.get('record_id') for value in receipts]], 'record_id')
+    material_id = known([fbbm.get('material_id'), existing.get('material_id'), *[value.get('material_id') for value in receipts]], 'material_id')
+    sha = known([entry.get('approved_sha256'), publication.get('sha256'), existing.get('approved_sha256'),
+                 *[value.get('approved_sha256') for value in intents], *[value.get('sha256') for value in receipts]], 'sha256')
+    url = known([publication.get('oss_url'), existing.get('oss_url'), *[value.get('oss_url') for value in receipts]], 'oss_url')
+    key = known([publication.get('oss_key'), existing.get('oss_key'), *[value.get('oss_key') for value in intents],
+                 *[value.get('oss_key') for value in receipts]], 'oss_key')
+    return {'record_id': record_id, 'material_id': material_id, 'approved_sha256': sha, 'oss_url': url, 'oss_key': key}
+
+
+def queue_verify_delivery(batch_id, request_id, sha256, *, _evidence=None):
+    path = folder(batch_id)
+    batch_control.ensure_editable(path, execution=True)
+    if runtime(path)['status'] in ACTIVE - {'publishing'}:
+        raise ValueError('当前批次正在制作，请完成后再核实')
+    approval_evidence(batch_id, request_id, sha256, _evidence)
+    with publication_lock(path):
+        publications = read_json(path / 'publications.json')
+        entry = publications[request_id]
+        if not delivery_blocked(entry): raise ValueError('仅待核实交付可继续查询')
+        binding = verification_binding(entry)
+        if binding['approved_sha256'] != sha256: raise ValueError('确认校验值与原交付不一致')
+        entry.setdefault('verification_history', []).append(entry.get('intent') or {})
+        entry.update(verification_only=binding, status='fbbm_queued', poll_started=time.time())
+        entry['intent'] = {'phase': 'verification', 'status': 'verified', **binding, 'created_at': now_iso()}
+        entry.pop('error', None)
+        publications[request_id] = entry
+        write_json_atomic(path / 'publications.json', publications)
+    update(path, 'publishing', f'{request_id}：只读核实原记录，等待查询位置', active_request=request_id)
+    return [sys.executable, '-u', '-m', 'exactcut.workflow', 'poll', batch_id, request_id, instance_marker()]
 
 
 def add_feedback(batch_id, data):
@@ -806,8 +862,8 @@ def upload(batch_id, request_id):
         started = time.monotonic()
         attempted = False
         try:
-            if delivery_blocked(entry):
-                raise ValueError('外部交付结果待核实，禁止自动重放')
+            if delivery_blocked(entry) or entry.get('verification_only') or entry.get('verification_history'):
+                raise ValueError('外部交付结果待核实，只允许查询原回执，禁止上传')
             video, record = preview_file(batch_id, request_id)
             if record.get('output_sha256') != entry['approved_sha256'] or file_sha256(video) != entry['approved_sha256']:
                 raise ValueError('预览确认后成片已变化，停止上传')
@@ -832,7 +888,7 @@ def upload(batch_id, request_id):
             entry.setdefault('poll_started', time.time())
             entry.pop('error', None)
         except Exception as exc:
-            unknown = attempted or delivery_blocked(entry)
+            unknown = attempted or delivery_blocked(entry) or bool(entry.get('verification_only') or entry.get('verification_history'))
             entry.update(status='unverified' if unknown else 'publish_failed', error=('待核实：' if unknown else '') + str(exc))
         metrics = entry.setdefault('stage_seconds', {})
         metrics['upload'] = round(metrics.get('upload', 0) + time.monotonic() - started, 3)
@@ -842,7 +898,7 @@ def upload(batch_id, request_id):
 
 def poll(batch_id, request_id):
     """One guarded sync (which may ingest/resync/write), then release the lane."""
-    from .publish import sync_record_once, guarded_delivery
+    from .publish import sync_record_once, verify_record_once, guarded_delivery
     path = folder(batch_id)
     with execution(path, request_id):
         manifest, request = request_for(path, request_id)
@@ -852,19 +908,24 @@ def poll(batch_id, request_id):
         try:
             if delivery_blocked(entry):
                 raise ValueError('外部交付结果待核实，禁止自动重放')
+            if entry.get('verification_history') and not entry.get('verification_only'):
+                raise ValueError('只读核实标识缺失，禁止回退到普通同步')
             if entry.get('status') == 'fbbm_ready': return 0
             config = load_config()['publish']
             entry.setdefault('poll_started', time.time())
             store_publication(path, request_id, entry)
             if time.time() >= entry['poll_started'] + int(config['wait_timeout_seconds']):
                 raise RuntimeError('等待 FBBM 就绪超时，可重试继续查询原记录')
-            record_id = str(entry['publication']['feishu_record_id'])
+            binding = verification_binding(entry) if entry.get('verification_only') else None
+            if binding and binding != entry['verification_only']: raise ValueError('只读核实身份已变化')
+            record_id = binding['record_id'] if binding else str(entry['publication']['feishu_record_id'])
             delivery_intent(path, request_id, entry, 'poll')
             attempted = True
             def receipt(value):
                 entry['intent'].setdefault('receipt', {}).update(value)
                 store_publication(path, request_id, entry)
-            with guarded_delivery(receipt=receipt): result = sync_record_once(record_id)
+            with guarded_delivery(receipt=receipt):
+                result = verify_record_once(binding) if binding else sync_record_once(record_id)
             if result.get('record_id') != record_id:
                 raise ValueError('同步返回记录与交付意图不一致')
             entry['intent'].update(status='verified', verified_at=now_iso())
@@ -879,7 +940,7 @@ def poll(batch_id, request_id):
                 raise RuntimeError('FBBM 同步失败，请查看平台原因后继续查询原记录')
             else: entry['status'] = 'fbbm_queued'
         except Exception as exc:
-            unknown = attempted or delivery_blocked(entry)
+            unknown = attempted or delivery_blocked(entry) or bool(entry.get('verification_only') or entry.get('verification_history'))
             entry.update(status='unverified' if unknown else 'publish_failed', error=('待核实：' if unknown else '') + str(exc))
         metrics = entry.setdefault('stage_seconds', {})
         metrics['fbbm'] = round(metrics.get('fbbm', 0) + time.monotonic() - started, 3)

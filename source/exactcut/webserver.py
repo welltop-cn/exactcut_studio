@@ -186,6 +186,9 @@ def stage_command(job, phase):
 
 def prepare_staged_job(job):
     """Preserve public actions and submission tokens while selecting a short phase."""
+    if job.get('action') == 'verify-delivery':
+        job.update(phase='poll', lane='poll', command=stage_command(job, 'poll'))
+        return job
     if not concurrency.settings()['enabled'] or not job.get('batch_id'):
         return job
     if job.get('action') == 'start':
@@ -292,8 +295,8 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
             publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
             rid = job.get('request_id')
             entry = publications.get(rid, {})
-            if workflow.delivery_blocked(entry):
-                entry.update(status='unverified', error='待核实：外部写入期间执行中断，禁止重放')
+            if workflow.delivery_blocked(entry) or entry.get('verification_only') or entry.get('verification_history'):
+                entry.update(status='unverified', error='待核实：交付阶段中断，只能核实原回执')
                 publications = workflow.store_publication(path, rid, entry)
                 job.update(status='unverified'); save(job)
             elif entry.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'}:
@@ -991,10 +994,72 @@ class Handler(BaseHTTPRequestHandler):
         match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/hook-preview', self.path)
         if match:
             return self.hook_preview(match[1])
+        publication = re.fullmatch(r'/api/batches/([0-9a-f]{32})/(publish|verify-delivery)', self.path)
+        if publication:
+            return self.publication_submission(*publication.groups())
         if self.path == '/api/help':
             return self.handle_post()
         with mutation_lock():
             self.handle_post()
+
+    def publication_submission(self, batch_id, action):
+        """Prepare the full approval SHA outside LOCK, then fence before enqueue."""
+        if not self.authorized(): return
+        if self.headers.get('X-Exactcut-Request') != '1':
+            return self.respond(403, {'error': '无效请求来源'})
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 1 <= size <= 10000: raise ValueError('无效上传确认请求')
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict): raise ValueError('无效请求')
+            if action == 'verify-delivery' and set(data) - {'request_id', 'sha256', 'submission_token'}:
+                raise ValueError('核实仅接受原素材确认值，不接受外部 ID 或其他参数')
+            def admit():
+                if not self.authorized(): return False
+                if maintenance_file().exists():
+                    self.respond(503, {'error': '系统正在发布维护，请稍后再试'}); return False
+                if os.environ.get('EXACTCUT_WORKER_ENABLED', '1') != '1':
+                    self.respond(503, {'error': '验收实例禁止启动或控制生产任务'}); return False
+                if action == 'verify-delivery' and not self.is_admin(): return False
+                if not self.can_access(batch_id):
+                    self.respond(404, {'error': '项目不存在或无权访问'}); return False
+                batch_control.ensure_editable(workflow.folder(batch_id), execution=True)
+                workflow.reject_review_sha(workflow.result_records(workflow.folder(batch_id)).get(data.get('request_id'), {}), data.get('sha256'))
+                require_publish()
+                return True
+            def snapshot():
+                path = workflow.folder(batch_id)
+                return json_sha256({name: read_json(path / name) if (path / name).exists() else None
+                                    for name in ('runtime.json', 'control.json', 'owner.json', 'confirmed.json', 'production/results.json', 'publications.json')})
+            with mutation_lock(), LOCK:
+                if not admit(): return
+                previous = existing_submission(batch_id, action, data, self.user['username'])
+                if previous: return self.respond(200, batch_response(batch_id, previous))
+                before = snapshot()
+            evidence = workflow.approval_evidence(batch_id, data.get('request_id'), data.get('sha256'))
+            with mutation_lock(), LOCK:
+                if not admit(): return
+                previous = existing_submission(batch_id, action, data, self.user['username'])
+                if previous: return self.respond(200, batch_response(batch_id, previous))
+                if snapshot() != before: return self.respond(409, {'error': '确认期间批次已变化，请重新确认'})
+                if queue_size() >= 10: return self.respond(429, {'error': '任务队列已满，请稍后再试'})
+                if action == 'verify-delivery' and any(job.get('batch_id') == batch_id and job.get('status') in {'queued', 'running'} for job in stored_jobs()):
+                    raise ValueError('请等待当前批次任务结束后核实')
+                if getattr(self.server, 'auth_db', None):
+                    accounts.audit(self.server.auth_db, self.user['username'], action, batch_id)
+                operation = workflow.queue_verify_delivery if action == 'verify-delivery' else workflow.queue_publish
+                cmd = operation(batch_id, data.get('request_id'), data.get('sha256'), _evidence=evidence)
+                job = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'project': workflow.detail(batch_id)['draft']['drama_id'],
+                       'actor': self.user['username'], 'action': action, 'created': time.time(), 'status': 'queued',
+                       'request_id': data.get('request_id'), 'submission_token': data.get('submission_token'),
+                       'submission_payload': json_sha256({key: value for key, value in data.items() if key != 'submission_token'}), 'command': cmd}
+                if action == 'verify-delivery':
+                    job['verification_only'] = read_json(workflow.folder(batch_id) / 'publications.json')[data['request_id']]['verification_only']
+                prepare_staged_job(job)
+                save(job); WORK.put((job, job['command']))
+                return self.respond(202, batch_response(batch_id, job))
+        except (ValueError, KeyError, TypeError, RuntimeError, OSError) as exc:
+            self.respond(400, {'error': str(exc)})
 
     def hook_preview(self, batch_id):
         from .hook_preview import compute
@@ -1137,7 +1202,7 @@ class Handler(BaseHTTPRequestHandler):
                     if not self.can_access(batch_id):
                         return self.respond(404, {'error':'项目不存在或无权访问'})
                     return self.respond(200, workflow.save_ending_image(batch_id, data.get('request_id'), data.get('content')))
-            match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/(save|start|publish|preview|sources|feedback|clone|pause|resume|archive|unarchive|delete)', self.path)
+            match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/(save|start|preview|sources|feedback|clone|pause|resume|archive|unarchive|delete)', self.path)
             if match:
                 batch_id, action = match.groups()
                 with LOCK:
@@ -1145,11 +1210,6 @@ class Handler(BaseHTTPRequestHandler):
                         return self.respond(404, {'error':'项目不存在或无权访问'})
                     if action == 'sources':
                         return self.respond(200, prefetch_sources(batch_id, data, self.user['username']))
-                    if action == 'publish':
-                        workflow.reject_review_sha(
-                            workflow.result_records(workflow.folder(batch_id)).get(data.get('request_id'), {}),
-                            data.get('sha256'))
-                        require_publish()
                     if getattr(self.server, 'auth_db', None):
                         accounts.audit(self.server.auth_db,self.user['username'],action,batch_id)
                     if action == 'delete':
@@ -1177,7 +1237,7 @@ class Handler(BaseHTTPRequestHandler):
                             raise ValueError('请等待当前制作完成，再生成预览')
                         cmd = [sys.executable, '-u', '-m', 'exactcut.workflow', 'preview', batch_id, instance_marker()]
                     else:
-                        cmd = workflow.queue_publish(batch_id, data.get('request_id'), data.get('sha256'))
+                        raise ValueError('不支持的批次任务')
                     job = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'project': workflow.detail(batch_id)['draft']['drama_id'],
                            'actor': self.user['username'], 'action': action, 'created': time.time(), 'status': 'queued',
                            'request_id': data.get('request_id'), 'submission_token': data.get('submission_token'),

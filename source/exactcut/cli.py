@@ -78,6 +78,8 @@ def _main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
+        if args.command == "execute" and args.publish:
+            raise ExactCutError("execute --publish 已停用，请使用批次审片确认后的阶段上传")
         load_env_file(args.env_file.expanduser().resolve() if args.env_file else None)
         config = load_config(args.config.expanduser().resolve() if args.config else None)
         if args.command == "prepare":

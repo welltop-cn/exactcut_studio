@@ -7,7 +7,7 @@
 - 仓库开发规则实际位于 `source/AGENTS.md`，根目录没有该文件。
 - 运行配置在 `source/config/default.json`、`source/config/production.json`，沿用 `util.load_config` 的合并机制。
 - `config/deployment.json` 是服务器部署根内的机器配置，不在本仓库。此次不访问服务器、不修改该文件；生产 Compose 的默认额度需与部署记录中的 14 CPU / 24 GiB 一致。
-- 保留任务对外的 `start` / `publish` 动作，内部以可选 `phase` / `lane` 分阶段。旧任务及 CLI 单体路径保留兼容。
+- 保留任务对外的 `start` / `publish` 动作，内部以可选 `phase` / `lane` 分阶段。旧任务兼容；独立 CLI 的真实 `execute --publish` 在第 1 轮 C 组拒绝，改用受保护阶段上传。
 - 默认各 lane 容量为 1，总执行器上限也为 1；在提高总量上限后，不同 lane 可重叠，这符合“等待不占执行位”。完全回退到新任务的旧入口使用兼容开关。仅将各 lane 设为 1、同时保留较大总量上限，不能描述成全局只有一个进程。
 - 共享工作注册表、协作式暂停、媒体探测缓存等按计划后移。此次复用现有正片锁、基底锁和进程身份核验机制。
 
@@ -76,9 +76,9 @@ upload/poll 先保存 intent，再执行与核对。OSS 回读 SHA 元数据，�
 
 完整测试：425 passed，58.71 秒，退出码 0（独立临时数据根）；`git diff --check` 通过。覆盖身份认领与 owned 共存、两个启动窗口、信号中断、结果和输入变化、同盘超卖、释放、旧预约补建、设备号重映射以及外部回执丢失。poll 回读覆盖素材 ID、重试次数、状态和视频 ID，缺字段或读回超时保留回执并阻止再次导入/重同步。
 
-兼容边界：独立 CLI `execute --publish` 仍是旧同步流程，未接入阶段交付 intent。网页旧项目级发布入口已要求逐条预览确认；新批次统一走受保护阶段。不要把阶段保险的验收结论扩展到独立旧 CLI。
+初次第 2 步的兼容边界（历史状态，已由本轮 C 组修正）：独立 CLI `execute --publish` 当时仍是旧同步流程，未接入阶段交付 intent。网页旧项目级发布入口要求逐条预览确认；新批次统一走受保护阶段。
 
-第 3 步：默认配置的 fetch/render/upload/poll、总执行器上限、交互预览上限和 AI 突发容量均为 1。生产模板为 render=3、fetch=2、upload=2、poll=1、总量=8；poll 的等待通过 `not_before` 调度。Compose 默认 14 CPU / 24g、`pids_limit=512`，不修改机器部署配置。所有媒体 ffmpeg 调用在每个输入前限制解码线程为 1，输出编码线程为 4，普通/复杂滤镜线程为 1；真实多输入音视频夹具验证参数作用域。
+第 3 步初次提交：默认配置的 fetch/render/upload/poll、总执行器上限、交互预览上限和 AI 突发容量均为 1。生产模板当时为 render=3、fetch=2、upload=2、poll=1、总量=8；本轮 A 组将 poll 改为 4。poll 的等待通过 `not_before` 调度。Compose 默认 14 CPU / 24g、`pids_limit=512`，不修改机器部署配置。所有媒体 ffmpeg 调用在每个输入前限制解码线程为 1，输出编码线程为 4，普通/复杂滤镜线程为 1；真实多输入音视频夹具验证参数作用域。
 
 AI 请求采用 `.web-state/ai-rate.json` 与非阻塞 flock 的跨进程令牌桶，覆盖助手、表格解析、Hook/定位、预检及安全检查。配置为 `concurrency.ai.requests_per_minute=6`、`burst=1`，这是保守可配置预算，不是经核验的供应商配额。耗尽时抛 `ResourceDeferred`，保存等待结果、释放执行位和磁盘预约；旧未分阶段任务同样支持。SDK 隐藏重试关闭。逐镜头检查与预览已完成决策持久保存，避免单令牌下重排重复前半段调用。Gemini 文件处理每次只查询一次，保存上传句柄，未就绪或配额不足时延迟重排；令牌只在实际模型推理前扣除，文件生命周期调用不计模型配额。
 
@@ -123,6 +123,20 @@ TDD：首轮六个行为失败；新摘要/身份接口两个失败；死 owned 
 ≥1 GiB 回归使用独立临时根下的稀疏文件与受控慢摘要，验证另一用户在 1 秒内入队和其他 lane 准入，同时验证哈希线程不持两把全局锁；这证明调度隔离，不代替真实磁盘吞吐或生产 RSS 测量。HTTP 人工确认的强 SHA 在本组尚未扩大修改，后续交付入口组继续处理。
 
 本组最终 macOS 完整测试 **517 passed，61.98 秒，退出码 0**；使用上文隔离命令，无跳过。`git diff --check` 通过，规范及质量最终复核通过；前端 diff SHA 保持不变。
+
+### C：受控核实、一次重登与关闭旧发布旁路（#4、#5，补齐 #2 HTTP 确认）
+
+新增仅管理员可调用的 `POST /api/batches/<batch_id>/verify-delivery`。请求体只接受 `request_id`、原正式成片 `sha256`、可选 `submission_token`，不接受客户端指定远端 ID。服务器从已保存 publication、intent receipt 与历史回执核对唯一的飞书记录、material、OSS URL/key 和批准 SHA；缺失或冲突拒绝。新 job 强制为 poll，即使关闭并发开关也不能回到上传入口。
+
+核实模式只 GET 原飞书记录和原 CF material，不调用 OSS 上传、ingest、resync 或飞书创建/修改。原 intent 保存在可选 `verification_history`，只读身份绑定跨 `not_before`、崩溃与再次核实保留；普通 queue_publish、upload、旧 workflow.publish 不能绕过。远端 ADS 素材字段为空不能算核实成功，继续待核实并要求人工调查，本轮不自动修复外部记录。
+
+守护模式遇到 100006/100009 重新登录一次并重试一次，保留请求自定义 headers；未知/网络错误不循环重放，不 sleep。登录失败或第二次失败经阶段保险进入待核实。CLI `execute --publish` 在配置、编译及执行之前非零拒绝，提示使用审片确认后的阶段上传；同时带 `--publish-dry-run` 也拒绝，单独干跑保留。
+
+HTTP publish/核实确认分成两次独占 mutation flock 与 LOCK 准入，中间完整 SHA 在两把锁外计算；重新准入检查账号权限、维护、暂停/归档、批次快照及文件身份（含 ctime），拒绝过时确认。≥1 GiB 稀疏成片受控慢摘要回归中，另一用户启动在 1 秒内返回 202。
+
+TDD：首轮 12 RED→12 GREEN；HTTP 首轮 5 failed/15 passed→GREEN；只读失败后上传绕过、历史回执身份替换、远端 ADS 为空、丢失只读标识分别先 RED 再修复。规范复核发现只读 poll 本地启动失败会落为 publish_failed、堵住再次核实；新增完整入队→本地失败→新 token 核实→原回执就绪用例先 RED，再保留 unverified，所有外部写调用增量为 0。≥1 GiB 回归强化为真实 Alice/Bob 独立账户、会话和 batch owner。追加延期、崩溃、授权与维护/状态变更、幂等审计、干跑边界首次 GREEN，作为补充覆盖而非红灯证据。新增独立交付测试 42 例，专项 **199 passed，20.21 秒**；独立规范复审 **42 passed，12.56 秒**，质量复核 **42 passed，12.52 秒**，均批准。
+
+本组最终 macOS 完整测试 **559 passed，75.34 秒，退出码 0**；使用上文隔离命令，无跳过。`git diff --check` 通过，前端 diff SHA 保持不变。受控慢摘要只证明锁隔离，不测真实 ≥1 GiB 哈希吞吐；生产仍未执行。
 
 ## 回退
 
