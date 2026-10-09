@@ -107,6 +107,27 @@ def status(path, drama, episodes, jobs, manifest):
     return {'drama_id': drama, 'episodes': states, 'timing_explanation': explanation}
 
 
+def download_progress(path, drama, episodes, jobs):
+    """Read queued production's required sources without mutating its runtime."""
+    if not episodes or not any(job.get('project') == drama and set(episodes).intersection(job.get('episodes', []))
+                               for job in jobs):
+        return {}
+    states = status(path, drama, episodes, jobs, None)['episodes']
+    ready = [state for state in states if state['status'] == 'ready']
+    active = next((state for state in states if state['status'] == 'downloading'), None)
+    received = active['received_bytes'] if active else 0
+    completed_bytes = 0
+    for state in ready:
+        file_signature = signature(drama, state['episode'])
+        completed_bytes += file_signature[2] if file_signature else state['total_bytes']
+    return {'download_prefetch': active is not None, 'download_complete': len(ready) == len(states),
+            'download_files': len(ready), 'download_bytes': completed_bytes + received,
+            'download_current_episode': active['episode'] if active else None,
+            'download_current_received': received,
+            'download_current_total': active['total_bytes'] if active else 0,
+            'download_speed_bps': None}
+
+
 def run(batch_id, job_id):
     path = workflow.folder(batch_id)
     target = result_path(path, job_id)

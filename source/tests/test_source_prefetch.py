@@ -108,6 +108,79 @@ def test_finish_prefetch_does_not_interrupt_a_confirmed_queued_render(console):
     assert w.runtime(path)['status'] == 'queued'
 
 
+def test_queued_render_reports_prefetch_bytes_without_changing_durable_runtime(console):
+    from exactcut import source_prefetch
+    from exactcut.util import write_json_atomic
+    app, item, headers = console
+    prefetch(console, draft_with('EP1', 'EP2', 'EP6'))
+    job = jobs()[0]
+    job['status'] = 'running'; web.save(job)
+    request(app, 'POST', f"/exactcut/api/batches/{item['id']}/save",
+            {'revision': 1, 'draft': draft_with('EP1', 'EP2')}, headers)
+    path = w.folder(item['id'])
+    w.update(path, 'queued', '等待制作', plan={'required': ['EP1', 'EP2']})
+    directory = cache.source_root() / '101573'
+    directory.mkdir(parents=True)
+    (directory / 'EP1.mp4').write_bytes(b'x' * 2048)
+    write_json_atomic(directory / 'EP1.json', {'complete': True, 'bytes': 2048})
+    write_json_atomic(source_prefetch.result_path(path, job['id']), {'status': 'running', 'episodes': {
+        'EP1': {'status': 'ready', 'signature': source_prefetch.signature('101573', 'EP1')},
+        'EP2': {'status': 'downloading', 'received_bytes': 1048576, 'total_bytes': 4194304},
+        'EP6': {'status': 'downloading', 'received_bytes': 99999999, 'total_bytes': 999999999}}})
+    before = (path / 'runtime.json').read_bytes()
+    status, _, body = request(app, 'GET', f"/exactcut/api/batches/{item['id']}", headers=headers)
+    assert status == 200
+    runtime = json.loads(body)['runtime']
+    assert runtime.get('download_prefetch') is True
+    assert runtime['status'] == 'queued'
+    assert runtime['download_current_episode'] == 'EP2'
+    assert runtime['download_current_received'] == 1048576
+    assert runtime['download_current_total'] == 4194304
+    assert runtime['download_files'] == 1 and runtime['download_bytes'] == 1048576 + 2048
+    assert runtime['download_complete'] is False
+    assert (path / 'runtime.json').read_bytes() == before
+    (directory / 'EP2.mp4').write_bytes(b'x' * 4096)
+    write_json_atomic(directory / 'EP2.json', {'complete': True, 'bytes': 4096})
+    runtime = web.batch_response(item['id'])['runtime']
+    assert runtime['download_complete'] is True and runtime['download_files'] == 2
+    assert runtime['download_bytes'] == 6144 and runtime['download_current_episode'] is None
+    w.update(path, 'downloading', '正式下载', download_current_episode='EP2',
+             download_current_received=3145728, download_current_total=4194304)
+    runtime = web.batch_response(item['id'])['runtime']
+    assert runtime.get('download_prefetch') is not True
+    assert runtime['download_current_received'] == 3145728
+
+
+def test_browser_shows_prefetch_progress_while_render_is_queued():
+    node = shutil.which('node')
+    if not node: pytest.skip('requires node')
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    script = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict');
+const src=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const a=src.indexOf('function renderRuntime('),b=src.indexOf('\nfunction renderAssets(',a);
+const elements=new Map(),el=id=>{if(!elements.has(id))elements.set(id,{style:{}});return elements.get(id)};
+const ctx=vm.createContext({current:{filename:'网页填写',assets:[],feedback_count:0,runtime:{status:'queued',
+ plan:{required:['EP1','EP2']},download_prefetch:true,download_files:1,download_bytes:1048576+2048,
+ download_current_episode:'EP2',download_current_received:1048576,download_current_total:4194304}},
+ $:el,document:{querySelector:el},renderSourcePrefetch:()=>{},renderAssets:()=>{},controls:()=>{},
+ statusLabel:s=>s,badgeClass:()=>'',esc:s=>String(s??''),setErrorHtml:()=>{},observationText:()=>''});
+vm.runInContext(src.slice(a,b),ctx);vm.runInContext('renderRuntime()',ctx);
+assert(el('stageOverview').innerHTML.includes('EP2（2/2）'));
+assert(el('stageOverview').innerHTML.includes('25%'));
+assert(el('stageOverview').innerHTML.includes('value="1048576" max="4194304"'));
+assert(el('progressHint').textContent.includes('25%'));
+ctx.current.runtime.status='downloading';delete ctx.current.runtime.download_prefetch;
+ctx.current.runtime.download_current_received=3145728;vm.runInContext('renderRuntime()',ctx);
+assert(el('stageOverview').innerHTML.includes('75%'));
+ctx.current.runtime.download_complete=true;vm.runInContext('renderRuntime()',ctx);
+assert(el('stageOverview').innerHTML.includes('所需正片已就绪'));
+assert(el('stageOverview').innerHTML.includes('value="1" max="1"'));
+'''
+    result = subprocess.run([node, '-e', script], input=json.dumps(source), text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_queue_limit_waits_and_disabled_material_fetch_never_queues(console, monkeypatch):
     monkeypatch.setattr(web, 'queue_size', lambda: 10)
     status, result = prefetch(console, draft_with('EP1'))

@@ -108,8 +108,16 @@ def queue_size():
 
 def batch_response(batch_id, job=None):
     result = workflow.detail(batch_id)
+    jobs = [item for item in stored_jobs() if item.get('batch_id') == batch_id]
     if job is None:
-        job = max((j for j in stored_jobs() if j.get('batch_id') == batch_id), key=lambda j: j.get('created', 0), default=None)
+        job = max(jobs, key=lambda j: j.get('created', 0), default=None)
+    if result['runtime']['status'] == 'queued':
+        from .source_prefetch import download_progress
+        plan = result['runtime'].get('plan') or result.get('plan') or {}
+        prefetch_jobs = [item for item in jobs if item.get('action') == 'prefetch'
+                         and batch_control.belongs(item)]
+        result['runtime'].update(download_progress(workflow.folder(batch_id), result['draft']['drama_id'],
+                                                   plan.get('required', []), prefetch_jobs))
     if job:
         result['submission'] = {key: job.get(key) for key in ('id', 'action', 'status', 'created', 'request_id')}
     return result
