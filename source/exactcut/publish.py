@@ -254,7 +254,11 @@ class CfAdsClient:
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         guarded = GUARDED_DELIVERY.get()
-        attempts = 2 if guarded else 4
+        # Only the documented read endpoints may replay an auth rejection.
+        # A write may already have committed even when its response says expired.
+        safe_read = method.upper() == 'GET' and (path == '/api/v1/facebook/app_usage' or
+                    (path.startswith('/api/v1/material/') and path.endswith('/sync_status')))
+        attempts = (2 if safe_read else 1) if guarded else 4
         custom_headers = kwargs.pop('headers', {})
         for attempt in range(attempts):
             if not self.token and path != "/api/v1/auth/login":
@@ -267,7 +271,7 @@ class CfAdsClient:
                 payload = response.json()
             except ValueError as exc:
                 raise PublishError(f"CF-Ads返回非JSON：HTTP {response.status_code}") from exc
-            if payload.get("code") in (100006, 100009) and attempt == 0:
+            if payload.get("code") in (100006, 100009) and attempt == 0 and (not guarded or safe_read):
                 self.token = ""
                 self.login()
                 continue

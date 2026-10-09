@@ -132,7 +132,7 @@ TDD：首轮六个行为失败；新摘要/身份接口两个失败；死 owned 
 
 核实模式只 GET 原飞书记录和原 CF material，不调用 OSS 上传、ingest、resync 或飞书创建/修改。原 intent 保存在可选 `verification_history`，只读身份绑定跨 `not_before`、崩溃与再次核实保留；普通 queue_publish、upload、旧 workflow.publish 不能绕过。远端 ADS 素材字段为空不能算核实成功，继续待核实并要求人工调查，本轮不自动修复外部记录。
 
-守护模式遇到 100006/100009 重新登录一次并重试一次，保留请求自定义 headers；未知/网络错误不循环重放，不 sleep。登录失败或第二次失败经阶段保险进入待核实。CLI `execute --publish` 在配置、编译及执行之前非零拒绝，提示使用审片确认后的阶段上传；同时带 `--publish-dry-run` 也拒绝，单独干跑保留。
+第 1 轮守护模式曾对所有请求重登重试；第 2 轮 P1-2 限定为已知 GET 状态/额度查询，写请求不重登重放，保留请求自定义 headers；未知/网络错误不循环重放，不 sleep。登录失败或第二次失败经阶段保险进入待核实。CLI `execute --publish` 在配置、编译及执行之前非零拒绝，提示使用审片确认后的阶段上传；同时带 `--publish-dry-run` 也拒绝，单独干跑保留。
 
 HTTP publish/核实确认分成两次独占 mutation flock 与 LOCK 准入，中间完整 SHA 在两把锁外计算；重新准入检查账号权限、维护、暂停/归档、批次快照及文件身份（含 ctime），拒绝过时确认。≥1 GiB 稀疏成片受控慢摘要回归中，另一用户启动在 1 秒内返回 202。
 
@@ -400,3 +400,10 @@ fi
 TDD：先新增 `test_round2_storage.py`，红灯 2 failed（输出盘只有 budget/4 仍放行、同盘预算只有一份）；再修 `render_allocations`。输出盘完整预约 `render_budget()`；临时峰值另预约同样大小，project 基底缓存占临时预算 1/4、TMPDIR 切段/合并占 3/4。保守假设输出与临时可并存，同盘相加两份，scheduler 与 child 共用同一函数。旧同盘测试同步调整其预期，不缩减输出以满足旧断言。
 
 macOS 15.8.1 arm64 / conda Python 3.12.12，命令（source 下）：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`。脚本清理 EXACTCUT/OPENAI/ALIYUN/FEISHU/CF_ADS/GEMINI/GOOGLE_API 继承变量，以独立 TemporaryDirectory 数据根、development 环境执行 `python -m pytest -o addopts= -q`；无真实外部调用。完整 615 passed / 77.21s；`git diff --check` 通过。三设备输出不足拒绝、同盘第一份启动第二份拒绝、释放后再启动均可复现。
+
+
+### R2-B / P1-2：守护写请求不重放
+
+TDD：新 `test_round2_auth.py` 先见 9 failed / 2 passed：ingest、resync、PUT、DELETE 在两种过期码下均双发；“服务端已落账但报 100006”也创建两次。实现仅将已知 GET app_usage / material sync_status 判为可重试读；guarded 写只发一次，未知写结果由原 intent 保险进入 unverified，禁止第二次 ingest。读查询仍一次 login 后成功，原 headers 保留；普通非 guarded 历史重试策略未改。
+
+聚焦 53 passed / 13.11s；同 R2-A 隔离命令完整 626 passed / 77.21s，`git diff --check` 通过。fixtures 中真实 CfAdsClient + workflow poll + immutable result + finish_job 验证外部创建次数=1、job unverified、intent pending；无真实请求。

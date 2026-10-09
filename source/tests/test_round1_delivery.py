@@ -15,7 +15,7 @@ def test_guarded_auth_rejection_relogs_once_and_preserves_headers(code):
     def login(): client.token = 'fresh'
     with patch.object(client, 'login', side_effect=login) as auth, patch.object(publish.requests, 'request', side_effect=responses) as request, patch.object(publish.time, 'sleep', side_effect=AssertionError('no sleep')):
         with publish.guarded_delivery():
-            assert client.request('POST', '/write', headers={'X-Fixture': 'yes'}) == {'code': 200}
+            assert client.request('GET', '/api/v1/material/123/sync_status', headers={'X-Fixture': 'yes'}) == {'code': 200}
         assert auth.call_count == 1 and request.call_count == 2
         assert all(call.kwargs['headers']['X-Fixture'] == 'yes' for call in request.call_args_list)
         assert request.call_args.kwargs['headers']['Authorization'] == 'Bearer fresh'
