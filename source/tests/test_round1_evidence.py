@@ -189,6 +189,11 @@ def test_hash_snapshot_rejects_mutation_during_read(tmp_path, monkeypatch):
     video = tmp_path / 'x.mp4'; video.write_bytes(b'original')
     def mutate(file):
         file.write_bytes(b'tampered')
+        # Advance mtime explicitly so detection does not depend on filesystem
+        # timestamp resolution, which is coarse on some container filesystems;
+        # a same-size write within one tick would otherwise look unchanged.
+        now = file.stat()
+        os.utime(file, ns=(now.st_atime_ns, now.st_mtime_ns + 1_000_000_000))
         return 'old-digest'
     monkeypatch.setattr(stage_results, 'file_sha256', mutate)
     with pytest.raises(ValueError, match='变化'):
