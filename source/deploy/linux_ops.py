@@ -215,6 +215,11 @@ def require_stage_compatibility(root, release, engine):
         raise RuntimeError('目标镜像不支持阶段任务协议；未完成阶段或待核实交付阻止切换')
 
 
+def require_phase_drained(root):
+    if phase_blockers(root):
+        raise RuntimeError('阶段任务或待核实交付未排空，禁止发布切换')
+
+
 def check_switch(root, version, *, engine=None):
     """Read-only code guard and drain diagnostics; does not acquire maintenance."""
     engine = engine or Docker()
@@ -226,8 +231,7 @@ def check_switch(root, version, *, engine=None):
         result['target_stage_protocol'] = supports_stages(engine, target)
         result['phase_blockers'] = phase_blockers(root)
         result['active_tasks'] = active_records(root)
-        result['allowed'] = (not result['active_tasks'] and
-                             (result['target_stage_protocol'] or not result['phase_blockers']))
+        result['allowed'] = not result['active_tasks'] and not result['phase_blockers']
     except subprocess.CalledProcessError as exc:
         # Provider output can contain credentials; diagnostics expose only the type.
         result['guard_error'] = type(exc).__name__
@@ -277,6 +281,7 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
         validate_resources(settings)
         target = verify(root, version, engine)
         require_stage_compatibility(root, target, engine)
+        require_phase_drained(root)
         current = read(root / 'current.json')
         if current.get('version') == version:
             raise RuntimeError('已经运行此版本')
@@ -293,8 +298,10 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
             raise RuntimeError('生产密钥配置必须存在且权限为0600')
         with write_barrier(root, timeout) as gate:
             require_stage_compatibility(root, target, engine)
+            require_phase_drained(root)
             await_idle(root, timeout)
             require_stage_compatibility(root, target, engine)
+            require_phase_drained(root)
             attempted = False
             receipt = {'at': datetime.now(timezone.utc).isoformat(), 'from': current.get('version'), 'to': version}
             history = root / 'history' / f'{time.time_ns()}-{version}.json'
@@ -304,6 +311,7 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                     engine.stop(root, old, settings)
                     await_idle(root, 0)
                 require_stage_compatibility(root, target, engine)
+                require_phase_drained(root)
                 engine.apply(root, target, settings)
                 check = engine.health(settings, version, health_timeout)
                 write(root / 'data/.web-state/data-schema.json', {'version': 1})
@@ -317,7 +325,10 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                     try:
                         engine.stop(root, target, settings)
                         if old:
-                            require_stage_compatibility(root, old, engine)
+                            # Emergency restore is ONLY the exact verified release
+                            # just stopped, never a new downgrade target. Do not
+                            # strand both services if uncertainty appeared meanwhile.
+                            if phase_blockers(root): gate['maintenance'] = True
                             engine.apply(root, old, settings)
                             engine.health(settings, old['version'], health_timeout)
                         else:
@@ -328,9 +339,12 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                 write(root / 'current.json', current)
                 write(history, {**receipt, 'status': 'failed', 'error_type': type(exc).__name__,
                                 'restored': old['version'] if old and not recovery_error else None,
-                                'recovery_error_type': recovery_error})
+                                'recovery_error_type': recovery_error, 'maintenance_retained': gate['maintenance']})
                 if recovery_error:
                     raise RuntimeError('版本切换失败且恢复失败；维护标记保留，请执行recover') from exc
+                if gate['maintenance']:
+                    raise RuntimeError('版本切换失败，已恢复旧容器；维护标记保留。显式核实阶段交付并排空后执行 '
+                                       f'{root}/bin/linux-ops --root {root} recover') from exc
                 raise RuntimeError('版本切换失败，已恢复上一状态；业务数据未还原') from exc
 
 

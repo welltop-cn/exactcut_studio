@@ -199,5 +199,7 @@ def test_guard_rechecks_after_graceful_stop_before_apply(ops, tmp_path):
     engine.stop = stop
     with pytest.raises(RuntimeError):
         ops.transition(tmp_path, 'target', engine=engine, timeout=0)
-    assert not any(call[0] == 'apply' for call in engine.calls)
+    assert ('apply', 'target') not in engine.calls
+    assert ('apply', 'current') in engine.calls
+    assert (tmp_path / 'data/.web-state/maintenance.json').exists()
     assert ops.read(tmp_path / 'current.json')['version'] == 'current'

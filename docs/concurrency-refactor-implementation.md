@@ -414,3 +414,16 @@ TDD：新 `test_round2_auth.py` 先见 9 failed / 2 passed：ingest、resync、P
 TDD：`test_round2_verification.py` 红灯 4 failed / 1 passed（保存前故障 2、启动 orphan 2；保存后故障原本可认领是兼容基线）。核实 publication 的同一次原子 JSON 写中新增可选 `verification_queue`，记录预分配 job ID 与原 unverified/pending 快照；这是一份持久“待执行核实”事务，只有匹配的只读 poll job 落盘才提交。HTTP 异常补偿、每 tick/启动扫描共用恢复函数：缺 job 回原状态，已落盘 job 提交并可认领。旧无标记但 history/verification intent 已写且无核实 job 的交接也恢复为 unverified/pending，保留原回执与只读标识；禁止转成普通上传。
 
 聚焦 69 passed / 17.55s；同 R2-A 的 macOS 临时数据根隔离命令，完整 631 passed / 80.14s，`git diff --check` 通过。publication 后/detail 或 save 前异常、保存后响应丢失、标记/旧 orphan 重启恢复均覆盖；同 token 重试 202（已落盘则200），只读 poll 原对象，ingest/OSS/飞书创建增量0、普通上传拒绝。
+
+
+### R2-D / P1-4：发布预检与失败恢复
+
+TDD：`test_round2_release.py` 先红灯 6 failed / 2 passed：支持阶段协议的新镜像曾放行待核实和损坏 publication，健康失败后原容器未拉起。修复要求 check-switch 与所有正向/回退 transition 的 phase_blockers 为空（包括停服前后重查），待核实在停服前拒绝。健康失败只允许紧急恢复本次刚停掉的、已 verify 的原 release；中途出现阻断则保留维护锁、记录 `maintenance_retained` 并给出绝对路径 recover 命令，不允许守卫把新旧两侧都停掉。此例外不放宽常规旧代码回退守卫。
+
+P1-4(a) 的“缺文件阻断”未在当前代码复现：`linux_ops.read(path, default=None)` 对不存在文件原本返回 `{}`，phase_blockers 对该值取空 entry。新增 completed fetch/render 带 batch_id/request_id 且无 publications 测试均在修复前即通过，因此保留代码；坏 JSON / 非对象仍失败关闭，新增回归覆盖正向发布。
+
+发布相关 56 passed / 0.80s；完整（本组提交候选全部测试）639 passed / 79.95s，`git diff --check` 通过。其间提前加入下一组的三个 RED 草案时曾得到 3 failed / 639 passed；失败均是 P1-5 预期红灯，草案暂移出本组候选后完整重跑全绿，不作为基线失败掩盖。
+
+生产验收仍由编排者执行，**本会话未执行**。现有操作单的发布管理器命令、两用户并发、等待让位、重启和回退步骤保留；本轮新增门禁：正向发布同样先 `check-switch NEW_VERSION`，有 unverified/pending 不得停服。健康失败取证保存 current.json、history 中 restored / recovery_error_type / maintenance_retained、docker ps/inspect、健康响应、维护标记；若维护保留，先沿原回执显式核实并排空，禁止删除 job/intent 绕过，之后执行 `/srv/exactcut/bin/linux-ops --root /srv/exactcut recover`。常规失败且无阻断应恢复原 release 并撤维护。
+
+第 10 项决定不变：生产14 CPU /24g /pids512。`-threads 4` **仅约束编码器**，验收必须保存上方 `ps -T`/NLWP 每路 ffmpeg 的实际线程样本，记录 release/commit/UTC时间/batch/ffmpeg PID/命令行/NLWP峰值/RSS/三路并发数及宿主load；不能把4或编码器合计12写为实测全进程线程数。该采样本会话未执行。
