@@ -126,13 +126,13 @@ def test_publish_is_separate_and_reuses_remote_record_on_retry(workspace, monkey
     rid = request['request_id']
     cmd = w.queue_publish(batch['id'], rid, record['output_sha256'])
     assert 'publish' in cmd and 'produce' not in cmd
-    with patch('exactcut.publish.publish_to_queue', return_value={'feishu_record_id': 'record1'}) as upload, \
-         patch('exactcut.publish.sync_record_once', side_effect=RuntimeError('temporary failure')):
+    with patch('exactcut.publish.publish_to_queue', return_value={'feishu_record_id': 'record1', 'sha256': record['output_sha256'], 'oss_key': __import__('exactcut.publish', fromlist=['OssPublisher']).OssPublisher().key_for(video)[0]}) as upload, \
+         patch('exactcut.publish.sync_record_once', return_value={'record_id': 'record1', 'action': 'failed'}):
         assert w.publish(batch['id'], rid) == 2
         assert upload.call_count == 1
     w.queue_publish(batch['id'], rid, record['output_sha256'])
     with patch('exactcut.publish.publish_to_queue') as upload, \
-         patch('exactcut.publish.sync_record_once', return_value={'action': 'ready', 'video_id': 'fb123'}):
+         patch('exactcut.publish.sync_record_once', return_value={'record_id': 'record1', 'action': 'ready', 'video_id': 'fb123'}):
         assert w.publish(batch['id'], rid) == 0
         upload.assert_not_called()
     assert w.detail(batch['id'])['assets'][0]['video_id'] == 'fb123'

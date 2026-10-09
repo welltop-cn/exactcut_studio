@@ -121,7 +121,18 @@ def require_space(path, estimated_bytes=0):
     ancestor=path
     while not ancestor.exists():ancestor=ancestor.parent
     free=shutil.disk_usage(ancestor).free
-    needed=reserve+max(0,int(estimated_bytes))
+    import sys
+    token = sys._xoptions.get('exactcut_process_token')
+    jobs = data_root() / '.web-state/jobs'
+    from .util import read_json
+    own = next((read_json(p)['id'] for p in jobs.glob('*.json') if token and read_json(p).get('process_token') == token), None)
+    device = str(ancestor.stat().st_dev)
+    with reservation_lock() as ledger:
+        other = sum(row.get(device, {}).get('bytes', 0) for key, row in ledger['jobs'].items() if key != own)
+        own_bytes = ledger['jobs'].get(own, {}).get(device, {}).get('bytes', 0)
+    # The stage's peak is already reserved; never charge the same estimate twice.
+    demand = 0 if own is not None and own_bytes >= max(0, int(estimated_bytes)) else max(0, int(estimated_bytes))
+    needed=reserve+other+demand
     if free<needed:
         raise ValueError(f'磁盘空间不足：剩余 {free/GIB:.1f} GB，本次预计需要 {needed/GIB:.1f} GB（含 {reserve/GIB:g} GB 预留）。请先检查缓存或腾出空间后重试')
 
@@ -140,3 +151,114 @@ def prepare_render(project,output,timeline,render):
     budget=render_budget(timeline,render)
     for path in {project,output.parent,Path(os.environ.get('TMPDIR','/tmp'))}:
         require_space(path,budget)
+
+
+@contextmanager
+def reservation_lock(jobs=None):
+    from .util import read_json, write_json_atomic
+    state = (jobs.parent if jobs is not None else data_root() / '.web-state')
+    state.mkdir(parents=True, exist_ok=True)
+    file = state / 'reservations.json'
+    with (state / 'reservations.lock').open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        ledger = read_json(file) if file.exists() else {'version': 1, 'jobs': {}}
+        yield ledger
+        write_json_atomic(file, ledger)
+
+
+def device_allocations(paths):
+    """Sum independent peak allocations, including paths on the same filesystem."""
+    devices = {}
+    for value, size in paths.items():
+        path = Path(value)
+        protect_path(path)
+        while not path.exists(): path = path.parent
+        device = str(path.stat().st_dev)
+        entry = devices.setdefault(device, {'path': str(path), 'bytes': 0})
+        entry['bytes'] += max(0, int(size))
+    return devices
+
+
+def reserve(job_id, paths, jobs=None):
+    allocations = device_allocations(paths)
+    with reservation_lock(jobs) as ledger:
+        for device, allocation in allocations.items():
+            used = sum(row.get(device, {}).get('bytes', 0) for key, row in ledger['jobs'].items() if key != job_id)
+            if shutil.disk_usage(allocation['path']).free < policy()['reserve_bytes'] + used + allocation['bytes']:
+                return False
+        ledger['jobs'][job_id] = allocations
+    return True
+
+
+def release(job_id, jobs=None):
+    with reservation_lock(jobs) as ledger: ledger['jobs'].pop(job_id, None)
+
+
+def rebuild_reservations(jobs, live_ids, batches=None, root=None):
+    """Durable admission survives the spawn-before-PID crash window."""
+    from .util import read_json, write_json_atomic
+    with reservation_lock(jobs) as ledger:
+        recovered = {}
+        for file in jobs.glob('*.json'):
+            job = read_json(file)
+            if job['id'] in live_ids:
+                admission = job.get('admission') or {}
+                paths = admission.get('paths')
+                previous = admission.get('allocations') or ledger['jobs'].get(job['id'])
+                if paths is not None:
+                    allocations = device_allocations(paths)
+                elif previous is not None:
+                    paths = {}
+                    for allocation in previous.values():
+                        directory = allocation['path']
+                        paths[directory] = paths.get(directory, 0) + allocation['bytes']
+                    allocations = device_allocations(paths)
+                elif batches is not None and root is not None:
+                    try: paths = job_budget(job, batches, root)
+                    except (ValueError, RuntimeError, OSError):
+                        # Existing executors cannot be denied admission retroactively.
+                        peak = policy()['episode_budget_bytes'] * 4
+                        paths = {str(root): peak, str(Path(os.environ.get('TMPDIR', '/tmp'))): peak}
+                    allocations = device_allocations(paths)
+                else: continue
+                recovered[job['id']] = allocations
+                job['admission'] = {**admission, 'paths': paths, 'allocations': allocations, 'rebuilt': True}
+                write_json_atomic(file, job)
+
+        ledger['jobs'] = recovered
+
+
+def job_budget(job, batches, root):
+    """Reserve fetch bytes and render's independent output/work/cache peaks."""
+    from .runtime import source_root
+    from .util import read_json
+    path = batches / job.get('batch_id', '')
+    phase = job.get('phase') or job.get('lane')
+    if phase == 'fetch':
+        count = len(job.get('episodes', []))
+        if (path / 'confirmed.json').exists():
+            from .models import BatchManifest
+            from .workflow import download_plan
+            count = len(download_plan(BatchManifest.model_validate(read_json(path / 'confirmed.json')))['required'])
+        return {str(source_root()): count * policy()['episode_budget_bytes']}
+    manifest = None
+    if phase == 'render' and not job.get('batch_id'):
+        from .compiler import compile_workbook
+        command = job.get('command') or []
+        if '--input' in command and '--project' in command:
+            project = Path(command[command.index('--project') + 1])
+            manifest = compile_workbook(Path(command[command.index('--input') + 1]), load_config())
+            path = project / 'outputs' / manifest.business_date
+    if phase == 'render' and ((path / 'confirmed.json').exists() or manifest is not None):
+        from .models import BatchManifest
+        from .media import resolve_full_episodes
+        manifest = manifest or BatchManifest.model_validate(read_json(path / 'confirmed.json'))
+        render = load_config()['render']
+        project = root / 'projects' / manifest.drama_id
+        manifest = resolve_full_episodes(manifest, project)
+        budget = sum(render_budget([item.model_dump(mode='json') for item in request.timeline], render) for request in manifest.requests)
+        allocations = {}
+        for directory in (project, path / 'production', Path(os.environ.get('TMPDIR', '/tmp'))):
+            allocations[str(directory)] = allocations.get(str(directory), 0) + budget
+        return allocations
+    return {str(root): 0}

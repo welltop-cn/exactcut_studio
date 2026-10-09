@@ -89,7 +89,7 @@ def test_fbbm_retry_keeps_original_record_and_does_not_upload(workspace):
     manifest,_=w.request_for(path,rid)
     with patch.object(w,'preview_file',return_value=(video,{'output_sha256':sha})), \
          patch('exactcut.publish.publish_to_queue') as upload, \
-         patch('exactcut.publish.sync_record_once',return_value={'action':'ready','video_id':'video-1'}) as sync:
+         patch('exactcut.publish.sync_record_once',return_value={'record_id':'original-record','action':'ready','video_id':'video-1'}) as sync:
         assert w.publish(workspace['id'],rid)==0
         upload.assert_not_called()
         sync.assert_called_once_with('original-record')
@@ -105,9 +105,9 @@ def test_same_platform_status_is_not_new_progress(workspace):
     from exactcut.util import file_sha256
     sha=file_sha256(video)
     write_json_atomic(path/'publications.json',{rid:{'approved_sha256':sha,'publication':{'feishu_record_id':'original'}}})
-    results=[{'action':'syncing','fb_status':'processing','checked_at':'first'},
-             {'action':'syncing','fb_status':'processing','checked_at':'second'},
-             {'action':'ready','fb_status':'ready','video_id':'done'}]
+    results=[{'record_id':'original','action':'syncing','fb_status':'processing','checked_at':'first'},
+             {'record_id':'original','action':'syncing','fb_status':'processing','checked_at':'second'},
+             {'record_id':'original','action':'ready','fb_status':'ready','video_id':'done'}]
     with patch.object(w,'preview_file',return_value=(video,{'output_sha256':sha})), \
          patch('exactcut.publish.sync_record_once',side_effect=results), \
          patch.object(w.time,'sleep'),patch.object(w,'checkpoint',wraps=w.checkpoint) as checkpoints:

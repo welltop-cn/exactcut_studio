@@ -90,13 +90,13 @@ def test_reconcile_resumes_multiple_lanes_with_running_render(runner):
 def test_upload_exits_without_polling_and_poll_queries_once(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
-    with patch('exactcut.publish.publish_to_queue', return_value={'feishu_record_id': 'fixture-record'}) as upload, \
-         patch('exactcut.publish.sync_record_once', return_value={'action': 'syncing'}) as sync, \
+    with patch('exactcut.publish.publish_to_queue', return_value={'feishu_record_id': 'fixture-record', 'sha256': record['output_sha256'], 'oss_key': __import__('exactcut.publish', fromlist=['OssPublisher']).OssPublisher().key_for(video)[0]}) as upload, \
+         patch('exactcut.publish.sync_record_once', return_value={'record_id': 'fixture-record', 'action': 'syncing'}) as sync, \
          patch.object(workflow.time, 'sleep', side_effect=AssertionError('poll must not sleep')):
         assert workflow.upload(batch['id'], rid) == 0; sync.assert_not_called()
         assert workflow.poll(batch['id'], rid) == 0; sync.assert_called_once_with('fixture-record'); upload.assert_called_once()
     assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_queued'
-    with patch('exactcut.publish.sync_record_once', return_value={'action': 'ready', 'video_id': 'fixture-video'}):
+    with patch('exactcut.publish.sync_record_once', return_value={'record_id': 'fixture-record', 'action': 'ready', 'video_id': 'fixture-video'}):
         assert workflow.poll(batch['id'], rid) == 0
     assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_ready'
 
@@ -182,7 +182,7 @@ def test_retry_poll_persists_deadline_and_times_out(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
     write_json_atomic(path / 'publications.json', {rid: {'status': 'fbbm_queued', 'publication': {'feishu_record_id': 'fixture-record'}}})
-    with patch.object(workflow.time, 'time', return_value=1000), patch('exactcut.publish.sync_record_once', return_value={'action': 'syncing'}):
+    with patch.object(workflow.time, 'time', return_value=1000), patch('exactcut.publish.sync_record_once', return_value={'record_id': 'fixture-record', 'action': 'syncing'}):
         assert workflow.poll(batch['id'], rid) == 0
     assert read_json(path / 'publications.json')[rid]['poll_started'] == 1000
     with patch.object(workflow.time, 'time', return_value=1_000_000), patch('exactcut.publish.sync_record_once') as sync:

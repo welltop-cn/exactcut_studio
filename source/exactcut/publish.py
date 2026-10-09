@@ -5,6 +5,8 @@ import mimetypes
 import os
 import posixpath
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -16,6 +18,25 @@ from .errors import PublishError
 from .runtime import require_publish
 from .naming import validate_material_filename
 from .util import env, file_sha256, now_iso
+
+
+GUARDED_DELIVERY = ContextVar('guarded_delivery', default=False)
+DELIVERY_RECEIPT = ContextVar('delivery_receipt', default=None)
+
+
+@contextmanager
+def guarded_delivery(*, receipt=None):
+    token = GUARDED_DELIVERY.set(True)
+    receipt_token = DELIVERY_RECEIPT.set(receipt)
+    try: yield
+    finally:
+        DELIVERY_RECEIPT.reset(receipt_token)
+        GUARDED_DELIVERY.reset(token)
+
+
+def delivery_receipt(value):
+    observer = DELIVERY_RECEIPT.get()
+    if observer is not None: observer(value)
 
 
 FEISHU_API = "https://open.feishu.cn/open-apis"
@@ -111,6 +132,11 @@ class OssPublisher:
                 if result.status not in (200, 201):
                     raise PublishError(f"OSS上传失败：status={result.status}")
             bucket.put_object_acl(key, "public-read")
+            if GUARDED_DELIVERY.get():
+                meta = bucket.get_object_meta(key)
+                remote_hash = meta.headers.get("x-oss-meta-sha256") or meta.headers.get("X-Oss-Meta-Sha256")
+                if remote_hash != digest:
+                    raise PublishError(f"OSS上传后校验失败，待核实：{key}")
         return {
             **parsed, "oss_key": key, "oss_url": self.public_url(key), "oss_existed": existed,
             "sha256": digest, "size": video.stat().st_size, "dry_run": dry_run,
@@ -188,6 +214,8 @@ class FeishuClient:
         body = {"filter": {"conjunction": "and", "conditions": [{"field_name": "OSS_URL", "operator": "is", "value": [oss_url]}]}, "page_size": 20}
         response = requests.post(f"{self._url()}/search", headers=self.headers, json=body, timeout=30)
         items = _response_json(response, "搜索飞书记录").get("data", {}).get("items") or []
+        if GUARDED_DELIVERY.get() and len(items) > 1:
+            raise PublishError("OSS_URL 对应多条飞书记录，待核实")
         return items[0] if items else None
 
     def create_or_reuse(self, fields: dict[str, Any]) -> dict[str, Any]:
@@ -225,7 +253,8 @@ class CfAdsClient:
         self.token = ""
 
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
-        for attempt in range(4):
+        attempts = 1 if GUARDED_DELIVERY.get() else 4
+        for attempt in range(attempts):
             if not self.token and path != "/api/v1/auth/login":
                 self.login()
             headers = kwargs.pop("headers", {})
@@ -236,11 +265,11 @@ class CfAdsClient:
                 payload = response.json()
             except ValueError as exc:
                 raise PublishError(f"CF-Ads返回非JSON：HTTP {response.status_code}") from exc
-            if payload.get("code") in (100006, 100009) and attempt == 0:
+            if payload.get("code") in (100006, 100009) and attempt == 0 and attempts > 1:
                 self.token = ""
                 self.login()
                 continue
-            if payload.get("code") not in (200, 200005, 200008) and attempt < 3:
+            if payload.get("code") not in (200, 200005, 200008) and attempt < attempts - 1:
                 time.sleep(2**attempt)
                 continue
             return payload
@@ -302,7 +331,31 @@ def publish_to_queue(video: Path, manifest: Any, request: Any, *, dry_run: bool 
         "OSS_KEY": upload["oss_key"],
     }
     record = FeishuClient().create_or_reuse(fields)
+    delivery_receipt({"stage": "queued", **upload, "feishu_record_id": record["record_id"], "feishu_action": record["action"]})
+    if GUARDED_DELIVERY.get():
+        remote = FeishuClient().get_record(str(record["record_id"]))
+        value = (remote.get("fields") or {}).get("OSS_URL")
+        remote_url = value.get("link") if isinstance(value, dict) else str(value or "")
+        if remote_url != upload["oss_url"]:
+            raise PublishError("飞书记录上传后目标核验失败，待核实")
     return {"stage": "queued", **upload, "feishu_record_id": record["record_id"], "feishu_action": record["action"]}
+
+
+def verify_sync_fields(feishu, record_id, expected):
+    """Only the insured path requires remote evidence after filtered updates."""
+    if not GUARDED_DELIVERY.get(): return
+    record = feishu.get_record(record_id)
+    if str(record.get("record_id") or record.get("id") or "") != record_id:
+        raise PublishError("飞书同步写入后记录身份核验失败，待核实")
+    fields = record.get("fields") or {}
+    for name, value in expected.items():
+        actual = fields.get(name)
+        if name == "重试次数":
+            try: matched = actual is not None and int(actual) == int(value)
+            except (TypeError, ValueError): matched = False
+        else: matched = actual is not None and str(actual) == str(value)
+        if not matched:
+            raise PublishError(f"飞书同步写入后字段核验失败，待核实：{name}")
 
 
 def sync_record_once(record_id: str) -> dict[str, Any]:
@@ -312,6 +365,7 @@ def sync_record_once(record_id: str) -> dict[str, Any]:
     percent = max(float(usage.get("call_count") or 0), float(usage.get("total_time") or 0))
     if not usage.get("is_available") or percent >= 85:
         feishu.update(record_id, {"状态": "同步中", "错误信息": "Meta API额度接近上限，自动延后", "下次执行时间": int(time.time() * 1000) + 600000})
+        verify_sync_fields(feishu, record_id, {"状态": "同步中"})
         return {"record_id": record_id, "status": "quota_deferred", "usage": usage}
     record = feishu.get_record(record_id)
     fields = record.get("fields") or {}
@@ -320,10 +374,13 @@ def sync_record_once(record_id: str) -> dict[str, Any]:
     material_id = str(fields.get("ADS素材ID") or "").strip()
     retries = int(fields.get("重试次数") or 0)
     max_retries = int(os.getenv("MAX_RETRIES", "2"))
+    if material_id: delivery_receipt({"record_id": record_id, "material_id": material_id})
     feishu.update(record_id, {"状态": "处理中", "处理开始时间": int(time.time() * 1000)})
     if not material_id:
         material_id = cf.ingest(oss_url)
+        delivery_receipt({"record_id": record_id, "material_id": material_id})
         feishu.update(record_id, {"ADS素材ID": material_id, "状态": "同步中", "错误信息": ""})
+        verify_sync_fields(feishu, record_id, {"ADS素材ID": material_id, "状态": "同步中"})
     material = cf.sync_status(material_id)
     fb_status = str(material.get("facebook_bm_sync_status") or "none")
     video_id = material.get("facebook_bm_video_id")
@@ -339,6 +396,7 @@ def sync_record_once(record_id: str) -> dict[str, Any]:
     elif fb_status in {"failed", "none", ""} and retries < max_retries:
         cf.resync(material_id)
         retries += 1
+        delivery_receipt({"record_id": record_id, "material_id": material_id, "fields": {"重试次数": retries}})
         patch.update({"状态": "同步中", "重试次数": retries, "下次执行时间": int(time.time() * 1000) + int(os.getenv("NEXT_POLL_SECONDS", "60")) * 1000})
         action = "resync_requested"
     elif retries >= max_retries:
@@ -347,8 +405,13 @@ def sync_record_once(record_id: str) -> dict[str, Any]:
     else:
         patch.update({"状态": "同步中", "下次执行时间": int(time.time() * 1000) + int(os.getenv("NEXT_POLL_SECONDS", "60")) * 1000})
         action = "syncing"
+    result = {"record_id": record_id, "action": action, "fb_status": fb_status, "material_id": material_id, "video_id": video_id, "thumbnail": thumbnail}
+    delivery_receipt(result)
     feishu.update(record_id, patch)
-    return {"record_id": record_id, "action": action, "fb_status": fb_status, "material_id": material_id, "video_id": video_id, "thumbnail": thumbnail}
+    expected = {"ADS素材ID": material_id, "重试次数": retries, "状态": patch["状态"]}
+    if video_id: expected["视频ID"] = str(video_id)
+    verify_sync_fields(feishu, record_id, expected)
+    return result
 
 
 def wait_until_ready(record_id: str, config: dict[str, Any]) -> dict[str, Any]:

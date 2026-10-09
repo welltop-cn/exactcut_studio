@@ -18,7 +18,7 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from .catalog import load_catalog
-from . import workflow, batch_control, accounts, production_helper, concurrency
+from . import workflow, batch_control, accounts, production_helper, concurrency, stage_results, storage
 from .util import json_sha256, write_json_atomic, read_json, load_env_file
 
 from .runtime import CODE_ROOT, data_root, require_publish, feature_flags, instance_marker, environment, release_id, maintenance_file, mutation_lock
@@ -76,9 +76,7 @@ def job_command(data):
 def save(job):
     job.setdefault('lane', concurrency.lane(job))
     path = JOBS / (job['id'] + '.json')
-    temp = path.with_suffix('.tmp')
-    temp.write_text(json.dumps(job, ensure_ascii=False), encoding='utf-8')
-    temp.replace(path)
+    write_json_atomic(path, job)
 
 
 def stored_jobs():
@@ -216,6 +214,8 @@ def advance_stage(job):
     if phase == 'poll':
         # A fresh process identity is assigned at the next launch.
         job.update(status='queued', not_before=time.time() + interval)
+        for field in ('result_ref', 'input_fingerprint', 'admission'):
+            job.pop(field, None)
         for field in ('pid', 'pgid', 'process_token', 'finished', 'exit_code'):
             job.pop(field, None)
         save(job)
@@ -234,7 +234,43 @@ def advance_stage(job):
     WORK.put((successor, successor['command']))
 
 
-def finish_job(job, code=None, message='执行进程已结束，可查看日志后重试'):
+def delivery_uncertain(job):
+    if job.get('phase') not in {'upload', 'poll'}: return False
+    file = workflow.BATCHES / job.get('batch_id', '') / 'publications.json'
+    entry = read_json(file).get(job.get('request_id'), {}) if file.exists() else {}
+    return workflow.delivery_blocked(entry)
+
+
+def requeue_stage(job):
+    job.update(status='queued', recovered_from_stage=job['phase'])
+    for field in ('pid', 'pgid', 'process_token', 'admission', 'input_fingerprint', 'result_ref'): job.pop(field, None)
+    storage.release(job['id'], JOBS); save(job)
+    if job.get('batch_id'):
+        workflow.update(workflow.BATCHES / job['batch_id'], 'queued', '执行中断，等待继续本阶段', executor_running=False)
+
+
+def finish_job(job, code=None, message='执行进程已结束，可查看日志后重试', *, local_failure=False):
+    if job.get('phase') and job.get('attempt'):
+        result = stage_results.verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
+        if result:
+            job['result_ref'] = str(stage_results.result_path(job, JOBS))
+            if result['status'] == 'waiting_resource':
+                job.update(status='queued', not_before=result['not_before'])
+                for field in ('pid', 'pgid', 'process_token', 'admission', 'input_fingerprint'): job.pop(field, None)
+                storage.release(job['id'], JOBS)
+                save(job)
+                if job.get('batch_id'):
+                    workflow.update(workflow.BATCHES / job['batch_id'], 'queued', '等待资源，稍后继续本阶段', executor_running=False, not_before=result['not_before'])
+                return
+            code = result['exit_code']
+            if result['status'] == 'unverified': code = 2
+        elif not local_failure and not delivery_uncertain(job):
+            requeue_stage(job)
+            return
+        elif code == 0:
+            code = 2
+            message = '阶段结果缺失或校验失败，请重新执行本阶段'
+    storage.release(job['id'], JOBS)
     job.update(status='interrupted' if code is None else 'completed' if code == 0 else 'failed',
                exit_code=code, finished=time.time())
     save(job)
@@ -253,7 +289,11 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
             publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
             rid = job.get('request_id')
             entry = publications.get(rid, {})
-            if entry.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'}:
+            if workflow.delivery_blocked(entry):
+                entry.update(status='unverified', error='待核实：外部写入期间执行中断，禁止重放')
+                publications = workflow.store_publication(path, rid, entry)
+                job.update(status='unverified'); save(job)
+            elif entry.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'}:
                 entry.update(status='publish_failed', error=message)
                 publications = workflow.store_publication(path, rid, entry)
             waiting = any(item.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'} for item in publications.values())
@@ -282,14 +322,25 @@ def job_alive(job):
     return batch_control.child_state(job) not in {None, 'Z'}
 
 
-def recover_jobs(*, enqueue=False):
+def recover_jobs(*, enqueue=False, owned=None):
     jobs = list(stored_jobs())
-    live = set()
+    owned = owned or {}
+    live_ids = set(owned)
+    live = {job.get('batch_id') for job, _, _ in owned.values()}
+    live.update(path.name for path in workflow.BATCHES.glob('*') if batch_control.own_live_children(path))
     queued = set()
     for job in sorted(jobs, key=lambda j: j.get('created', 0)):
         if job.get('instance') and not batch_control.belongs(job):
             continue
         batch = job.get('batch_id')
+        if job['id'] in owned:
+            continue
+        if job.get('status') == 'completed' and job.get('phase') in {'fetch', 'upload'}:
+            successor_id = uuid.uuid5(uuid.NAMESPACE_URL, job['id'] + ':' + ('render' if job['phase'] == 'fetch' else 'poll')).hex
+            if (JOBS / (successor_id + '.json')).exists(): continue
+            if not job.get('attempt') or stage_results.verified(job, JOBS, workflow.BATCHES, workflow.ROOT):
+                advance_stage(job)
+            continue
         if job.get('status') == 'queued' and job.get('command'):
             if batch and not (workflow.BATCHES / batch / 'draft.json').exists():
                 finish_job(job)
@@ -310,8 +361,14 @@ def recover_jobs(*, enqueue=False):
                 job.update(status='running', adopted_after_restart=True, instance=child.get('instance'),
                            pid=child['pid'], pgid=child.get('pgid'), process_token=child['process_token'])
                 save(job)
-                live.add(batch)
+                live.add(batch); live_ids.add(job['id'])
                 continue
+            if job.get('phase') and job.get('attempt') and job.get('process_token'):
+                result = stage_results.verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
+                if result:
+                    finish_job(job, result['exit_code'])
+                    if job.get('status') == 'queued': queued.add(batch)
+                    continue
             queued.add(batch)
             if enqueue:
                 WORK.put((job, job['command']))
@@ -320,9 +377,31 @@ def recover_jobs(*, enqueue=False):
             save(job)
             if batch and (workflow.BATCHES / batch / 'draft.json').exists():
                 batch_control.remember_child(workflow.BATCHES / batch, {**job, 'lane': concurrency.lane(job)})
-            live.add(batch)
+            live.add(batch); live_ids.add(job['id'])
             continue
-        elif job.get('status') == 'running' and (batch not in live or job.get('action') == 'prefetch'):
+        elif job.get('status') == 'running':
+            if job.get('phase'):
+                result = stage_results.verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
+                if result:
+                    finish_job(job, result['exit_code'])
+                    if job.get('status') == 'queued': queued.add(batch)
+                    continue
+                path = workflow.BATCHES / batch if batch else None
+                if job.get('phase') in {'upload', 'poll'}:
+                    entry = read_json(path / 'publications.json').get(job.get('request_id'), {}) if path and (path / 'publications.json').exists() else {}
+                    if workflow.delivery_blocked(entry):
+                        finish_job(job, 2, '待核实：交付执行中断'); continue
+                    if job.get('attempt'):
+                        requeue_stage(job); queued.add(batch)
+                        if enqueue: WORK.put((job, job['command']))
+                        continue
+                if job.get('phase') in {'fetch', 'render'} and (job.get('attempt') or not batch or not workflow.runtime(path).get('download_complete')):
+                    job.update(status='queued', recovered_from_stage=job['phase'])
+                    for field in ('pid', 'pgid', 'process_token', 'admission', 'input_fingerprint'): job.pop(field, None)
+                    storage.release(job['id'], JOBS); save(job); queued.add(batch)
+                    if batch: workflow.update(path, 'queued', '执行中断，等待继续本阶段', executor_running=False)
+                    if enqueue: WORK.put((job, job['command']))
+                    continue
             code = None
             if batch and (workflow.BATCHES / batch / 'runtime.json').exists():
                 state = workflow.runtime(workflow.BATCHES / batch)['status']
@@ -346,6 +425,7 @@ def recover_jobs(*, enqueue=False):
                     result = read_json(file) if file.exists() else {}
                     code = 0 if result.get('status') == 'completed' else 2 if result.get('status') == 'failed' else None
             finish_job(job, code)
+    storage.rebuild_reservations(JOBS, live_ids, workflow.BATCHES, workflow.ROOT)
     # Stage completion may have queued a successor after the recovery snapshot.
     queued.update(job.get('batch_id') for job in stored_jobs() if job.get('status') == 'queued')
     for file in workflow.BATCHES.glob('*/runtime.json'):
@@ -428,11 +508,24 @@ def worker_tick(pending, owned):
             batch_control.reconcile(workflow.BATCHES, external_active=external_active)
         else:
             batch_control.reconcile(workflow.BATCHES)
-        if not owned:
-            recover_jobs()
+        recover_jobs(owned=owned)
+        while True:
+            try:
+                entry = WORK.get_nowait()
+                if any(item[0]['id'] == entry[0]['id'] for item in pending) or entry[0]['id'] in owned:
+                    WORK.task_done()
+                else: pending.append(entry)
+            except queue.Empty: break
+        known = {entry[0]['id'] for entry in pending} | set(owned)
+        for durable in stored_jobs():
+            if durable.get('status') == 'queued' and durable.get('command') and durable['id'] not in known:
+                WORK.put((durable, durable['command']))
+                pending.append(WORK.get_nowait())
+                known.add(durable['id'])
         limits = concurrency.settings()
         counts = {key: 0 for key in concurrency.LANES}
         batches = set()
+        legacy_projects = {job.get('project') for job, _, _ in owned.values() if not job.get('batch_id') and job.get('project')}
         tokens = set()
         for job, _, _ in owned.values():
             token = job.get('process_token') or job['id']
@@ -450,6 +543,7 @@ def worker_tick(pending, owned):
                 tokens.add(token)
         for job in stored_jobs():
             if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
+                if job.get('project'): legacy_projects.add(job['project'])
                 token = job['process_token']
                 if token not in tokens and batch_control.child_state(job) != 'T':
                     counts[concurrency.lane(job)] += 1
@@ -472,12 +566,23 @@ def worker_tick(pending, owned):
             if not limits['enabled'] and sum(counts.values()):
                 continue
             batch = job.get('batch_id')
+            if not batch and job.get('project') in legacy_projects: continue
             if batch:
                 control = batch_control.read(workflow.folder(batch))
                 if control.get('paused') or control.get('archived') or batch in batches:
                     continue
-            log = (JOBS / (job['id'] + '.log')).open('ab')
             try:
+                allocations = storage.job_budget(job, workflow.BATCHES, workflow.ROOT)
+                if not storage.reserve(job['id'], allocations, JOBS): continue
+                job['admission'] = {'paths': allocations, 'allocations': storage.device_allocations(allocations), 'at': time.time()}
+                if job.get('phase'):
+                    job['attempt'] = job.get('attempt', 0) + 1
+                    job['input_fingerprint'] = stage_results.fingerprint(job, workflow.BATCHES, workflow.ROOT)
+            except (ValueError, RuntimeError, OSError) as exc:
+                finish_job(job, -1, str(exc), local_failure=True); pending.remove(entry); WORK.task_done(); continue
+            log = None
+            try:
+                log = (JOBS / (job['id'] + '.log')).open('ab')
                 token = uuid.uuid4().hex
                 if len(cmd) > 2 and cmd[1] == '-X' and cmd[2].startswith('exactcut_process_token='):
                     cmd = [cmd[0], *cmd[3:]]
@@ -486,8 +591,9 @@ def worker_tick(pending, owned):
                 save(job)
                 process = subprocess.Popen(cmd, cwd=CODE_ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             except Exception as exc:
-                log.close()
-                finish_job(job, -1, '启动失败，可重试：' + type(exc).__name__)
+                if log is not None: log.close()
+                # No process was spawned; this is a known local failure.
+                finish_job(job, -1, '启动失败，可重试：' + type(exc).__name__, local_failure=True)
                 pending.remove(entry)
                 WORK.task_done()
             else:
@@ -504,6 +610,8 @@ def worker_tick(pending, owned):
                 counts[resource] += 1
                 if batch:
                     batches.add(batch)
+                elif job.get('project'):
+                    legacy_projects.add(job['project'])
                 write_json_atomic(JOBS.parent / 'scheduler.json', {'owner': owner})
 
 
