@@ -121,9 +121,9 @@ def test_same_disk_render_reserves_single_output_and_temporary_peak(workspace, m
     monkeypatch.setattr(__import__('exactcut.media', fromlist=['resolve_full_episodes']), 'resolve_full_episodes', lambda m, p: m)
     allocations = storage.job_budget({'phase': 'render', 'batch_id': batch['id']}, workflow.BATCHES, workflow.ROOT)
     budget = sum(storage.render_budget([i.model_dump(mode='json') for i in r.timeline], workflow.load_config()['render']) for r in manifest.requests)
-    assert sum(allocations.values()) == budget
+    assert sum(allocations.values()) == 2 * budget
     monkeypatch.setattr(storage, 'policy', lambda: {'reserve_bytes': 10})
-    monkeypatch.setattr(storage.shutil, 'disk_usage', lambda p: Mock(free=10 + budget))
+    monkeypatch.setattr(storage.shutil, 'disk_usage', lambda p: Mock(free=10 + 2 * budget))
     jobs = workspace / 'jobs'; jobs.mkdir()
     assert storage.reserve('first', allocations, jobs)
     assert not storage.reserve('second', allocations, jobs)

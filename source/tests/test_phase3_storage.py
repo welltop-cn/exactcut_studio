@@ -69,7 +69,7 @@ def test_low_space_fails_before_render_or_ai_and_handles_distinct_filesystems(tm
     monkeypatch.setattr(storage,'require_space',lambda p,b:checked.append((p,b)))
     storage.prepare_render(tmp_path,tmp_path/'output/file.mp4',[{'type':'title_card','duration_ms':10000}],{'width':1080,'height':1920,'fps':30})
     expected = storage.render_budget([{'type':'title_card','duration_ms':10000}], {'width':1080,'height':1920,'fps':30})
-    assert len(checked) == 1 and checked[0][1] == expected  # All paths share this test's filesystem.
+    assert len(checked) == 1 and checked[0][1] == 2 * expected  # All paths share this test's filesystem.
 
 
 def test_storage_api_requires_auth_admin_csrf_and_matching_cleanup_preview(fixture,tmp_path):

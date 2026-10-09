@@ -116,7 +116,7 @@ TDD：首轮新回归 13 个预期失败；补删除 batch 后的只读响应 RE
 
 completed fetch/upload 有 attempt、没有后继且结果缺失或不可信时，任务显式失败并写“阶段结果缺失或校验失败”原因；交付意图不明仍进入待核实，不自动重放。已存在确定性后继的历史任务无需重复核验和阻塞当前 batch。
 
-render 空间估算按物理组成拆分：输出峰值（最终成片及较小预览）、缓存基底、TMPDIR 中的切段/合并中间文件，各自只算一次，再按 st_dev 归并；同盘总量为一份完整 render_budget，而非向三个目录各加同一预算。子进程 require_space 与准入使用同一拆分，避免预约后重复索要三倍空间。upload/poll 按正式成片大小预约，包括旧 batch publish action 的 lane 映射。
+render 空间估算按物理组成拆分：输出峰值（最终成片及较小预览）、缓存基底、TMPDIR 中的切段/合并中间文件，各自只算一次，再按 st_dev 归并；第 1 轮曾按一份 render_budget 分摊；第 2 轮 P1-1 修正为完整输出峰值 + 独立临时峰值，同盘合计两份 render_budget。子进程 require_space 与准入使用同一拆分，避免预约后重复索要三倍空间。upload/poll 按正式成片大小预约，包括旧 batch publish action 的 lane 映射。
 
 启动恢复也使用 scheduler 校验，先启动 HTTP/worker，再收割后台结果，不让旧大素材延迟健康检查。旧 workbook 编译与剪到整集末尾的时长探测同样移到有界后台准备。磁盘峰值是保守的每设备空间估算，预览在渲染临时目录清理后生成；CRF 编码不提供硬字节上限。
 
@@ -391,3 +391,12 @@ fi
 ```
 
 新镜像的固定 ID 上有 `io.exactcut.stage-protocol=1`，缺标签视为旧协议，不信任可随意编辑的 metadata 布尔值；`data-schema.json` 仍为 1。必须先安装新管理器，旧管理器本身没有这个守卫。`check-switch` 仅为只读快照诊断，正式 transition 会在维护锁内重查，不能用成功干跑绕过正式发布流程。
+
+
+## 第 2 轮修复（2026-10-10；未部署）
+
+### R2-A / P1-1：分盘输出预算
+
+TDD：先新增 `test_round2_storage.py`，红灯 2 failed（输出盘只有 budget/4 仍放行、同盘预算只有一份）；再修 `render_allocations`。输出盘完整预约 `render_budget()`；临时峰值另预约同样大小，project 基底缓存占临时预算 1/4、TMPDIR 切段/合并占 3/4。保守假设输出与临时可并存，同盘相加两份，scheduler 与 child 共用同一函数。旧同盘测试同步调整其预期，不缩减输出以满足旧断言。
+
+macOS 15.8.1 arm64 / conda Python 3.12.12，命令（source 下）：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`。脚本清理 EXACTCUT/OPENAI/ALIYUN/FEISHU/CF_ADS/GEMINI/GOOGLE_API 继承变量，以独立 TemporaryDirectory 数据根、development 环境执行 `python -m pytest -o addopts= -q`；无真实外部调用。完整 615 passed / 77.21s；`git diff --check` 通过。三设备输出不足拒绝、同盘第一份启动第二份拒绝、释放后再启动均可复现。

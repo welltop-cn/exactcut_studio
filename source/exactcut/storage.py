@@ -146,14 +146,14 @@ def render_budget(timeline,render):
 
 
 def render_allocations(project, output, budget):
-    # Conservative per-device allowances, not hard byte limits for CRF encoding:
-    # one output peak for final + smaller preview (1/4), and one temporary peak
-    # for reusable base cache (1/4) + cut units/joined intermediate in TMPDIR (1/2).
-    # Preview runs after render temporaries are removed, so these are sequential
-    # peak allowances. Their sum is render_budget even on a single device.
+    # render_budget() is the full conservative output peak (final + preview).
+    # Reserve another full budget for temporary work: base cache uses 1/4,
+    # cut units/joined intermediates use 3/4 in TMPDIR. These can coexist with
+    # the output, so same-device allocations add up to two full budgets.
+    # These are admission estimates, not hard byte limits for CRF encoding.
     paths = {}
-    for directory, size in ((project, budget // 4), (output, budget // 4),
-                            (Path(os.environ.get('TMPDIR', '/tmp')), budget - 2 * (budget // 4))):
+    for directory, size in ((project, budget // 4), (output, budget),
+                            (Path(os.environ.get('TMPDIR', '/tmp')), budget - budget // 4)):
         paths[str(directory)] = paths.get(str(directory), 0) + size
     return paths
 
