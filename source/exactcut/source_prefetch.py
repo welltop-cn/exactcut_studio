@@ -1,0 +1,148 @@
+"""Prepare only the episodes named by an editable draft, using the durable runner."""
+from copy import deepcopy
+import json
+import re
+import sys
+from types import SimpleNamespace
+
+from . import source_cache, workflow
+from .intake import compile_clips, compile_composition, normalized_timeline, timing_explanation
+from .compiler import parse_segment_cell
+from .runtime import instance_marker, project_env_file
+from .util import load_env_file, now_iso, read_json, write_json_atomic
+
+
+def snapshot(draft):
+    if not isinstance(draft, dict):
+        raise ValueError('正片准备内容格式错误')
+    drama = str(draft.get('drama_id') or '').strip()
+    if not re.fullmatch(r'\d{6}', drama) or not 101050 <= int(drama) <= 999999:
+        raise ValueError('剧 ID 必须为 101050～999999 范围内的六位数字')
+    rows = draft.get('rows')
+    if not isinstance(rows, list) or len(rows) > 200 or len(json.dumps(draft)) > 1_000_000:
+        raise ValueError('正片准备内容格式错误')
+    requests = []
+    for original in rows:
+        if not isinstance(original, dict):
+            continue
+        row = deepcopy(original)
+        compile_composition(row)
+        compile_clips(row)
+        raw = str(row.get('timeline_text') or '')
+        mode = draft.get('time_notation', 'seconds')
+        if mode == 'unconfirmed' and re.search(r'\d+\.\d{1,2}s', raw, re.I):
+            continue
+        timeline = []
+        for line in normalized_timeline(raw, mode).splitlines():
+            try:
+                item = parse_segment_cell(line, 1500)
+                if item and item.type == 'episode':
+                    source_cache.check_episode(item.episode)
+                    if item.start_ms < 0 or (item.end_ms is not None and item.end_ms <= item.start_ms):
+                        continue
+                if item:
+                    timeline.append(item)
+            except (ValueError, RuntimeError, TypeError):
+                continue
+        requests.append(SimpleNamespace(request_id=str(row.get('request_id') or ''), timeline=timeline))
+    episodes = sorted({t.episode for r in requests for t in r.timeline if t.type == 'episode'},
+                      key=lambda ep: int(ep[2:]))
+    return drama, episodes, SimpleNamespace(requests=requests)
+
+
+def result_path(path, job_id):
+    if not re.fullmatch(r'[a-f0-9]{32}', job_id or ''):
+        raise ValueError('无效正片任务 ID')
+    return path / 'source-prefetch-results' / (job_id + '.json')
+
+
+def signature(drama, episode):
+    from .media import resolve_episode_video
+    try:
+        video = resolve_episode_video(workflow.ROOT / 'projects' / drama, episode)
+        stat = video.stat()
+        return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns]
+    except (OSError, RuntimeError, ValueError):
+        return None
+
+
+def cached(drama, episode):
+    video = source_cache.source_root() / drama / (episode + '.mp4')
+    meta = source_cache._read_json(video.with_suffix('.json'))
+    return bool(isinstance(meta, dict) and meta.get('complete') and video.is_file()
+                and not video.is_symlink() and video.stat().st_size > 0
+                and video.stat().st_size == meta.get('bytes'))
+
+
+def status(path, drama, episodes, jobs, manifest):
+    states = []
+    for episode in episodes:
+        state = {'episode': episode, 'status': 'waiting', 'received_bytes': 0, 'total_bytes': 0}
+        matches = [job for job in jobs if job.get('project') == drama and episode in job.get('episodes', [])]
+        job = max(matches, key=lambda j: j.get('created', 0), default=None)
+        if job:
+            file = result_path(path, job['id'])
+            result = read_json(file) if file.exists() else {}
+            saved = result.get('episodes', {}).get(episode, {})
+            state.update({k: v for k, v in saved.items() if k != 'signature'})
+            if saved.get('status') == 'skipped':
+                state.update(status='waiting')
+            elif saved.get('status') == 'ready' and saved.get('signature') != signature(drama, episode):
+                state.update(status='waiting')
+            elif job.get('status') in {'failed', 'interrupted'} and state['status'] != 'ready':
+                state.update(status='failed')
+            elif state['status'] == 'waiting' and job.get('status') in {'queued', 'running'}:
+                state.update(status='queued')
+        if cached(drama, episode):
+            state.update(status='ready')
+            state.pop('error_info', None)
+        states.append(state)
+    explanation = timing_explanation(manifest, workflow.ROOT / 'projects' / drama, wait=False)
+    by_episode = {state['episode']: state for state in states}
+    for request in explanation:
+        for segment in request['segments']:
+            state = by_episode.get(segment['episode'])
+            if state and segment.get('source_status') == 'missing':
+                segment['source_status'] = state['status'] if state['status'] != 'ready' else 'checking'
+    return {'drama_id': drama, 'episodes': states, 'timing_explanation': explanation}
+
+
+def run(batch_id, job_id):
+    path = workflow.folder(batch_id)
+    target = result_path(path, job_id)
+    job = read_json(workflow.ROOT / '.web-state/jobs' / (job_id + '.json'))
+    if job.get('batch_id') != batch_id or job.get('instance') != instance_marker():
+        raise ValueError('正片任务实例不匹配')
+    result = {'status': 'running', 'episodes': {}, 'updated_at': now_iso()}
+    def store():
+        result['updated_at'] = now_iso()
+        write_json_atomic(target, result)
+    failed = False
+    for episode in job['episodes']:
+        desired = read_json(path / 'source-prefetch.json')
+        if (workflow.runtime(path)['status'] != 'draft' or desired['drama_id'] != job['project']
+                or episode not in desired['episodes']):
+            result['episodes'][episode] = {'status': 'skipped'}
+            store()
+            continue
+        state = result['episodes'][episode] = {'status': 'downloading', 'received_bytes': 0, 'total_bytes': 0}
+        store()
+        def progress(ep, received, total):
+            state.update(received_bytes=received, total_bytes=total)
+            store()
+        try:
+            source_cache.ensure(job['project'], [episode], on_progress=progress)
+            state.update(status='ready', signature=signature(job['project'], episode))
+        except (ValueError, RuntimeError, OSError) as exc:
+            from .error_guidance import guidance
+            state.update(status='failed', error_info=guidance(str(exc), 'download'))
+            failed = True
+        store()
+    result['status'] = 'failed' if failed else 'completed'
+    store()
+    return 2 if failed else 0
+
+
+if __name__ == '__main__':
+    load_env_file(project_env_file())
+    raise SystemExit(run(sys.argv[1], sys.argv[2]))

@@ -367,6 +367,16 @@ def named_episodes() -> set[tuple[str, str]]:
             _add_timeline_text(keep, draft)
         if draft.is_file():
             _add_plots(keep, draft)
+        wanted = _read_json(batch / 'source-prefetch.json')
+        if isinstance(wanted, dict):
+            drama = wanted.get('drama_id')
+            for episode in wanted.get('episodes', []):
+                try:
+                    check_drama(drama)
+                    check_episode(episode)
+                except (RuntimeError, TypeError):
+                    continue
+                keep.add((drama, episode))
     return keep
 
 

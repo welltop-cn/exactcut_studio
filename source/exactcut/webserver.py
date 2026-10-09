@@ -115,6 +115,43 @@ def batch_response(batch_id, job=None):
     return result
 
 
+def prefetch_sources(batch_id, data, actor):
+    from . import source_prefetch
+    from .runtime import require_material_fetch
+    require_material_fetch()
+    path = workflow.folder(batch_id)
+    batch_control.ensure_editable(path)
+    if workflow.runtime(path)['status'] != 'draft' or (path / 'confirmed.json').exists():
+        raise ValueError('仅草稿可提前准备正片')
+    if data.get('cancel') is True:
+        write_json_atomic(path / 'source-prefetch.json', {'drama_id': '', 'episodes': []})
+        return {'drama_id': '', 'episodes': [], 'timing_explanation': []}
+    drama, episodes, manifest = source_prefetch.snapshot(data.get('draft'))
+    write_json_atomic(path / 'source-prefetch.json', {'drama_id': drama, 'episodes': episodes})
+    jobs = [job for job in stored_jobs() if job.get('batch_id') == batch_id
+            and job.get('action') == 'prefetch' and (not job.get('instance') or batch_control.belongs(job))]
+    result = source_prefetch.status(path, drama, episodes, jobs, manifest)
+    missing = [e['episode'] for e in result['episodes'] if e['status'] == 'waiting'
+               or (e['status'] == 'failed' and data.get('retry') is True)]
+    if missing and queue_size() < 10:
+        job = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'project': drama, 'episodes': missing,
+               'actor': actor, 'action': 'prefetch', 'created': time.time(), 'status': 'queued',
+               'instance': instance_marker()}
+        cmd = [sys.executable, '-u', '-m', 'exactcut.source_prefetch', batch_id, job['id'], instance_marker()]
+        job['command'] = cmd
+        save(job)
+        WORK.put((job, cmd))
+        for state in result['episodes']:
+            if state['episode'] in missing:
+                state.update(status='queued')
+                state.pop('error_info', None)
+        for timing in result['timing_explanation']:
+            for segment in timing['segments']:
+                if segment['episode'] in missing and segment.get('source_status') in {'waiting', 'failed'}:
+                    segment['source_status'] = 'queued'
+    return result
+
+
 def existing_submission(batch_id, action, data, actor):
     token = data.get('submission_token')
     if token is not None and (not isinstance(token, str) or not re.fullmatch(r'[a-zA-Z0-9-]{16,80}', token)):
@@ -140,6 +177,8 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
         return
     path = workflow.BATCHES / job['batch_id']
     if not (path / 'draft.json').exists():
+        return
+    if job.get('action') == 'prefetch':
         return
     workflow.update(path, executor_running=False, execution_ended_at=workflow.now_iso())
     if job.get('action') == 'publish' and code != 0:
@@ -202,7 +241,7 @@ def recover_jobs(*, enqueue=False):
                 batch_control.remember_child(workflow.BATCHES / batch, {**job, 'lane': job.get('action')})
             live.add(batch)
             continue
-        elif job.get('status') == 'running' and batch not in live:
+        elif job.get('status') == 'running' and (batch not in live or job.get('action') == 'prefetch'):
             code = None
             if batch and (workflow.BATCHES / batch / 'runtime.json').exists():
                 state = workflow.runtime(workflow.BATCHES / batch)['status']
@@ -213,6 +252,11 @@ def recover_jobs(*, enqueue=False):
                     publications = workflow.read_json(path) if path.exists() else {}
                     status = publications.get(job.get('request_id'), {}).get('status')
                     code = 0 if status == 'fbbm_ready' else 2 if status == 'publish_failed' else None
+                elif job.get('action') == 'prefetch':
+                    from .source_prefetch import result_path
+                    file = result_path(workflow.folder(batch), job['id'])
+                    result = read_json(file) if file.exists() else {}
+                    code = 0 if result.get('status') == 'completed' else 2 if result.get('status') == 'failed' else None
             finish_job(job, code)
     for file in workflow.BATCHES.glob('*/runtime.json'):
         path = file.parent
@@ -656,7 +700,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(403, {'error': '无效请求来源'})
         if maintenance_file().exists() and self.path not in ('/api/login', '/api/logout'):
             return self.respond(503, {'error': '系统正在发布维护，请稍后再试；已提交任务继续执行'})
-        if os.environ.get('EXACTCUT_WORKER_ENABLED', '1') != '1' and (self.path == '/api/jobs' or re.fullmatch(r'/api/batches/[0-9a-f]{32}/(start|publish|preview|pause|resume|archive|unarchive|delete)', self.path)):
+        if os.environ.get('EXACTCUT_WORKER_ENABLED', '1') != '1' and (self.path == '/api/jobs' or re.fullmatch(r'/api/batches/[0-9a-f]{32}/(start|publish|preview|sources|pause|resume|archive|unarchive|delete)', self.path)):
             return self.respond(503, {'error': '验收实例禁止启动或控制生产任务'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
@@ -716,12 +760,14 @@ class Handler(BaseHTTPRequestHandler):
                     if not self.can_access(batch_id):
                         return self.respond(404, {'error':'项目不存在或无权访问'})
                     return self.respond(200, workflow.save_ending_image(batch_id, data.get('request_id'), data.get('content')))
-            match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/(save|start|publish|preview|feedback|clone|pause|resume|archive|unarchive|delete)', self.path)
+            match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/(save|start|publish|preview|sources|feedback|clone|pause|resume|archive|unarchive|delete)', self.path)
             if match:
                 batch_id, action = match.groups()
                 with LOCK:
                     if not self.can_access(batch_id):
                         return self.respond(404, {'error':'项目不存在或无权访问'})
+                    if action == 'sources':
+                        return self.respond(200, prefetch_sources(batch_id, data, self.user['username']))
                     if action == 'publish':
                         workflow.reject_review_sha(
                             workflow.result_records(workflow.folder(batch_id)).get(data.get('request_id'), {}),
