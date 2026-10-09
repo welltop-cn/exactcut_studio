@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import shutil
 import time
+from functools import partial
 from .runtime import protect_path, data_root
 from .util import load_config
 
@@ -305,12 +306,15 @@ def scheduler_job_budget(job, batches, root):
     snapshot = {str(file): stage_results.file_identity(file) for file in files}
     config = load_config()
     key = ('budget', json_sha256({'job': job, 'snapshot': snapshot, 'config': config}))
-    def prepare():
-        value = job_budget(dict(job), batches, root, config=config)
-        if snapshot != {str(file): stage_results.file_identity(file) for file in files}:
-            raise ValueError('制作输入在预算准备期间发生变化')
-        return value
-    value = stage_results.background(key, prepare)
+    value = stage_results.background(key, partial(prepare_job_budget, dict(job), batches, root, config, snapshot))
     if snapshot != {str(file): stage_results.file_identity(file) for file in files}:
         raise stage_results.EvidencePending('制作输入变化，等待重新准备预算')
+    return value
+
+
+def prepare_job_budget(job, batches, root, config, snapshot):
+    from . import stage_results
+    value = job_budget(job, batches, root, config=config)
+    if snapshot != {file: stage_results.file_identity(file) for file in snapshot}:
+        raise stage_results.EvidenceMismatch('制作输入在预算准备期间发生变化')
     return value

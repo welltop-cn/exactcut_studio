@@ -110,7 +110,7 @@ TDD：首轮新回归 13 个预期失败；补删除 batch 后的只读响应 RE
 
 ### B：锁外证据准备、显式恢复失败与物理磁盘峰值（#2、#3、#7）
 
-保留直接 `stage_results.verified()` 的强 SHA 校验；worker 使用快速证据路径，核对文件路径、dev/ino/size/mtime_ns/ctime_ns 与子进程持久化摘要。阶段结果新增可选文件身份与 JSON 证据摘要，检测同大小替换、恢复 mtime 的修改和结果元数据损坏。旧 schema 1 结果没有这些字段时，由有上限的后台强校验处理，不把缺字段视为不兼容。后台摘要最多两项同时进行，无无界 executor 排队；相关 job 延迟，其他用户/其他 lane 继续准入。
+保留直接 `stage_results.verified()` 的强 SHA 校验；worker 使用快速证据路径，核对文件路径、dev/ino/size/mtime_ns/ctime_ns 与子进程持久化摘要。阶段结果新增可选文件身份与 JSON 证据摘要，检测同大小替换、恢复 mtime 的修改和结果元数据损坏。旧 schema 1 结果没有这些字段时，由有上限的后台强校验处理，不把缺字段视为不兼容。后台摘要最多两项同时进行；第 2 轮 P1-5 改用 spawn 独立读取进程及父/子两侧截止时间，无无界排队；相关 job 延迟，其他用户/其他 lane 继续准入。
 
 已退出进程的校验等待不占 lane、resident 或磁盘预约；同 batch 保留逻辑 fence 到证据判定结束。活进程先核验身份并认领，再进行摘要等待判断，避免重新引入 A 组修复的恢复超额窗口。fetch 的有效摘要可直接供后继 render 使用。锁外计算前后核对文件身份，变化时拒绝接受过时证据。
 
@@ -427,3 +427,14 @@ P1-4(a) 的“缺文件阻断”未在当前代码复现：`linux_ops.read(path,
 生产验收仍由编排者执行，**本会话未执行**。现有操作单的发布管理器命令、两用户并发、等待让位、重启和回退步骤保留；本轮新增门禁：正向发布同样先 `check-switch NEW_VERSION`，有 unverified/pending 不得停服。健康失败取证保存 current.json、history 中 restored / recovery_error_type / maintenance_retained、docker ps/inspect、健康响应、维护标记；若维护保留，先沿原回执显式核实并排空，禁止删除 job/intent 绕过，之后执行 `/srv/exactcut/bin/linux-ops --root /srv/exactcut recover`。常规失败且无阻断应恢复原 release 并撤维护。
 
 第 10 项决定不变：生产14 CPU /24g /pids512。`-threads 4` **仅约束编码器**，验收必须保存上方 `ps -T`/NLWP 每路 ffmpeg 的实际线程样本，记录 release/commit/UTC时间/batch/ffmpeg PID/命令行/NLWP峰值/RSS/三路并发数及宿主load；不能把4或编码器合计12写为实测全进程线程数。该采样本会话未执行。
+
+
+### R2-E / P1-5：证据瞬断与可回收超时
+
+TDD：`test_round2_evidence.py` 三条主回归先 3 failed：失败 future 永久缓存、瞬断导致 completed fetch failed、两阻塞槽不释放。最小修复后另两条边界先 2 failed（取消计时回调与关闭句柄竞态、输入 stat 瞬断），再修复；父计时器丢失的孤儿读取回归先 1 failed，再补子进程自身截止时间。新增读错误参数分别覆盖 ValueError / OSError。
+
+读取池替换为最多两项的 Python 标准库 spawn 进程，无 fork 继承服务锁、无新增中间件。成功证据按完整 stat/metadata 身份缓存，失败永不缓存；异常与 `None` 分开，瞬断抛 EvidencePending、下一 tick 重算，缺文件/身份/摘要/结果元数据不符才判失败。legacy 强校验启用异常透传，直接 verified 的旧兼容行为保留。单次读取默认120秒，可选 `concurrency.evidence_timeout_seconds` 通过 util.load_config 读取并验证有限正数；父计时器和子 SIGALRM 都能终止独立读取进程组（含其 ffprobe），即使服务崩溃也不留下永久读取。退出/失败/超时回收句柄并让槽位接受新任务，其他 batch 的非证据 job 不受阻。
+
+旧线程 monkeypatch 在 spawn 子进程不继承，因此将原慢摘要/编译/变异回归改成真实独立进程 + 文件事件；保留 ≥1GiB 正片与另一用户 0.8s 内入队、同 batch fence、退出执行器释放 lane、无 backlog、身份变化拒绝等断言。新超时测试在不释放 gate 的情况下核对原 PID 已不存在并成功启动新读取，避免仅从字典删除“假回收”。计时回调与 close 通过独立生命周期锁串行化。
+
+聚焦 28 passed / 7.34s；macOS 完整 646 passed / 86.92s，退出0，隔离命令同上；`git diff --check` 通过。前一次完整645 passed后增补孤儿超时测试再完整重跑，未以较早结果替代最后验证。生产实际磁盘吞吐、RSS、线程和供应商响应仍未执行，等待最终复审及编排者验收。

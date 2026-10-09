@@ -1,5 +1,6 @@
 """Round 1 evidence and physical disk accounting regressions; no external clients."""
 import os
+from functools import partial
 import threading
 import time
 from unittest.mock import Mock
@@ -8,6 +9,59 @@ from exactcut import stage_results, storage, workflow, webserver as web
 from exactcut.util import read_json, write_json_atomic
 from test_concurrency import runner, queued, close_logs
 from test_workflow import workspace, imported, complete_asset
+
+
+class FileEvent:
+    """Spawn-safe gates; a parent monkeypatch is not inherited by a fresh process."""
+    def __init__(self, path): self.path = path
+    def set(self): self.path.write_text('set')
+    def wait(self, timeout):
+        deadline = time.monotonic() + timeout
+        while not self.path.exists():
+            if time.monotonic() >= deadline: return False
+            time.sleep(.01)
+        return True
+
+
+def controlled_read(operation, entered, release, behavior):
+    entered.set()
+    assert release.wait(5)
+    if behavior == 'compile_failure': raise ValueError('fixture compile failure')
+    if behavior == 'failure': raise ValueError('fixture failure')
+    if behavior == 'fixture_digest': stage_results.file_sha256 = lambda path: 'fixture'
+    return operation()
+
+
+def gated_reader(monkeypatch, path, behavior='run'):
+    entered, release = FileEvent(path / 'evidence-entered'), FileEvent(path / 'evidence-release')
+    start = stage_results._start_evidence
+    monkeypatch.setattr(stage_results, '_start_evidence', lambda operation: start(partial(controlled_read, operation, entered, release, behavior)))
+    return entered, release
+
+
+def drain_reads():
+    deadline = time.monotonic() + 5
+    while any(not future.done() for future in stage_results._PENDING.values()):
+        assert time.monotonic() < deadline
+        time.sleep(.01)
+    with stage_results._EVIDENCE_LOCK:
+        for key, future in list(stage_results._PENDING.items()):
+            future.close(); del stage_results._PENDING[key]
+
+
+def counted_read(file):
+    file.write_text(file.read_text() + 'x' if file.exists() else 'x')
+    return 'third'
+
+
+def mutate_during_validation(operation):
+    digest = operation.args[4]['artifacts'][0]['sha256']
+    def mutate(file):
+        before = file.stat(); file.write_bytes(b'tampered')
+        os.utime(file, ns=(before.st_atime_ns, before.st_mtime_ns))
+        return digest
+    stage_results.file_sha256 = mutate
+    return operation()
 
 
 
@@ -70,20 +124,12 @@ def test_scheduler_legacy_one_gib_hash_does_not_block_other_user(runner, monkeyp
         'version': 1, 'job_id': job['id'], 'phase': 'render', 'attempt': 1,
         'input_fingerprint': stage_results.fingerprint(job, workflow.BATCHES, workflow.ROOT),
         'status': 'done', 'exit_code': 0, 'artifacts': [{'path': str(video), 'bytes': video.stat().st_size, 'sha256': 'fixture'}]})
-    entered, release, enqueued = threading.Event(), threading.Event(), threading.Event()
-    def slow_hash(file):
-        if file == video:
-            assert web.LOCK.owner != threading.get_ident()
-            assert batch_control.LOCK.owner != threading.get_ident()
-            entered.set()
-            assert release.wait(5)
-            return 'fixture'
-        return 'other'
-    monkeypatch.setattr(stage_results, 'file_sha256', slow_hash)
+    entered, release = gated_reader(monkeypatch, path, 'fixture_digest')
+    enqueued = threading.Event()
     pending, owned = [], {}
     tick = threading.Thread(target=web.worker_tick, args=(pending, owned)); tick.start()
     try:
-        assert entered.wait(1)
+        assert entered.wait(3)
         def enqueue():
             with web.LOCK:
                 queued('b', 'fetch', owner='bob'); enqueued.set()
@@ -96,7 +142,7 @@ def test_scheduler_legacy_one_gib_hash_does_not_block_other_user(runner, monkeyp
     finally:
         release.set(); tick.join(5)
         if 'submit' in locals(): submit.join(5)
-        close_logs(owned)
+        close_logs(owned); drain_reads()
 
 
 @pytest.mark.parametrize('phase', ['upload', 'poll'])
@@ -149,38 +195,31 @@ def test_hash_snapshot_rejects_mutation_during_read(tmp_path, monkeypatch):
         stage_results.digest_evidence(video)
 
 
-def test_background_pool_has_no_backlog_and_releases_failed_slots():
-    entered = [threading.Event(), threading.Event()]; release = threading.Event()
+def test_background_pool_has_no_backlog_and_releases_failed_slots(tmp_path):
+    entered = [FileEvent(tmp_path / str(index)) for index in range(2)]
+    release = FileEvent(tmp_path / 'release')
     prefix = 'bounded-' + str(time.monotonic_ns())
-    def operation(index):
-        entered[index].set(); release.wait(5)
-        raise ValueError('fixture failure')
     try:
         for index in range(2):
             with pytest.raises(stage_results.EvidencePending):
-                stage_results.background((prefix, index), lambda index=index: operation(index))
-        assert all(event.wait(1) for event in entered)
-        third = Mock(return_value='third')
+                stage_results.background((prefix, index), partial(controlled_read, None, entered[index], release, 'failure'))
+        assert all(event.wait(3) for event in entered)
+        counted = tmp_path / 'third-count'
+        third = partial(counted_read, counted)
         with pytest.raises(stage_results.EvidencePending): stage_results.background((prefix, 2), third)
-        third.assert_not_called()
-    finally: release.set()
-    deadline = time.monotonic() + 2
-    for index in range(2):
+        assert not counted.exists()
+        release.set()
+        deadline = time.monotonic() + 3
         while True:
             try:
-                with pytest.raises(ValueError, match='fixture failure'):
-                    stage_results.background((prefix, index), lambda: None)
-                break
+                assert stage_results.background((prefix, 2), third) == 'third'; break
             except stage_results.EvidencePending:
                 assert time.monotonic() < deadline
                 time.sleep(.01)
-    while True:
-        try:
-            assert stage_results.background((prefix, 2), third) == 'third'; break
-        except stage_results.EvidencePending:
-            assert time.monotonic() < deadline
-            time.sleep(.01)
-    third.assert_called_once()
+        assert stage_results.background((prefix, 2), third) == 'third'
+        assert counted.read_text() == 'x'
+    finally:
+        release.set(); drain_reads()
 
 
 def test_dead_owned_child_waiting_for_evidence_releases_render_slot(runner, monkeypatch):
@@ -189,21 +228,17 @@ def test_dead_owned_child_waiting_for_evidence_releases_render_slot(runner, monk
     result = stage_results.complete(job, web.JOBS, workflow.BATCHES, workflow.ROOT, 0)
     result.pop('source_evidence'); result.pop('evidence_sha256'); [row.pop('stat') for row in result['artifacts']]
     write_json_atomic(stage_results.result_path(job, web.JOBS), result)
-    entered, release = threading.Event(), threading.Event()
-    def slow(file):
-        entered.set(); assert release.wait(5)
-        return result['artifacts'][0]['sha256']
-    monkeypatch.setattr(stage_results, 'file_sha256', slow)
+    entered, release = gated_reader(monkeypatch, path)
     web.WORK.get_nowait()  # This running job owns its original queue item.
     owned = {job['id']: (job, Mock(poll=lambda: 0), Mock())}
     queued('b', 'render', owner='bob')
     try:
         web.worker_tick([], owned)
-        assert entered.wait(1)
+        assert entered.wait(3)
         assert job['id'] not in owned
         assert 'b' * 32 in owned
     finally:
-        release.set(); close_logs(owned)
+        release.set(); close_logs(owned); drain_reads()
 
 
 def test_corrupt_persisted_digest_cannot_pass_fast_verification(runner):
@@ -236,19 +271,15 @@ def test_pending_evidence_fences_same_batch_but_not_another_batch(runner, monkey
     result = stage_results.complete(job, web.JOBS, workflow.BATCHES, workflow.ROOT, 0)
     result.pop('source_evidence'); result.pop('evidence_sha256'); [row.pop('stat') for row in result['artifacts']]
     write_json_atomic(stage_results.result_path(job, web.JOBS), result)
-    entered, release = threading.Event(), threading.Event()
-    def slow(file):
-        entered.set(); assert release.wait(5)
-        return result['artifacts'][0]['sha256']
-    monkeypatch.setattr(stage_results, 'file_sha256', slow)
+    entered, release = gated_reader(monkeypatch, path)
     queued('b', 'fetch', batch=job['batch_id'])
     queued('c', 'upload', owner='bob')
     owned = {}
     try:
         web.worker_tick([], owned)
-        assert entered.wait(1)
+        assert entered.wait(3)
         assert 'b' * 32 not in owned and 'c' * 32 in owned
-    finally: release.set(); close_logs(owned)
+    finally: release.set(); close_logs(owned); drain_reads()
 
 
 def test_legacy_publish_action_reserves_final_bytes(workspace):
@@ -260,21 +291,16 @@ def test_legacy_publish_action_reserves_final_bytes(workspace):
 def test_legacy_render_budget_probe_is_deferred_without_global_lock(runner, monkeypatch):
     workbook = runner / 'fixture.xlsx'; workbook.write_bytes(b'fixture')
     job = queued('a', 'render'); job['command'] += ['--input', str(workbook), '--project', str(runner / 'project')]; web.save(job)
-    entered, release = threading.Event(), threading.Event()
-    from exactcut import compiler
-    def slow_compile(*args):
-        entered.set(); assert release.wait(5)
-        raise ValueError('fixture compile failure')
-    monkeypatch.setattr(compiler, 'compile_workbook', slow_compile)
+    entered, release = gated_reader(monkeypatch, runner, 'compile_failure')
     queued('b', 'fetch', owner='bob')
     owned = {}
     tick = threading.Thread(target=web.worker_tick, args=([], owned)); tick.start()
     try:
-        assert entered.wait(1)
+        assert entered.wait(3)
         tick.join(.8)
         assert not tick.is_alive(), 'legacy workbook/probe cannot block scheduling'
         assert 'b' * 32 in owned
-    finally: release.set(); tick.join(5); close_logs(owned)
+    finally: release.set(); tick.join(5); close_logs(owned); drain_reads()
 
 
 def test_live_crash_window_is_adopted_before_legacy_result_verification(runner, monkeypatch):
@@ -348,15 +374,11 @@ def test_legacy_validation_mutation_fence_rejects_changed_file(runner, monkeypat
     result = stage_results.complete(job, web.JOBS, workflow.BATCHES, workflow.ROOT, 0)
     result.pop('source_evidence'); result.pop('evidence_sha256'); [row.pop('stat') for row in result['artifacts']]
     write_json_atomic(stage_results.result_path(job, web.JOBS), result)
-    digest = result['artifacts'][0]['sha256']
-    def mutate(file):
-        before = file.stat(); file.write_bytes(b'tampered')
-        os.utime(file, ns=(before.st_atime_ns, before.st_mtime_ns))
-        return digest
-    monkeypatch.setattr(stage_results, 'file_sha256', mutate)
+    start_read = stage_results._start_evidence
+    monkeypatch.setattr(stage_results, '_start_evidence', lambda operation: start_read(partial(mutate_during_validation, operation)))
     with pytest.raises(stage_results.EvidencePending):
         stage_results.scheduler_verified(job, web.JOBS, workflow.BATCHES, workflow.ROOT)
-    deadline = time.monotonic() + 2
+    deadline = time.monotonic() + 5
     while any(not future.done() for future in stage_results._PENDING.values()):
         assert time.monotonic() < deadline; time.sleep(.01)
     # Cached pre-mutation strong verification must not be used with the new stat.
@@ -364,8 +386,7 @@ def test_legacy_validation_mutation_fence_rejects_changed_file(runner, monkeypat
         stage_results.scheduler_verified(job, web.JOBS, workflow.BATCHES, workflow.ROOT)
 
     # Finish all fixture work before monkeypatch restores globals or temp root vanishes.
-    while any(not future.done() for future in stage_results._PENDING.values()):
-        assert time.monotonic() < deadline; time.sleep(.01)
+    drain_reads()
 
 
 def test_startup_recovery_does_not_wait_for_legacy_media_hash(runner, monkeypatch):
