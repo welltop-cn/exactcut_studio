@@ -526,3 +526,51 @@ R3-B本机完整pytest：672 passed /91.77s，退出0，同R3-A的macOS/Python�
 R3-B中断窗口补充：维护命令首次保存意图但尚未落job时被终止，下一次命令也必须先执行已有recover_verification_queue。TDD外部临时测试先2 failed /18 passed（原fbbm_queued与旧扫描已改publish_failed两种），回归合入source/tests，再添加启动扫描；只补偿真正缺job，不解除持久等待保险。最终三次全量与干净clone针对含此补齐的source tree重新执行，之前675用例的预备运行不计为最终版本三连跑。
 
 维护中断补齐后的本机全量：677 passed /92.92s，退出0（包含尚未提交的R3-C预览修复）；聚焦本轮维护+预览24 passed /3.14s。R3-B以本次amend纳入上述启动扫描与两条回归，最终干净clone还会核验提交后的完整source tree。
+
+### R3-C / P2：预览立即重试的响应/名额释放竞态
+
+根因通过同步屏障证实，不是AI令牌桶或真实时间：原handler在`return self.respond(...)`中已发完整429/200/400，随后才执行finally释放INLINE_RENDERS和磁盘预约。客户端读完响应即可立刻重试，服务器上一线程尚未进入finally，第二次返回资源繁忙429。机器负载/线程调度改变窗口大小，解释全量偶发、单独运行常过。
+
+TDD新增`tests/test_round3_preview.py`，在发完首个响应后阻塞respond返回，用Event把窗口固定；原代码3 failed（deferred/success/error均断言“response exposed before admission cleanup”），原partial-cache测试1 passed。实现把成功/延期/异常响应暂存，先退出TemporaryDirectory、写完已核验JSON缓存并释放render名额/磁盘预约，再发HTTP响应。无需sleep或延长not_before，不削弱容量限制。聚焦预览/资源全部52 passed /5.64s。
+
+原偶发测试与新回归都使用各自tmp_path的JOBS/预约账本、独立INLINE_RENDERS、固定1000→1010时钟；AI compute用fixture替换。新断言在第一响应线程仍被屏障阻塞时名额已空、第二请求200，稳定复现旧代码而不依赖真实时间或执行顺序。缓存重入测试仍要求首次False、重试True，验证已完成部分不重新请求AI。
+
+本轮完整测试的可复现隔离命令（从开发仓库根执行；每次新临时数据根，清除继承的生产配置/凭据，SOURCE_ROOT由各fixture设定）：
+
+```sh
+cd source
+/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+import os, subprocess, tempfile
+from datetime import datetime, timezone
+python = '/Users/matao/miniconda3/envs/py3.12/bin/python3.12'
+prefixes = ('EXACTCUT_', 'OPENAI_', 'ALIYUN_', 'FEISHU_', 'CF_ADS_', 'GEMINI_', 'GOOGLE_API_')
+for index in range(1, 4):
+    env = {key: value for key, value in os.environ.items() if not key.startswith(prefixes)}
+    with tempfile.TemporaryDirectory(prefix='exactcut-round3-') as root:
+        env.update(EXACTCUT_DATA_ROOT=root, EXACTCUT_ENVIRONMENT='development')
+        print(index, datetime.now(timezone.utc).isoformat(), flush=True)
+        subprocess.run([python, '-m', 'pytest', '-o', 'addopts=', '-q'], env=env, check=True)
+PY
+```
+
+实际执行使用相同隔离逻辑的`/tmp/exactcut-review-tests.py`，由`/tmp/exactcut-round3-repeat.py`顺序执行3次，首次非0立即停止、不自动重试失败。独立临时数据根、无生产凭据，外部客户端使用模拟夹具；只在本机回归，生产验收仍标记“未执行”。干净clone命令沿用上文，从最终已提交HEAD检出，显式验证exactcut导入路径与clone前后git状态。
+
+### 第3轮最终三连跑证据
+
+同一最终代码、本机macOS15.8.1 arm64 / conda-forge Python3.12.12，source目录完整`pytest -o addopts= -q`连续执行（未在三次之间改代码）：
+
+| 次数 | UTC开始 | UTC结束 | 结果 | 退出码 |
+| --- | --- | --- | --- | --- |
+| 1 | 2026-10-09 20:23:11.912772 | 20:24:45.633506 | 677 passed /92.92s | 0 |
+| 2 | 2026-10-09 20:24:45.633558 | 20:26:20.999225 | 677 passed /93.90s | 0 |
+| 3 | 2026-10-09 20:26:20.999255 | 20:27:55.210456 | 677 passed /93.36s | 0 |
+
+北京时间均为2026-10-10凌晨；日志为`/tmp/exactcut-round3-full-{1,2,3}.log`。途中只将R3-B同组补齐amend为提交并编辑记录，没有修改被测试代码。先前675用例预备三次也均通过，但不代替上表含维护启动扫描的最终677用例验收。相对第2轮648用例新增29用例。`git diff --check`通过；三前端合并diff SHA256仍为`bd5e9ad1508e657942fdff60de8d7974c43cc32ec564d7ce7a962f0aba81ad8d`。
+
+### 已提交版本的干净clone与收尾
+
+独立`git clone --no-hardlinks`、detach已提交`550bfdbfb94a0a3191ace80d1810ad24a9cca325`，完整677 passed /94.48s，退出0。clone测试前后`git status --porcelain`均空，显式验证导入来自clone/source，使用新临时数据根并清空继承凭据。被测source tree为`5af22836353972daf376d1e3ec9b57b0a6e8a7d3`。本段仅做记录的纯文档amend，最终source tree与被测提交完全一致，不将文档更新冒充新代码测试。
+
+本轮三个分组提交：R3-A `7a2294a`（持久核实等待）、R3-B `ed67968`（首次升级回滚后的独立维护核实，含启动孤儿补齐）、R3-C（预览回复前释放名额，本提交）。所有自己的代码/测试/记录已按路径显式暂存，原三前端、原server-sizing/现行架构文档及原未追踪计划/审查文件均保持原状态。收尾`git diff --check`通过；前端diff摘要保持上述SHA256。跨项目runbook补充的内容仅为这些已用本地夹具复现的恢复/响应边界。
+
+未决事项：编排者终验、Linux固定镜像/真实服务器验收（两用户制作、FBBM等待让位、重启恢复、每路ffmpeg实际线程、首次升级故障恢复）；**本会话均未部署、未调用真实OSS/飞书/FBBM写接口**。上线仍先更新已提交发布管理器，再从干净工程build/publish。回退先排空活动进程、阶段队列及原回执待核实，check-switch放行后用rollback，保留现有业务数据；需要保守运行可在现代码将lane/总量/AI/预览容量均设为1，不能清job/intent或关闭协议绕过旧代码守卫。本轮收尾后停止，等待编排者终验。

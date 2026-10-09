@@ -296,6 +296,11 @@ def test_preview_deferral_preserves_verified_partial_cache_for_retry(fixture, tm
     from exactcut import hook_preview
     from exactcut.util import write_json_atomic, read_json
     from test_phase2_preview_api import call, serve
+    monkeypatch.setattr(web, 'JOBS', tmp_path / '.web-state/jobs')
+    web.JOBS.mkdir(parents=True)
+    monkeypatch.setattr(web, 'INLINE_RENDERS', set())
+    clock = [1000.]
+    monkeypatch.setattr(web.time, 'time', lambda: clock[0])
     attempts = []
     def compute(project, request, work):
         record = project/'cache/hook-emphasis'/('b'*64+'.json')
@@ -305,13 +310,14 @@ def test_preview_deferral_preserves_verified_partial_cache_for_retry(fixture, tm
         (cache/'hook-placement').mkdir()
         if not record.exists():
             write_json_atomic(cache/'hook-emphasis'/('b'*64+'.json'),{'complete':'validated'})
-            raise ResourceDeferred(1234)
+            raise ResourceDeferred(1010.)
         return {'preview_key':'a'*64}, {'decision':{}}, cache
     monkeypatch.setattr(hook_preview,'compute',compute)
     app=serve(); path=f"/api/batches/{fixture['id']}/hook-preview"; body={'revision':fixture['revision'],'index':0}
     try:
         status, result = call(app,'POST',path,body)
-        assert status == 429 and result['not_before'] == 1234
+        assert status == 429 and result['not_before'] == 1010.
+        clock[0] = 1010.
         assert call(app,'POST',path,body)[0] == 200
         assert attempts == [False, True]
     finally: app.shutdown();app.server_close()

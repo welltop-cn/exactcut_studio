@@ -1137,6 +1137,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.headers.get('X-Exactcut-Request') != '1':
             return self.respond(403, {'error':'无效请求来源'})
         admission = None
+        response = None
         try:
             size = int(self.headers.get('Content-Length','0'))
             if not 1 <= size <= 10000:
@@ -1179,28 +1180,35 @@ class Handler(BaseHTTPRequestHandler):
                     cache = Path(temp) / 'cache'
                 with mutation_lock(), LOCK:
                     if maintenance_file().exists():
-                        return self.respond(503,{'error':'正在发布维护，预览结果未保存，请稍后重试'})
-                    if not self.authorized():
+                        response = (503, {'error':'正在发布维护，预览结果未保存，请稍后重试'})
+                    elif not self.authorized():
                         return
-                    if not self.can_access(batch_id):
-                        return self.respond(404,{'error':'项目不存在或无权访问'})
-                    latest = workflow.detail(batch_id)
-                    if latest['runtime']['status']!='draft' or latest['runtime'].get('archived') or latest['revision']!=snapshot['revision'] or json_sha256(latest['draft'])!=fingerprint:
-                        return self.respond(409,{'error':'预览期间草稿已变化，结果未采用，请重新预览'})
-                    for directory in ('hook-emphasis','hook-placement'):
-                        for file in (cache/directory).glob('*.json'):
-                            write_json_atomic(project/'cache'/directory/file.name,read_json(file))
-                    if deferred is not None:
-                        return self.respond(429, {'error': str(deferred), 'not_before': deferred.not_before})
-                    write_json_atomic(project/'cache/hook-previews'/f"{result['preview_key']}.json",doc)
-                    return self.respond(200,result)
+                    elif not self.can_access(batch_id):
+                        response = (404, {'error':'项目不存在或无权访问'})
+                    else:
+                        latest = workflow.detail(batch_id)
+                        if latest['runtime']['status']!='draft' or latest['runtime'].get('archived') or latest['revision']!=snapshot['revision'] or json_sha256(latest['draft'])!=fingerprint:
+                            response = (409, {'error':'预览期间草稿已变化，结果未采用，请重新预览'})
+                        else:
+                            for directory in ('hook-emphasis','hook-placement'):
+                                for file in (cache/directory).glob('*.json'):
+                                    write_json_atomic(project/'cache'/directory/file.name,read_json(file))
+                            if deferred is not None:
+                                response = (429, {'error': str(deferred), 'not_before': deferred.not_before})
+                            else:
+                                write_json_atomic(project/'cache/hook-previews'/f"{result['preview_key']}.json",doc)
+                                response = (200, result)
         except stage_results.ResourceDeferred as exc:
-            self.respond(429, {'error': str(exc), 'not_before': exc.not_before})
+            response = (429, {'error': str(exc), 'not_before': exc.not_before})
         except (ValueError,KeyError,TypeError,RuntimeError,OSError) as exc:
-            self.respond(400,{'error':str(exc)})
+            response = (400, {'error':str(exc)})
         finally:
             if admission:
                 release_hook_preview(admission)
+        # Publish the reply only after temp cleanup AND admission release. A
+        # client can retry as soon as it reads the reply, before this thread exits.
+        if response:
+            self.respond(*response)
 
     def handle_post(self):
         if self.path != '/api/login' and not self.authorized():
