@@ -1,4 +1,5 @@
-"""Bridge the existing Material Hub CLI to this project's media directory."""
+"""Validate local episode files and copy them without hard links or macOS clone."""
+import fcntl
 import json
 import os
 import re
@@ -9,8 +10,7 @@ import signal
 import time
 import uuid
 from pathlib import Path
-from .catalog import HUB_PYTHON, HUB_SCRIPT, ROOT
-from .runtime import require_external
+from .runtime import data_root
 from .media import ffprobe, run_checked
 from .util import file_sha256
 
@@ -87,6 +87,33 @@ def run_download(command, source, log, progress=None, *, total_timeout=1800, idl
         stop_download(process)
 
 
+def place_file(source: Path, destination: Path) -> str:
+    """Place a complete file at destination. Returns 'reflink' or 'copy'."""
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    temporary = destination.with_name(destination.name + '.part')
+    mode = 'copy'
+    if hasattr(fcntl, 'FICLONE'):
+        src = os.open(source, os.O_RDONLY)
+        try:
+            dst = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+            try:
+                fcntl.ioctl(dst, fcntl.FICLONE, src)
+                mode = 'reflink'
+            except OSError:
+                mode = 'copy'
+            finally:
+                os.close(dst)
+        finally:
+            os.close(src)
+    if mode == 'copy':
+        shutil.copy2(source, temporary)
+    if temporary.stat().st_size != source.stat().st_size:
+        temporary.unlink(missing_ok=True)
+        raise RuntimeError(f'{source.name} 复制后大小不一致，未替换目标文件')
+    os.replace(temporary, destination)
+    return mode
+
+
 def mirror_videos(project, source, *, episodes=None):
     target = project / 'source/videos'
     target.mkdir(parents=True, exist_ok=True)
@@ -108,37 +135,28 @@ def mirror_videos(project, source, *, episodes=None):
                 damaged = True
             else:
                 raise RuntimeError(f'{video.name} 已存在但内容不同，请人工核对，未覆盖')
-        temporary = destination.with_suffix('.part')
-        try:
-            subprocess.run(['/bin/cp', '-c', '-p', str(video), str(temporary)], check=True, capture_output=True)
-        except (OSError, subprocess.CalledProcessError):
-            shutil.copy2(video, temporary)
         if damaged:
             quarantine = target / 'quarantine'
             quarantine.mkdir(exist_ok=True)
             destination.replace(quarantine / f'{video.stem}-{uuid.uuid4().hex}.mp4')
-        temporary.replace(destination)
+        place_file(video, destination)
         copied.append(video.name)
     return copied
 
 
 def main():
-    require_external('物料下载与同步')
+    from .source_cache import cached_names, check_drama, ensure
+    if len(sys.argv) < 2:
+        raise SystemExit(2)
     drama_id = sys.argv[1]
-    if not re.fullmatch(r'\d{6}', drama_id) or not 101400 <= int(drama_id) <= 999999:
-        raise ValueError('无效剧 ID')
-    project = ROOT / 'projects' / drama_id
+    episodes = sys.argv[2:]
+    check_drama(drama_id)
+    project = data_root() / 'projects' / drama_id
     if not (project / 'project.json').is_file():
         raise ValueError('请先创建项目')
-    # Keep Hub's deduplication and source fallback logic, and its real partial status.
-    source = Path.home() / 'Downloads/auto-cut/projects' / f'#{drama_id}#' / 'source/videos'
-    with (project / 'download.log').open('ab') as log:
-        code = run_download([str(HUB_PYTHON), str(HUB_SCRIPT), 'sync', '--drama-id', drama_id,
-                             '--restore-missing', '--only', 'videos'], source, log)
-    copied = mirror_videos(project, source)
-    print(json.dumps({'mirrored': copied, 'local_video_count': len(list((project / 'source/videos').glob('EP*.mp4'))),
-                      'hub_exit_code': code}, ensure_ascii=False), flush=True)
-    return code
+    names = sorted(ensure(drama_id, episodes)) if episodes else cached_names(drama_id)
+    print(json.dumps({'cached': names, 'local_video_count': len(names)}, ensure_ascii=False), flush=True)
+    return 0
 
 
 if __name__ == '__main__':

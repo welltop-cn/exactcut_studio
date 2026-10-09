@@ -1,0 +1,19 @@
+# The build context is the repository root. Only runtime code/resources enter it.
+**
+!source/
+!source/requirements.lock.txt
+!source/Dockerfile
+!source/exactcut/
+!source/exactcut/**
+!source/config/
+!source/config/**
+!source/templates/
+!source/templates/**
+!source/docker/
+!source/docker/**
+!integrations/
+!integrations/drama-material-hub/
+!integrations/drama-material-hub/scripts/
+!integrations/drama-material-hub/scripts/*.py
+**/__pycache__
+**/*.pyc

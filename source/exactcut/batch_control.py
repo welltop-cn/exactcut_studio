@@ -1,4 +1,4 @@
-"""Persistent batch controls and verified process-tree suspension (macOS/POSIX)."""
+"""Persistent batch controls with portable, per-launch process identities."""
 from __future__ import annotations
 import os
 import re
@@ -26,82 +26,178 @@ def write(path, control, message=None):
     write_json_atomic(path / 'control.json', control)
 
 
-def processes():
-    result = subprocess.run(['ps', '-axo', 'pid=,ppid=,lstart=,stat=,command='], capture_output=True, text=True, check=True, timeout=10)
-    rows = {}
-    for line in result.stdout.splitlines():
-        parts = line.split(None, 8)
-        if len(parts) != 9:
-            continue
-        pid, ppid = int(parts[0]), int(parts[1])
-        rows[pid] = {'pid': pid, 'ppid': ppid, 'born': ' '.join(parts[2:7]), 'stat': parts[7], 'command': parts[8]}
-    return rows
+class PsProcessTable:
+    def inspect(self, pid):
+        if not isinstance(pid, int) or pid <= 0:
+            return None
+        try:
+            result = subprocess.run(['ps', '-ww', '-p', str(pid), '-o', 'pgid=',
+                                     '-o', 'stat=', '-o', 'command='],
+                                    capture_output=True, text=True, timeout=5,
+                                    env={**os.environ, 'LC_ALL': 'C'})
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError('无法核验进程身份；请检查 ps 是否可用') from exc
+        if result.returncode == 1 and not result.stdout.strip():
+            return None
+        if result.returncode:
+            raise RuntimeError('无法核验进程身份：ps 查询失败')
+        try:
+            group, state, command = result.stdout.strip().split(None, 2)
+            return {'pgid': int(group), 'state': state[0], 'arguments': command.split()}
+        except (ValueError, IndexError) as exc:
+            raise RuntimeError('无法核验进程身份：ps 返回格式无效') from exc
+
+    def find(self, token):
+        """Recover the launch window before the parent persisted the child's PID."""
+        if not valid_token(token):
+            return None
+        try:
+            result = subprocess.run(['ps', '-ww', '-A', '-o', 'pid=', '-o', 'pgid=',
+                                     '-o', 'stat=', '-o', 'command='],
+                                    capture_output=True, text=True, timeout=5,
+                                    env={**os.environ, 'LC_ALL': 'C'})
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError('无法核验进程身份；请检查 ps 是否可用') from exc
+        if result.returncode:
+            raise RuntimeError('无法核验进程身份：ps 查询失败')
+        for line in result.stdout.splitlines():
+            try:
+                pid, group, state, command = line.strip().split(None, 3)
+                arguments = command.split()
+                if int(pid) == int(group) and state[0] != 'Z' and has_token(arguments, token):
+                    return {'pid': int(pid), 'pgid': int(group)}
+            except (ValueError, IndexError):
+                continue
+        return None
 
 
-def roots(snapshot=None):
-    snapshot = processes() if snapshot is None else snapshot
-    found = {}
-    for row in snapshot.values():
-        match = re.search(r'\s-m\s+exactcut\.workflow\s+(produce|publish|preview)\s+([0-9a-f]{32})(?:\s|$)', row['command'])
-        executable = Path(row['command'].split()[0]).name.lower()
-        if match and executable.startswith('python') and 'Z' not in row['stat'] and instance_marker() in row['command'].split():
-            found[match[2]] = row
-    return found
+class FakeProcessTable:
+    def __init__(self, rows):
+        self.rows = rows
+
+    def inspect(self, pid):
+        return self.rows.get(pid)
+
+    def find(self, token):
+        for pid, row in self.rows.items():
+            if row and row['pgid'] == pid and row['state'] != 'Z' and has_token(row['arguments'], token):
+                return {'pid': pid, 'pgid': pid}
+        return None
 
 
-def _signal(identity, sig, snapshot=None):
-    snapshot = processes() if snapshot is None else snapshot
-    live = snapshot.get(identity['pid'])
-    if not live or live['born'] != identity['born']:
-        return False  # Never signal a recycled PID.
+PROCESSES = PsProcessTable()
+
+
+def valid_token(token):
+    return isinstance(token, str) and re.fullmatch(r'[a-f0-9]{32}', token) is not None
+
+
+def has_token(arguments, token):
+    marker = 'exactcut_process_token=' + token
+    return any(arguments[i:i+2] == ['-X', marker] for i in range(len(arguments)-1))
+
+
+def belongs(job):
+    return job.get('instance') == instance_marker()
+
+
+def identify(process, *, process_token=None, lane=None, request_id=None):
+    pid = getattr(process, 'pid', None)
+    if not isinstance(pid, int) or pid <= 0 or not valid_token(process_token):
+        return None
     try:
-        os.kill(identity['pid'], sig)
+        pgid = os.getpgid(pid)
+    except (ProcessLookupError, PermissionError, OSError):
+        return None
+    if pgid != pid:
+        return None
+    return {'pid': pid, 'pgid': pgid, 'process_token': process_token,
+            'lane': lane, 'request_id': request_id, 'instance': instance_marker()}
+
+
+def remember_child(path, identity):
+    if not path.is_dir() or not valid_token(identity.get('process_token')):
+        return
+    control = read(path)
+    children = [item for item in control.get('children', []) if item.get('pid') != identity['pid']]
+    stored = {key: identity.get(key) for key in ('pid', 'pgid', 'process_token', 'lane', 'request_id')}
+    stored['instance'] = identity.get('instance') or instance_marker()
+    children.append(stored)
+    control['children'] = children
+    write(path, control)
+
+
+def signal_identity(identity, sig, table=None):
+    """Signal one recorded process group. A reused PID or another data root is left alone."""
+    table = PROCESSES if table is None else table
+    if child_state(identity, table) in {None, 'Z'}:
+        return False
+    try:
+        os.killpg(identity.get('pgid') or identity['pid'], sig)
         return True
     except ProcessLookupError:
         return False
 
 
-def suspend(path, root):
-    control = read(path)
-    # Stop parent first, then walk its children after it can no longer launch work.
-    _signal(root, signal.SIGSTOP)
-    identities = {i['pid']: i for i in control.get('suspended', [])}
-    identities[root['pid']] = {'pid': root['pid'], 'born': root['born']}
-    for _ in range(4):
-        snapshot = processes()
-        new = [row for row in snapshot.values() if row['ppid'] in identities and row['pid'] not in identities]
-        if not new:
-            break
-        for row in new:
-            if _signal(row, signal.SIGSTOP, snapshot):
-                identities[row['pid']] = {'pid': row['pid'], 'born': row['born']}
-    control['suspended'] = list(identities.values())
-    write(path, control)
+def _signal(identity, sig, table=None):
+    return signal_identity(identity, sig, table)
 
 
-def resume_tree(path, root):
+def recorded_children(path):
     control = read(path)
-    suspended = control.get('suspended', [])
-    # Resume descendants before allowing their parent to advance.
-    for item in reversed(suspended):
-        _signal(item, signal.SIGCONT)
-    _signal(root, signal.SIGCONT)
-    control['suspended'] = []
-    write(path, control, '已继续执行')
+    return [item for item in control.get('children', []) if valid_token(item.get('process_token'))]
+
+
+def own_live_children(path, table=None):
+    table = PROCESSES if table is None else table
+    return [
+        child for child in recorded_children(path)
+        if belongs(child) and child_state(child, table) not in {None, 'Z'}
+    ]
+
+
+def signal_children(path, sig, table=None):
+    signaled = []
+    for child in recorded_children(path):
+        if signal_identity(child, sig, table):
+            signaled.append(child)
+    if sig == signal.SIGSTOP:
+        control = read(path)
+        control['suspended'] = signaled
+        write(path, control)
+    elif sig == signal.SIGCONT:
+        control = read(path)
+        control['suspended'] = []
+        write(path, control, '已继续执行')
+    return signaled
+
+
+def child_state(child, table=None):
+    table = PROCESSES if table is None else table
+    pid, token = child.get('pid'), child.get('process_token')
+    if not belongs(child) or not isinstance(pid, int) or pid <= 0 or not valid_token(token):
+        return None
+    if child.get('pgid') != pid:
+        return None
+    live = table.inspect(pid)
+    if not live or live['pgid'] != pid:
+        return None
+    arguments = live['arguments']
+    if not has_token(arguments, token):
+        return None
+    return live['state']
 
 
 def change(path, action):
     with LOCK:
         control = read(path)
         state = read_json(path / 'runtime.json')
-        root = roots().get(path.name)
         if action == 'pause':
-            if state['status'] not in ACTIVE and not root:
+            if state['status'] not in ACTIVE and not recorded_children(path):
                 raise ValueError('此批次当前没有正在执行或排队的任务')
             control['paused'] = True
             write(path, control, '已请求暂停，保留当前进度')
-            if root:
-                suspend(path, root)
+            signal_children(path, signal.SIGSTOP)
         elif action == 'resume':
             if control.get('archived'):
                 raise ValueError('请先取消归档，再继续执行')
@@ -112,11 +208,10 @@ def change(path, action):
         elif action == 'archive':
             control['archived'] = True
             control['archived_at'] = now_iso()
-            if state['status'] in ACTIVE or root:
+            if state['status'] in ACTIVE or recorded_children(path):
                 control['paused'] = True
             write(path, control, '已归档；正在执行的任务保留进度并暂停')
-            if root:
-                suspend(path, root)
+            signal_children(path, signal.SIGSTOP)
         elif action == 'unarchive':
             control['archived'] = False
             write(path, control, '已取消归档，暂停的任务需点击继续执行')
@@ -152,27 +247,39 @@ def present(path, state):
     return data
 
 
-def reconcile(batch_root):
-    """Pause requested trees; resume at most one tree when the runner is free."""
+def reconcile(batch_root, table=None):
+    """Stop children of paused batches. Continue one stopped batch when nothing else is running."""
+    table = PROCESSES if table is None else table
     with LOCK:
-        current = roots()
-        for batch_id, root in current.items():
-            path = batch_root / batch_id
-            if not (path / 'runtime.json').exists():
+        busy = False
+        waiting = None
+        for path in batch_root.glob('*'):
+            if not path.is_dir() or not (path / 'runtime.json').exists():
                 continue
             control = read(path)
-            if (control.get('paused') or control.get('archived')) and 'T' not in root['stat']:
-                suspend(path, root)
-        current = roots()
-        running = [r for r in current.values() if 'T' not in r['stat']]
-        if running:
+            stale = set()
+            for child in recorded_children(path):
+                if not belongs(child):
+                    continue
+                state = child_state(child, table)
+                if state in {None, 'Z'}:
+                    stale.add((child['pid'], child['process_token']))
+                    continue
+                if (control.get('paused') or control.get('archived')) and state != 'T':
+                    signal_identity(child, signal.SIGSTOP, table)
+                    state = 'T'
+                if state not in {'T', 'Z'}:
+                    busy = True
+                elif state == 'T' and waiting is None and not control.get('paused') and not control.get('archived'):
+                    waiting = path
+            if stale:
+                for key in ('children', 'suspended'):
+                    control[key] = [child for child in control.get(key, [])
+                                    if (child.get('pid'), child.get('process_token')) not in stale]
+                write(path, control)
+        if busy:
             return True
-        for batch_id, root in current.items():
-            path = batch_root / batch_id
-            if not (path / 'runtime.json').exists():
-                continue
-            control = read(path)
-            if not control.get('paused') and not control.get('archived'):
-                resume_tree(path, root)
-                return True
+        if waiting is not None:
+            signal_children(waiting, signal.SIGCONT, table)
+            return True
         return False

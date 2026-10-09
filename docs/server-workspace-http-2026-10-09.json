@@ -1,0 +1,21 @@
+{
+  "health": {
+    "status": "ok",
+    "release": "linux-20261009-3",
+    "environment": "production",
+    "maintenance": false,
+    "worker_alive": true,
+    "worker_heartbeat_age_seconds": 0.1
+  },
+  "login": "passed",
+  "authenticated_editor": "passed",
+  "features": {
+    "publish": true,
+    "material_fetch": true,
+    "ai": true
+  },
+  "storage_policy": "passed",
+  "first_visit_and_repeat": "passed",
+  "default_created": false,
+  "excel_entry_removed": true
+}

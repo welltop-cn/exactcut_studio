@@ -18,7 +18,8 @@ from openpyxl.utils.cell import coordinate_from_string, column_index_from_string
 from .production_helper import output_text
 from .util import load_env_file
 
-from .runtime import CODE_ROOT, data_root, require_external, instance_marker, environment, release_id, maintenance_file
+from .runtime import CODE_ROOT, data_root, require_ai, instance_marker, environment, release_id, maintenance_file
+from .runtime import project_env_file
 
 ROOT = data_root()
 SLOTS = threading.BoundedSemaphore(2)
@@ -93,8 +94,8 @@ def workbook_payload(path):
         book.close()
 
 def interpret(payload):
-    require_external('AI 表格理解')
-    load_env_file(ROOT / '.env')
+    require_ai()
+    load_env_file(project_env_file())
     key = os.getenv('OPENAI_API_KEY')
     if not key:
         raise ValueError('AI 表格理解服务尚未配置，请联系管理员')

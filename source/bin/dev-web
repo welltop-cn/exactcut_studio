@@ -1,23 +1,44 @@
 #!/usr/bin/env bash
 set -euo pipefail
 DEVELOPMENT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-export EXACTCUT_DATA_ROOT="$DEVELOPMENT_ROOT"
+# Do not let a parent production shell supply credentials to local development.
+for key in $(compgen -e); do
+  case "$key" in
+    ALIYUN_*|FEISHU_*|CF_ADS_*|OPENAI_*|MATERIAL_HUB_*|METABASE_*) unset "$key" ;;
+  esac
+done
+export EXACTCUT_DATA_ROOT="$DEVELOPMENT_ROOT/.dev-state/data"
+export EXACTCUT_SOURCE_ROOT="$EXACTCUT_DATA_ROOT/sources"
+export EXACTCUT_ENV_FILE="$DEVELOPMENT_ROOT/.env.development"
+export EXACTCUT_CONFIG_FILE="$DEVELOPMENT_ROOT/config/default.json"
 export EXACTCUT_ENVIRONMENT=development
 export EXACTCUT_ALLOW_EXTERNAL_WRITES=0
-export EXACTCUT_WORKER_ENABLED=0
-export EXACTCUT_PORT=8792
+export EXACTCUT_ALLOW_MATERIAL_FETCH=0
+export EXACTCUT_ALLOW_PUBLISH=0
+export EXACTCUT_ALLOW_AI=0
+export EXACTCUT_MATERIAL_FETCH_CMD=''
+export EXACTCUT_WORKER_ENABLED=1
+export EXACTCUT_PORT=8793
+export EXACTCUT_BIND=127.0.0.1
 export EXACTCUT_RELEASE_ID=development
-"$DEVELOPMENT_ROOT/.venv/bin/python" - <<'PY'
+DEVELOPMENT_PYTHON="${EXACTCUT_PYTHON:-$DEVELOPMENT_ROOT/.venv/bin/python}"
+cd "$DEVELOPMENT_ROOT"
+"$DEVELOPMENT_PYTHON" - <<'PY'
 import os, secrets
-from pathlib import Path
-root=Path(os.environ['EXACTCUT_DATA_ROOT'])
+from exactcut.runtime import project_env_file, claim_data_root, source_root
+from exactcut.util import load_env_file
+config=project_env_file()
+if not config.is_file():
+    raise RuntimeError('请先复制 .env.development.example 为 .env.development')
+load_env_file(config)
+root=claim_data_root()
+source_root()
 state=root/'.web-state'
 state.mkdir(mode=0o700,exist_ok=True)
 password=state/'password'
 if not password.exists():password.write_text(secrets.token_urlsafe(32))
 password.chmod(0o600)
-for name in ['.web-state/batches','projects','feedback']:(root/name).mkdir(parents=True,exist_ok=True)
-print('Development: http://127.0.0.1:8792 ; password saved privately in .web-state/password')
+for name in ['.web-state/batches','projects','feedback','sources']:(root/name).mkdir(parents=True,exist_ok=True)
+print('Development: http://127.0.0.1:8793 ; password saved privately in .dev-state/data/.web-state/password')
 PY
-cd "$DEVELOPMENT_ROOT"
-exec "$DEVELOPMENT_ROOT/.venv/bin/python" -m exactcut.webserver
+exec "$DEVELOPMENT_PYTHON" -m exactcut.webserver

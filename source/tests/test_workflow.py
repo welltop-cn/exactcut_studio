@@ -1,6 +1,7 @@
 import base64
 import copy
 import json
+import sys
 from pathlib import Path
 from unittest.mock import patch
 import pytest
@@ -164,28 +165,140 @@ def test_production_does_not_publish_and_uses_separate_outputs(workspace):
 
 
 def test_eight_available_episodes_are_complete_and_missing_required_blocks(workspace, monkeypatch):
+    cache_root = workspace / 'sources'
+    monkeypatch.setenv('EXACTCUT_SOURCE_ROOT', str(cache_root))
+    monkeypatch.setenv('EXACTCUT_DATA_ROOT', str(workspace))
+    monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'test')
+    monkeypatch.setenv('EXACTCUT_ALLOW_MATERIAL_FETCH', '0')
     batch = imported()
     path = w.folder(batch['id'])
     manifest, _ = validate_draft(batch['draft'])
     project = workspace / 'projects' / manifest.drama_id
-    (project / 'source/videos').mkdir(parents=True)
-    (project / 'source/videos/EP1.mp4').write_bytes(b'video')
+    project.mkdir(parents=True, exist_ok=True)
     write_json_atomic(project / 'project.json', {'project_id': manifest.drama_id})
-    report = {'items': [{'drama_id': manifest.drama_id, 'status': 'partial', 'categories': {'videos': {'complete': True, 'expected': [f'EP{i}' for i in range(1,9)]}}, 'errors': []}], 'notification': {'sent': True}}
-    class Process:
-        pid = 99999999  # Isolated mock: no real process or process group.
-        def __init__(self, cmd, stdout, **kwargs):
-            assert '--episode-limit' in cmd
-            stdout.write(json.dumps(report).encode());stdout.flush()
-        def poll(self):
-            return 2  # Other material categories may still be partial.
-    with patch.object(w, 'require_external'), patch.object(w, 'mirror_videos'), patch.object(w.subprocess, 'Popen', Process), patch('exactcut.media.ffprobe', return_value={'format':{'duration':'130'},'streams':[{'codec_type':'video'}]}):
+    cache = cache_root / manifest.drama_id
+    cache.mkdir(parents=True)
+    for episode in range(1, 9):
+        (cache / f'EP{episode}.mp4').write_bytes(b'video')
+    marker = workspace / 'fetch-called'
+    fetch = workspace / 'fetch.py'
+    fetch.write_text(f'open({str(marker)!r}, "w").write("called\\n")\n')
+    monkeypatch.setenv('EXACTCUT_MATERIAL_FETCH_CMD', f'{sys.executable} {fetch}')
+    monkeypatch.setattr('exactcut.material_download.validate_downloaded_video', lambda video: None)
+    with patch('exactcut.media.ffprobe', return_value={'format':{'duration':'130'},'streams':[{'codec_type':'video'}]}):
         w.download(path, manifest, project)
         assert w.runtime(path)['download_complete']
-        assert len(w.runtime(path)['downloaded_episodes']) == 8
+        assert w.runtime(path)['reused_local_episodes'] == ['EP1']
+        assert not marker.exists()
         manifest.requests[0].timeline[0].episode = 'EP12'
         with pytest.raises(RuntimeError, match='EP12'):
             w.download(path, manifest, project)
+    assert (cache / 'EP1.mp4').read_bytes() == b'video'
+    assert all((cache / f'EP{episode}.mp4').is_file() for episode in range(1, 9))
+    text = (Path(__file__).resolve().parents[1] / 'exactcut' / 'workflow.py').read_text()
+    assert 'Downloads/auto-cut' not in text and '.openclaw' not in text
+
+
+def test_download_keeps_legacy_video_and_cache_hit(workspace, monkeypatch):
+    from exactcut.models import BatchManifest, CutRequest, TimelineItem
+    cache_root = workspace / 'sources'
+    monkeypatch.setenv('EXACTCUT_SOURCE_ROOT', str(cache_root))
+    monkeypatch.setenv('EXACTCUT_DATA_ROOT', str(workspace))
+    monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'test')
+    monkeypatch.setenv('EXACTCUT_ALLOW_MATERIAL_FETCH', '0')
+    batch = imported()
+    path = w.folder(batch['id'])
+    manifest = BatchManifest(
+        drama_id='101573', drama_title='剧', business_date='20261008', author='张三',
+        source_workbook='x.xlsx', requests=[CutRequest(
+            request_id='R1', seq=1, output_filename='out.mp4',
+            timeline=[
+                TimelineItem(type='episode', episode='EP1', start_ms=0, end_ms=1000),
+                TimelineItem(type='episode', episode='EP2', start_ms=0, end_ms=1000),
+            ],
+        )],
+    )
+    project = workspace / 'projects' / '101573'
+    project.mkdir(parents=True)
+    write_json_atomic(project / 'project.json', {'project_id': '101573'})
+    legacy = project / 'source' / 'videos'
+    legacy.mkdir(parents=True)
+    (legacy / 'EP1.mp4').write_bytes(b'legacy')
+    cached = cache_root / '101573'
+    cached.mkdir(parents=True)
+    (cached / 'EP2.mp4').write_bytes(b'cached')
+    marker = workspace / 'fetch-called'
+    fetch = workspace / 'fetch.py'
+    fetch.write_text(f'open({str(marker)!r}, "w").write("called\\n")\n')
+    monkeypatch.setenv('EXACTCUT_MATERIAL_FETCH_CMD', f'{sys.executable} {fetch}')
+    monkeypatch.setattr('exactcut.material_download.validate_downloaded_video', lambda video: None)
+    with patch('exactcut.media.ffprobe', return_value={'format': {'duration': '130'}, 'streams': [{'codec_type': 'video'}]}):
+        w.download(path, manifest, project)
+    assert w.runtime(path)['reused_local_episodes'] == ['EP1', 'EP2']
+    assert not marker.exists()
+    assert (legacy / 'EP1.mp4').read_bytes() == b'legacy'
+    assert not (cached / 'EP1.mp4').exists()
+    assert (cached / 'EP2.mp4').read_bytes() == b'cached'
+
+
+def test_download_reports_current_episode_progress_and_resets_after_completion(workspace, monkeypatch):
+    import exactcut.source_cache as source_cache
+    from exactcut.models import BatchManifest, CutRequest, TimelineItem
+    cache_root = workspace / 'sources'
+    monkeypatch.setenv('EXACTCUT_SOURCE_ROOT', str(cache_root))
+    monkeypatch.setenv('EXACTCUT_DATA_ROOT', str(workspace))
+    monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'test')
+    item = w.create_blank('测试')
+    path = w.folder(item['id'])
+    manifest = BatchManifest(
+        drama_id='101573', drama_title='剧', business_date='20261008', author='测试',
+        source_workbook='x.xlsx', requests=[CutRequest(
+            request_id='R1', seq=1, output_filename='out.mp4',
+            timeline=[TimelineItem(type='episode', episode='EP1', start_ms=0, end_ms=1000)],
+        )],
+    )
+    project = workspace / 'projects' / '101573'
+    project.mkdir(parents=True)
+    write_json_atomic(project / 'project.json', {'project_id': '101573'})
+    directory = cache_root / '101573'
+    directory.mkdir(parents=True)
+    video = directory / 'EP1.mp4'
+
+    def fake_ensure(drama_id, episodes, on_progress=None):
+        assert drama_id == '101573'
+        assert list(episodes) == ['EP1']
+        video.write_bytes(b'x' * 2048)
+        on_progress('EP1', 1_048_576, 4_194_304)
+        on_progress('EP1', 2_097_152, 4_194_304)
+        return {'EP1': video}
+
+    monkeypatch.setattr(source_cache, 'ensure', fake_ensure)
+    monkeypatch.setattr(source_cache, 'reused_episodes', lambda: [])
+    calls = []
+    real_update = w.update
+
+    def spy(update_path, *args, **kwargs):
+        calls.append(dict(kwargs))
+        return real_update(update_path, *args, **kwargs)
+
+    monkeypatch.setattr(w, 'update', spy)
+    with patch('exactcut.media.ffprobe', return_value={'format': {'duration': '130'}, 'streams': [{'codec_type': 'video'}]}):
+        w.download(path, manifest, project)
+
+    progress = [record for record in calls if record.get('download_current_episode') == 'EP1']
+    assert len(progress) == 2
+    first, second = progress
+    assert first['download_current_received'] == 1_048_576
+    assert first['download_current_total'] == 4_194_304
+    assert first['download_files'] == 1
+    assert first['download_bytes'] == 1_048_576 + 2048
+    assert first['download_activity_at']
+    assert second['download_current_received'] == 2_097_152
+    assert second['download_speed_bps'] > 0
+    runtime = w.runtime(path)
+    assert runtime['download_complete'] is True
+    assert runtime['download_current_episode'] is None
+    assert runtime['download_speed_bps'] is None
 
 
 def test_authenticated_video_range_and_feedback_http(workspace):
@@ -334,7 +447,6 @@ def test_pause_archive_http_and_execution_guards(workspace):
     import requests
     from http.server import ThreadingHTTPServer
     from exactcut.webserver import Handler
-    from exactcut import batch_control
     batch = imported()
     path = w.folder(batch['id'])
     w.update(path, 'queued', 'Waiting')
@@ -343,7 +455,7 @@ def test_pause_archive_http_and_execution_guards(workspace):
     threading.Thread(target=server.serve_forever, daemon=True).start()
     base = f'http://127.0.0.1:{server.server_port}/api/batches/{batch["id"]}'
     try:
-        with requests.Session() as client, patch.object(batch_control, 'roots', return_value={}):
+        with requests.Session() as client:
             client.auth = ('admin', server.password)
             client.headers['X-Exactcut-Request'] = '1'
             assert client.post(base+'/pause', json={}).json()['runtime']['status'] == 'paused'
@@ -378,9 +490,8 @@ def test_permanent_delete_only_archived_batch_and_preserves_shared_files(workspa
     jobs.mkdir()
     (jobs / 'test.json').write_text(json.dumps({'batch_id':batch['id'],'status':'queued'}))
     (jobs / 'test.log').write_text('log')
-    with patch.object(batch_control, 'roots', return_value={}):
-        batch_control.change(path, 'archive')
-        assert w.delete_batch(batch['id'], batch['id']) == {'deleted':batch['id']}
+    batch_control.change(path, 'archive')
+    assert w.delete_batch(batch['id'], batch['id']) == {'deleted':batch['id']}
     assert not path.exists()
     assert not (media.parents[2] / 'requests' / ('import-'+batch['id'])).exists()
     assert not list(w.FEEDBACK.glob(batch['id']+'-*'))
@@ -390,18 +501,19 @@ def test_permanent_delete_only_archived_batch_and_preserves_shared_files(workspa
     assert batch['id'] not in [b['id'] for b in w.summaries()]
 
 
-def test_delete_terminates_archived_process_before_removing_files(workspace):
+def test_delete_terminates_archived_process_before_removing_files(workspace, monkeypatch):
     import subprocess
     import sys
     from exactcut import batch_control
     batch = imported()
     path = w.folder(batch['id'])
-    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'], start_new_session=True)
+    token = 'a'*32
+    child = subprocess.Popen([sys.executable, '-X', 'exactcut_process_token=' + token,
+                               '-c', 'import time; time.sleep(30)'], start_new_session=True)
     try:
-        root = batch_control.processes()[child.pid]
-        with patch.object(batch_control, 'roots', return_value={batch['id']:root}):
-            batch_control.change(path, 'archive')
-            w.delete_batch(batch['id'], batch['id'])
+        batch_control.remember_child(path, batch_control.identify(child, process_token=token, lane='encode'))
+        batch_control.change(path, 'archive')
+        w.delete_batch(batch['id'], batch['id'])
         assert child.wait(timeout=3) != 0
         assert not path.exists()
     finally:

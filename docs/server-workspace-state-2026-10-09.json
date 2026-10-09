@@ -1,0 +1,17 @@
+{
+  "current": {
+    "version": "linux-20261009-3",
+    "previous": "linux-20261009-2",
+    "commit": "8830b747baf03914b8120388da30492a5a2b838b",
+    "image": "sha256:cb4652e4fe0b0c535b30916887a2fc44fc7f423e688c4a0a2645de01be253048"
+  },
+  "settings": {
+    "instance": "exactcut-production",
+    "backend_port": 18792,
+    "public_port": 80,
+    "cpus": 1.0,
+    "memory": "2g"
+  },
+  "active_tasks": [],
+  "maintenance": false
+}

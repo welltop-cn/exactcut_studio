@@ -1,4 +1,5 @@
 import json
+import pytest
 from unittest.mock import patch
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
@@ -11,12 +12,22 @@ from exactcut.webserver import Handler
 def test_scope_and_history_are_enforced():
     h._HISTORY.clear()
     response={'output':[{'type':'message','content':[{'type':'output_text','text':json.dumps({'in_scope':False,'answer':'unrelated answer','sources':[]})}]}]}
-    with patch.object(h,'load_env_file'), patch.dict(h.os.environ,{'OPENAI_API_KEY':'test','EXACTCUT_ENVIRONMENT':'production','EXACTCUT_ALLOW_EXTERNAL_WRITES':'1'}), patch.object(h.httpx,'Client') as client:
+    with patch.object(h,'load_env_file'), patch.dict(h.os.environ,{'OPENAI_API_KEY':'test','EXACTCUT_ENVIRONMENT':'production','EXACTCUT_ALLOW_AI':'1'}), patch.object(h.httpx,'Client') as client:
         client.return_value.__enter__.return_value.post.return_value.json.return_value=response
         result=h.ask({'username':'scope-test'},{'question':'天气','conversation':'test'})
         assert result['answer']==h.REFUSAL
         assert ('scope-test','','test') in h._HISTORY
         assert ('other-user','','test') not in h._HISTORY
+
+
+def test_ask_without_ai_flag_does_not_call_http():
+    h._HISTORY.clear()
+    with patch.dict(h.os.environ, {'EXACTCUT_ENVIRONMENT': 'production', 'EXACTCUT_ALLOW_EXTERNAL_WRITES': '1'}, clear=False), \
+         patch.object(h.httpx, 'Client') as client:
+        h.os.environ.pop('EXACTCUT_ALLOW_AI', None)
+        with pytest.raises(RuntimeError, match='EXACTCUT_ALLOW_AI'):
+            h.ask({'username': 'blocked'}, {'question': '进度', 'conversation': 'test'})
+        client.assert_not_called()
 
 
 def test_snapshot_excludes_private_fields():

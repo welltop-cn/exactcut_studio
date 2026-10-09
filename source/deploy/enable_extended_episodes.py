@@ -3,7 +3,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from exactcut.runtime import require_external
 require_external('修改生产 Material Hub')
-p=Path.home()/'.openclaw/agents/main/agent/workshop-skills/drama-material-hub/scripts/material_hub.py'
+p=Path(__file__).resolve().parents[2]/'integrations/drama-material-hub/scripts/material_hub.py'
 s=p.read_text()
 if '--episode-limit' in s:
     print('Episode limit support already installed')

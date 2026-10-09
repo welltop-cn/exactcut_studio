@@ -11,8 +11,11 @@ dist/
 
 # Secrets and local runtime. Example configs stay tracked.
 .env
+.envrc
+*.env
 .env.*
 !.env.example
+!.env.*.example
 .web-state/
 projects/*
 !projects/README.md
@@ -23,6 +26,21 @@ feedback/*.json
 output/
 .work/
 .dev-state/
+sources/
+material-local/
+*.sqlite
+*.sqlite3
+*.db
+*.mp4
+*.mov
+*.mkv
+*.log
+*.pem
+*.key
+/data/
+/backups/
+/config/runtime.json
+/config/deployment.json
 
 # Local demo data and one-off auth artifacts
 local-demo/

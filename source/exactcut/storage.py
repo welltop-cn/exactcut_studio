@@ -3,18 +3,35 @@ from contextlib import contextmanager
 import fcntl
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import re
 import shutil
 import time
 from .runtime import protect_path, data_root
+from .util import load_config
 
 GIB=1024**3
 CACHE_LIMIT=20*GIB
 CACHE_DAYS=7
 RESERVE=5*GIB
 KEY=re.compile(r'[a-f0-9]{64}')
+
+
+def policy():
+    values=load_config()['storage']
+    for key in ('reserve_gib','base_cache_gib','base_cache_days','source_cache_gib',
+                'source_evict_below_gib','episode_budget_gib'):
+        value=values.get(key)
+        if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or value<=0:
+            raise ValueError(f'storage.{key} 必须是有限的正数')
+    if values['source_evict_below_gib']<values['reserve_gib']:
+        raise ValueError('storage.source_evict_below_gib 不能小于 reserve_gib')
+    if values['episode_budget_gib']>values['source_cache_gib']:
+        raise ValueError('storage.episode_budget_gib 不能大于 source_cache_gib')
+    return {**{key.replace('_gib','_bytes'):int(value*GIB) for key,value in values.items() if key.endswith('_gib')},
+            'base_cache_days':values['base_cache_days']}
 
 
 def safe_directory(path,root):
@@ -41,21 +58,24 @@ def cache_entries(root):
 
 
 def plan(root, *, all_idle=False):
+    limits=policy()
     entries=cache_entries(root);total=sum(e['bytes'] for e in entries)
-    remaining=total;chosen=[];threshold=time.time()-CACHE_DAYS*86400
+    remaining=total;chosen=[];threshold=time.time()-limits['base_cache_days']*86400
     for entry in entries:
-        if all_idle or entry['used_at']<threshold or remaining>CACHE_LIMIT:
+        if all_idle or entry['used_at']<threshold or remaining>limits['base_cache_bytes']:
             chosen.append(entry);remaining-=entry['bytes']
     token=hashlib.sha256(json.dumps([e['signature'] for e in chosen],sort_keys=True).encode()).hexdigest()
     return entries,chosen,token
 
 
 def report(root):
+    limits=policy()
     entries,chosen,token=plan(root,all_idle=True)
     disk=shutil.disk_usage(root)
-    return {'free_bytes':disk.free,'total_bytes':disk.total,'reserve_bytes':RESERVE,
+    return {'free_bytes':disk.free,'total_bytes':disk.total,'reserve_bytes':limits['reserve_bytes'],
             'cache_bytes':sum(e['bytes'] for e in entries),'cleanup_bytes':sum(e['bytes'] for e in chosen),
-            'cleanup_count':len(chosen),'cleanup_token':token,'cache_limit_bytes':CACHE_LIMIT,'cache_days':CACHE_DAYS}
+            'cleanup_count':len(chosen),'cleanup_token':token,'cache_limit_bytes':limits['base_cache_bytes'],
+            'cache_days':limits['base_cache_days'],'source_cache_limit_bytes':limits['source_cache_bytes']}
 
 
 @contextmanager
@@ -96,13 +116,14 @@ def cleanup(root, *, token=None):
 
 
 def require_space(path, estimated_bytes=0):
+    reserve=policy()['reserve_bytes']
     protect_path(path)
     ancestor=path
     while not ancestor.exists():ancestor=ancestor.parent
     free=shutil.disk_usage(ancestor).free
-    needed=RESERVE+max(0,int(estimated_bytes))
+    needed=reserve+max(0,int(estimated_bytes))
     if free<needed:
-        raise ValueError(f'磁盘空间不足：剩余 {free/GIB:.1f} GB，本次预计需要 {needed/GIB:.1f} GB（含 5 GB 预留）。请先检查缓存或腾出空间后重试')
+        raise ValueError(f'磁盘空间不足：剩余 {free/GIB:.1f} GB，本次预计需要 {needed/GIB:.1f} GB（含 {reserve/GIB:g} GB 预留）。请先检查缓存或腾出空间后重试')
 
 
 def render_budget(timeline,render):

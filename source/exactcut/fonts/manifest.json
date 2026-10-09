@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "profiles": {
+    "default": "DejaVuSans-Bold.ttf",
+    "neon_reversal": "DejaVuSans-BoldOblique.ttf",
+    "cold_mystery": "DejaVuSans-BoldOblique.ttf",
+    "danger_warning": "DejaVuSans-Bold.ttf",
+    "raw_conflict": "DejaVuSans-Bold.ttf",
+    "emotional_diary": "DejaVuSans-Bold.ttf",
+    "ceo_luxury": "DejaVuSerif-Bold.ttf",
+    "title_card": "NotoSansSC-Bold.ttf"
+  },
+  "files": {
+    "DejaVuSans-Bold.ttf": {
+      "file": "DejaVuSans-Bold.ttf",
+      "sha256": "b184b89e3c1075f22f6b71575b6fc20d4972b3cfd3b23322ca6fd596dcaef167",
+      "license": "LICENSE_DEJAVU"
+    },
+    "DejaVuSans-BoldOblique.ttf": {
+      "file": "DejaVuSans-BoldOblique.ttf",
+      "sha256": "6edf0283160186af451cbee71e7b845f2e4cabf264bb992ce668c83c25465e6f",
+      "license": "LICENSE_DEJAVU"
+    },
+    "DejaVuSerif-Bold.ttf": {
+      "file": "DejaVuSerif-Bold.ttf",
+      "sha256": "c3753f2ed6bc673f15846dc45addbeb3b9c872f32fb18fd53a21f1bef1ed7676",
+      "license": "LICENSE_DEJAVU"
+    },
+    "NotoSansSC-Bold.ttf": {
+      "file": "NotoSansSC-Bold.ttf",
+      "sha256": "5d05345f9128c81915d641e0dcbb4e2fdb2ab24baa1e8de0df194423185d8500",
+      "license": "OFL-NOTO.txt"
+    }
+  }
+}

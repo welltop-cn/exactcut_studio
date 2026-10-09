@@ -64,7 +64,7 @@ def check_dependencies(release):
 def external_dependencies(release):
     interpreter=Path(run(release/'.venv/bin/python','-c','import sys;print(sys._base_executable)').strip()).resolve()
     paths=[interpreter,Path(shutil.which('ffmpeg')).resolve(),Path(shutil.which('ffprobe')).resolve(),
-           Path.home()/'.openclaw/agents/main/agent/workshop-skills/drama-material-hub/scripts/material_hub.py']
+           Path(__file__).resolve().parents[2]/'integrations/drama-material-hub/scripts/material_hub.py']
     return [{'path':str(p),'sha256':sha(p)} for p in paths if p.is_file()]
 
 def configuration():
@@ -407,6 +407,9 @@ def backup_engineering():
     return {'backup':str(snapshot(root,'daily',True)),'scope':'engineering'}
 
 def main():
+    if sys.platform != 'darwin':
+        print('此入口仅适用于 macOS LaunchAgent；Linux 使用独立的容器部署。', file=sys.stderr)
+        raise SystemExit(2)
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest='command',required=True)

@@ -1,5 +1,6 @@
 .env
 .venv/
+material-local/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -22,3 +23,4 @@ output/
 .dev-state/
 .env.*
 !.env.example
+!.env.*.example

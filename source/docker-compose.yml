@@ -1,0 +1,29 @@
+name: exactcut-development
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: source/Dockerfile
+    image: exactcut-web:development
+    init: true
+    ports:
+      - "127.0.0.1:8793:8792"
+    env_file:
+      - .env.development
+    environment:
+      EXACTCUT_DATA_ROOT: /data
+      EXACTCUT_SOURCE_ROOT: /data/sources
+      EXACTCUT_ENV_FILE: /run/exactcut/development.env
+      EXACTCUT_ENVIRONMENT: development
+      EXACTCUT_ALLOW_EXTERNAL_WRITES: "0"
+      EXACTCUT_WORKER_ENABLED: "1"
+      EXACTCUT_ALLOW_MATERIAL_FETCH: "0"
+      EXACTCUT_ALLOW_PUBLISH: "0"
+      EXACTCUT_ALLOW_AI: "0"
+      EXACTCUT_MATERIAL_FETCH_CMD: ""
+      EXACTCUT_PORT: "8792"
+      EXACTCUT_BIND: 0.0.0.0
+      EXACTCUT_RELEASE_ID: development
+    volumes:
+      - ./.env.development:/run/exactcut/development.env:ro
+      - ./.dev-state/data:/data

@@ -10,7 +10,8 @@ from pathlib import Path
 import httpx
 from .util import load_env_file
 
-from .runtime import CODE_ROOT, data_root, require_external, instance_marker, environment, release_id, maintenance_file
+from .runtime import CODE_ROOT, data_root, require_ai, instance_marker, environment, release_id, maintenance_file
+from .runtime import project_env_file
 
 ROOT = data_root()
 KNOWLEDGE = Path(__file__).parent / 'help/production.json'
@@ -83,11 +84,11 @@ def ask(user, data, detail=None):
             return {'answer':'提问较频繁，请稍等一分钟再试。', 'mode':'busy', 'sources':[]}
         attempts.append(now)
         history = list(_HISTORY.get(key,{}).get('messages', []))[-6:]
+    require_ai()
     if not _SLOTS.acquire(blocking=False):
         return {'answer':'小助手正在回答其他制作问题，请稍后重试。', 'mode':'busy', 'sources':[]}
     try:
-        require_external('AI 问答')
-        load_env_file(ROOT / '.env')
+        load_env_file(project_env_file())
         api_key = os.getenv('OPENAI_API_KEY')
         if not api_key:
             raise RuntimeError('unconfigured')

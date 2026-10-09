@@ -38,7 +38,10 @@ def test_cleanup_skips_live_cache_and_never_touches_original_output_or_approval(
 
 def test_quota_removes_oldest_and_manual_preview_rejects_changed_inventory(tmp_path,monkeypatch):
     old=cache(tmp_path,age=60);new=cache(tmp_path,key='b')
-    monkeypatch.setattr(storage,'CACHE_LIMIT',old.stat().st_size+old.with_suffix('.json').stat().st_size+1)
+    from exactcut.util import load_config
+    config=load_config()
+    config['storage']['base_cache_gib']=(old.stat().st_size+old.with_suffix('.json').stat().st_size+1)/storage.GIB
+    monkeypatch.setattr(storage,'load_config',lambda:config)
     assert storage.cleanup(tmp_path)['removed']==1 and new.exists() and not old.exists()
     report=storage.report(tmp_path)
     new.write_bytes(b'changed cache')

@@ -1,0 +1,41 @@
+name: ${EXACTCUT_INSTANCE:-exactcut-production}
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: source/Dockerfile
+    image: ${EXACTCUT_IMAGE:?Set an immutable release image}
+    restart: unless-stopped
+    init: true
+    stop_grace_period: 60s
+    ports:
+      - "127.0.0.1:${EXACTCUT_BACKEND_PORT:-18792}:8792"
+    env_file:
+      - ${EXACTCUT_DEPLOY_ROOT:-/srv/exactcut}/config/production.env
+    environment:
+      EXACTCUT_DATA_ROOT: /data
+      EXACTCUT_SOURCE_ROOT: /data/sources
+      EXACTCUT_ENV_FILE: /run/exactcut/production.env
+      EXACTCUT_CONFIG_FILE: /run/exactcut/runtime.json
+      EXACTCUT_ENVIRONMENT: production
+      EXACTCUT_ALLOW_EXTERNAL_WRITES: "1"
+      EXACTCUT_WORKER_ENABLED: "1"
+      EXACTCUT_ALLOW_MATERIAL_FETCH: "1"
+      EXACTCUT_ALLOW_PUBLISH: "1"
+      EXACTCUT_ALLOW_AI: "1"
+      EXACTCUT_MATERIAL_FETCH_CMD: python /app/integrations/drama-material-hub/scripts/material_hub.py fetch-episode
+      EXACTCUT_PORT: "8792"
+      EXACTCUT_BIND: 0.0.0.0
+      EXACTCUT_RELEASE_ID: ${EXACTCUT_RELEASE_ID:?Set a release ID}
+    cpus: ${EXACTCUT_CPUS:-1.0}
+    mem_limit: ${EXACTCUT_MEMORY:-2g}
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - ${EXACTCUT_DEPLOY_ROOT:-/srv/exactcut}/config/production.env:/run/exactcut/production.env:ro
+      - ${EXACTCUT_DEPLOY_ROOT:-/srv/exactcut}/config/runtime.json:/run/exactcut/runtime.json:ro
+      - ${EXACTCUT_DEPLOY_ROOT:-/srv/exactcut}/data:/data

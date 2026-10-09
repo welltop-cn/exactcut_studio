@@ -1,4 +1,4 @@
-"""Authenticated local job console, published through Cloudflare Tunnel."""
+"""Authenticated job console with explicit environment and data boundaries."""
 from __future__ import annotations
 import base64
 import hmac
@@ -17,11 +17,12 @@ from urllib.parse import unquote
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from .catalog import load_catalog, HUB_PYTHON
+from .catalog import load_catalog
 from . import workflow, batch_control, accounts, production_helper
-from .util import json_sha256, write_json_atomic, read_json
+from .util import json_sha256, write_json_atomic, read_json, load_env_file
 
-from .runtime import CODE_ROOT, data_root, require_external, instance_marker, environment, release_id, maintenance_file, mutation_lock
+from .runtime import CODE_ROOT, data_root, require_publish, feature_flags, instance_marker, environment, release_id, maintenance_file, mutation_lock
+from .runtime import project_env_file, claim_data_root
 
 ROOT = data_root()
 STATE = ROOT / '.web-state'
@@ -31,6 +32,14 @@ LOCK = threading.Lock()
 WORKER_HEARTBEAT = 0.0
 WORKER_FAILURES = 0
 HOOK_PREVIEWS = threading.BoundedSemaphore(2)
+
+
+def web_base_path():
+    from .util import load_config
+    value = load_config().get('web', {}).get('base_path', '')
+    if not isinstance(value, str) or (value and not re.fullmatch(r'(?:/[a-zA-Z0-9_-]+)+', value)):
+        raise ValueError('web.base_path 必须为空或 /exactcut 形式的路径，末尾不带斜线')
+    return value
 
 
 def project_path(project):
@@ -49,7 +58,7 @@ def job_command(data):
         return [sys.executable, '-u', '-m', 'exactcut.material_download', project.name]
     if action not in ('prepare', 'compile', 'validate', 'execute', 'publish'):
         raise ValueError('不支持的操作')
-    cmd = [sys.executable, '-u', '-m', 'exactcut', '--env-file', str(ROOT / '.env'),
+    cmd = [sys.executable, '-u', '-m', 'exactcut', '--env-file', str(project_env_file()),
            'execute' if action == 'publish' else action, '--project', str(project)]
     if action != 'prepare':
         name = data.get('input', '')
@@ -147,26 +156,52 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
         workflow.update(path, 'interrupted', message)
 
 
+def job_alive(job):
+    if not batch_control.belongs(job):
+        return False
+    return batch_control.child_state(job) not in {None, 'Z'}
+
+
 def recover_jobs(*, enqueue=False):
-    live = batch_control.roots()
     jobs = list(stored_jobs())
+    live = set()
     queued = set()
     for job in sorted(jobs, key=lambda j: j.get('created', 0)):
+        if job.get('instance') and not batch_control.belongs(job):
+            continue
         batch = job.get('batch_id')
         if job.get('status') == 'queued' and job.get('command'):
-            command = job['command']
-            body = ' '.join(command[command.index('-m'):]) if '-m' in command else ''
-            if batch in live and body and body in live[batch]['command']:
-                # Crash after spawn but before recording 'running': adopt, never replay.
-                job.update(status='running', adopted_after_restart=True)
-                save(job)
-                continue
             if batch and not (workflow.BATCHES / batch / 'draft.json').exists():
                 finish_job(job)
+                continue
+            children = batch_control.own_live_children(workflow.BATCHES / batch) if batch else []
+            token = job.get('process_token')
+            child = next((c for c in children if c.get('process_token') == token), None)
+            if child is None and batch_control.valid_token(token):
+                found = batch_control.PROCESSES.find(token)
+                if found:
+                    candidate = {**found, 'process_token': token, 'instance': instance_marker(),
+                                 'lane': job.get('action'), 'request_id': job.get('request_id')}
+                    if batch_control.child_state(candidate) not in {None, 'Z'}:
+                        child = candidate
+                        if batch:
+                            batch_control.remember_child(workflow.BATCHES / batch, child)
+            if child:
+                job.update(status='running', adopted_after_restart=True, instance=child.get('instance'),
+                           pid=child['pid'], pgid=child.get('pgid'), process_token=child['process_token'])
+                save(job)
+                live.add(batch)
                 continue
             queued.add(batch)
             if enqueue:
                 WORK.put((job, job['command']))
+        elif job.get('status') == 'running' and job_alive(job):
+            job.update(adopted_after_restart=True)
+            save(job)
+            if batch and (workflow.BATCHES / batch / 'draft.json').exists():
+                batch_control.remember_child(workflow.BATCHES / batch, {**job, 'lane': job.get('action')})
+            live.add(batch)
+            continue
         elif job.get('status') == 'running' and batch not in live:
             code = None
             if batch and (workflow.BATCHES / batch / 'runtime.json').exists():
@@ -221,6 +256,8 @@ def worker_tick(pending, owned):
         running |= bool(owned and any(not job.get('batch_id') for job, _, _ in owned.values()))
         if not owned:
             recover_jobs()
+            running |= any(j.get('status') == 'running' and not j.get('batch_id') and job_alive(j)
+                           for j in stored_jobs())
         if running:
             return
         for index, (job, cmd) in enumerate(pending):
@@ -230,6 +267,14 @@ def worker_tick(pending, owned):
                     continue
             log = (JOBS / (job['id'] + '.log')).open('ab')
             try:
+                # CPython accepts arbitrary -X options without changing module argv.
+                # A fresh token identifies this launch even if the OS recycles its PID.
+                token = uuid.uuid4().hex
+                if len(cmd) > 2 and cmd[1] == '-X' and cmd[2].startswith('exactcut_process_token='):
+                    cmd = [cmd[0], *cmd[3:]]
+                cmd = [cmd[0], '-X', 'exactcut_process_token=' + token, *cmd[1:]]
+                job.update(process_token=token, command=cmd, instance=instance_marker())
+                save(job)
                 process = subprocess.Popen(cmd, cwd=CODE_ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             except Exception as exc:
                 log.close()
@@ -237,10 +282,16 @@ def worker_tick(pending, owned):
                 pending.pop(index)
                 WORK.task_done()
             else:
+                identity = batch_control.identify(process, process_token=token,
+                                                 lane=job.get('action'), request_id=job.get('request_id'))
                 owned[job['id']] = (job, process, log)
                 pending.pop(index)
-                job.update(status='running', started=time.time())
+                job.update(status='running', started=time.time(), instance=instance_marker())
+                if identity:
+                    job.update(pid=identity['pid'], pgid=identity['pgid'])
                 save(job)
+                if identity and job.get('batch_id'):
+                    batch_control.remember_child(workflow.folder(job['batch_id']), identity)
             break
 
 
@@ -259,6 +310,20 @@ def worker():
 
 
 class Handler(BaseHTTPRequestHandler):
+    def public_url(self, path):
+        return getattr(getattr(self, 'server', None), 'base_path', '') + path
+
+    def normalize_path(self):
+        self.path = self.path.partition('?')[0]
+        prefix = getattr(self.server, 'base_path', '')
+        if prefix and self.path.startswith(prefix + '/'):
+            self.path = self.path[len(prefix):]
+
+    def web_page(self, name):
+        body = (CODE_ROOT / 'exactcut/web' / name).read_bytes()
+        base = f'<base href="{self.public_url("/")}">'.encode()
+        return body.replace(b'<meta', base + b'<meta', 1)
+
     def log_message(self, fmt, *args):
         # Do not log credentials, query strings or request bodies.
         pass
@@ -283,8 +348,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def cookie(self, token):
-        secure = '; Secure' if self.headers.get('Host','').split(':')[0] == 'cut.oulagrowth.com' else ''
-        self.response_cookie = f'exactcut_session={token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=604800{secure}'
+        proto = (self.headers.get('X-Forwarded-Proto') or '').split(',')[0].strip().lower()
+        secure = '; Secure' if proto == 'https' else ''
+        self.response_cookie = f'exactcut_session={token}; Path={self.public_url("/")}; HttpOnly; SameSite=Strict; Max-Age=604800{secure}'
 
     def authorized(self):
         self.user = None
@@ -313,7 +379,7 @@ class Handler(BaseHTTPRequestHandler):
             return True
         if self.path == '/':
             self.send_response(302)
-            self.send_header('Location','/login')
+            self.send_header('Location', self.public_url('/login'))
             self.send_header('Content-Length','0')
             self.end_headers()
         else:
@@ -340,9 +406,34 @@ class Handler(BaseHTTPRequestHandler):
             fresh['imported_batches'] = result['imported_batches']
         return fresh
 
+    def workspace(self, data):
+        """Called under the existing mutation lock; persist onboarding per account."""
+        path = ROOT / '.web-state/workspaces' / (self.user['username'] + '.json')
+        state = read_json(path) if path.exists() else {}
+        batches = workflow.summaries()
+        accessible = {b['id']: b for b in batches if self.can_access(b['id'])}
+        owned = [b for b in batches if accounts.owner(workflow.folder(b['id'])) == self.user['username']]
+        if 'batch_id' in data and (not isinstance(data['batch_id'], str) or data['batch_id'] not in accessible):
+            raise ValueError('项目不存在或无权访问')
+        if not state.get('initialized'):
+            if not owned:
+                created = workflow.create_blank(display_name='默认项目')
+                accounts.assign(workflow.folder(created['id']), self.user)
+                state['last_batch_id'] = created['id']
+                accessible[created['id']] = created
+            state['initialized'] = True
+        chosen = data.get('batch_id', state.get('last_batch_id'))
+        if chosen not in accessible:
+            candidates = [b for b in owned if not b.get('archived')] or owned
+            chosen = candidates[0]['id'] if candidates else None
+        state['last_batch_id'] = chosen
+        write_json_atomic(path, state)
+        return {'batch_id': chosen}
+
     def do_GET(self):
+        self.normalize_path()
         if self.path == '/login':
-            return self.respond(200, (CODE_ROOT / 'exactcut/web/login.html').read_bytes(), 'text/html; charset=utf-8')
+            return self.respond(200, self.web_page('login.html'), 'text/html; charset=utf-8')
         if self.path == '/healthz':
             runner = getattr(self.server, 'worker_thread', None)
             heartbeat_age = max(0, time.monotonic() - WORKER_HEARTBEAT) if runner else None
@@ -351,7 +442,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized():
             return
         if self.path == '/api/me':
-            return self.respond(200, self.user)
+            return self.respond(200, {**self.user, 'features': feature_flags()})
         if self.path == '/api/users':
             if not self.is_admin(): return
             return self.respond(200, {'users': accounts.users(self.server.auth_db)})
@@ -362,7 +453,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/':
             if getattr(self.server, 'auth_db', None) and not self.session_token:
                 self.cookie(accounts.login(self.server.auth_db, self.user))
-            return self.respond(200, (CODE_ROOT / 'exactcut/web/index.html').read_bytes(), 'text/html; charset=utf-8')
+            return self.respond(200, self.web_page('index.html'), 'text/html; charset=utf-8')
         if self.path == '/helper.js':
             return self.respond(200, (CODE_ROOT / 'exactcut/web/helper.js').read_bytes(), 'text/javascript; charset=utf-8')
         if self.path == '/app.js':
@@ -391,6 +482,10 @@ class Handler(BaseHTTPRequestHandler):
                 if suffix == 'manifest':
                     manifest = path / 'confirmed.json'
                     return self.respond(200, manifest.read_bytes() if manifest.exists() else (path / 'draft.json').read_bytes())
+                if suffix.startswith('ending-image/'):
+                    image = workflow.ending_image_file(batch_id, unquote(suffix[len('ending-image/'):]))
+                    kind = {'.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp'}[image.suffix]
+                    return self.respond(200, image.read_bytes(), kind)
                 if suffix == 'download-log':
                     from .error_guidance import redact
                     log = path / 'download.log'
@@ -480,6 +575,7 @@ class Handler(BaseHTTPRequestHandler):
                 pass
 
     def do_POST(self):
+        self.normalize_path()
         match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/hook-preview', self.path)
         if match:
             return self.hook_preview(match[1])
@@ -593,6 +689,9 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/users':
                 if not self.is_admin(): return
                 return self.respond(200, {'users':accounts.manage(self.server.auth_db,self.user['username'],data)})
+            if self.path == '/api/workspace':
+                with LOCK:
+                    return self.respond(200, self.workspace(data))
             if self.path == '/api/storage/cleanup':
                 if not self.is_admin():return
                 from .storage import cleanup,report
@@ -601,10 +700,22 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200,{**report(ROOT),'result':result})
             if self.path in ('/api/projects','/api/jobs','/api/upload') and not self.is_admin():
                 return
+            if self.path == '/api/batches/blank':
+                result = workflow.create_blank(self.user.get('name') or '')
+                with LOCK:
+                    accounts.assign(workflow.folder(result['id']), self.user)
+                    return self.respond(201, result)
             if self.path == '/api/batches/import':
                 result = workflow.import_excel(data)
                 with LOCK:
                     return self.respond(201, self.new_batch(result))
+            image_upload = re.fullmatch(r'/api/batches/([0-9a-f]{32})/ending-image', self.path)
+            if image_upload:
+                batch_id = image_upload[1]
+                with LOCK:
+                    if not self.can_access(batch_id):
+                        return self.respond(404, {'error':'项目不存在或无权访问'})
+                    return self.respond(200, workflow.save_ending_image(batch_id, data.get('request_id'), data.get('content')))
             match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/(save|start|publish|preview|feedback|clone|pause|resume|archive|unarchive|delete)', self.path)
             if match:
                 batch_id, action = match.groups()
@@ -612,7 +723,10 @@ class Handler(BaseHTTPRequestHandler):
                     if not self.can_access(batch_id):
                         return self.respond(404, {'error':'项目不存在或无权访问'})
                     if action == 'publish':
-                        require_external('FBBM 上传')
+                        workflow.reject_review_sha(
+                            workflow.result_records(workflow.folder(batch_id)).get(data.get('request_id'), {}),
+                            data.get('sha256'))
+                        require_publish()
                     if getattr(self.server, 'auth_db', None):
                         accounts.audit(self.server.auth_db,self.user['username'],action,batch_id)
                     if action == 'delete':
@@ -702,6 +816,11 @@ class Handler(BaseHTTPRequestHandler):
 
 def main():
     import fcntl
+    env_file = project_env_file()
+    if env_file.is_file() or os.environ.get('EXACTCUT_ENV_FILE'):
+        load_env_file(env_file)
+    base_path = web_base_path()
+    claim_data_root()
     worker_enabled = os.environ.get('EXACTCUT_WORKER_ENABLED', '1') == '1'
     JOBS.mkdir(parents=True, exist_ok=True)
     os.chmod(STATE, 0o700)
@@ -715,8 +834,12 @@ def main():
     password = (STATE / 'password').read_text().strip()
     if len(password) < 24:
         raise RuntimeError('控制台密码需至少 24 位')
-    server = ThreadingHTTPServer(('127.0.0.1', int(os.environ.get('EXACTCUT_PORT', '8790'))), Handler)
+    host = os.environ.get('EXACTCUT_BIND', '127.0.0.1').strip() or '127.0.0.1'
+    if host not in {'127.0.0.1', '0.0.0.0'}:
+        raise RuntimeError('EXACTCUT_BIND 只能是 127.0.0.1 或 0.0.0.0')
+    server = ThreadingHTTPServer((host, int(os.environ.get('EXACTCUT_PORT', '8790'))), Handler)
     server.password = password
+    server.base_path = base_path
     server.auth_db = STATE / 'accounts.sqlite3'
     accounts.initialize(server.auth_db, password)
     for path in workflow.BATCHES.glob('*/draft.json'):

@@ -21,14 +21,56 @@ import oss2
 import requests
 
 
+def project_env_file() -> Path:
+    override = os.environ.get("EXACTCUT_ENV_FILE", "").strip()
+    if override:
+        return Path(override).expanduser()
+    if os.environ.get("EXACTCUT_ENVIRONMENT", "development") != "development":
+        raise RuntimeError("此环境需要明确指定 EXACTCUT_ENV_FILE，禁止回退本机配置")
+    return Path(__file__).resolve().parents[3] / "source" / ".env.development"
+
+
+def load_project_env() -> None:
+    path = project_env_file()
+    if not path.is_file():
+        return
+    values = {}
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        values[key.strip()] = value.strip().strip("'\"")
+    current = os.environ.get("EXACTCUT_ENVIRONMENT", "development")
+    filename_owner = next((value for value in ("development", "staging", "production", "test")
+                           if path.name in {f".env.{value}", f"{value}.env"}), None)
+    if ((values.get("EXACTCUT_ENVIRONMENT") and values["EXACTCUT_ENVIRONMENT"] != current)
+            or (filename_owner and filename_owner != current)):
+        raise RuntimeError("配置环境与当前进程环境不一致；拒绝读取配置")
+    for key, value in values.items():
+        os.environ.setdefault(key, value)
+
+
+load_project_env()
+
 HOME = Path.home()
 SKILL_DIR = Path(__file__).resolve().parent.parent
 SOURCE_LEDGER_FILE = SKILL_DIR / "data" / "source_sync_ledger.json"
 SOURCE_LEDGER_LOCK_FILE = SKILL_DIR / "data" / "source_sync_ledger.lock"
-METABASE_ENV = HOME / ".openclaw/workspace/.secrets/metabase.env"
-OSS_ENV = HOME / ".openclaw/workspace/skills/oss-manager/.env"
-CF_ENV = HOME / ".openclaw/workspace/.secrets/creativefitting.env"
-AUTO_CUT_ROOT = HOME / "Downloads/auto-cut/projects"
+
+
+def material_local_root() -> Path:
+    raw = os.environ.get("MATERIAL_HUB_LOCAL_ROOT", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path(__file__).resolve().parents[3] / "source" / "material-local"
+
+
+AUTO_CUT_ROOT = material_local_root()
 
 CF_BASE = "https://cf-ads.creativefitting.ai"
 QUALITY_DIR = "优质素材"
@@ -319,13 +361,17 @@ ORDER BY series_id, spend DESC
 
 
 def cf_login(config: dict[str, str]) -> tuple[requests.Session, str]:
+    username = config.get("CF_ADS_USER") or config.get("CF_ADS_USERNAME")
+    password = config.get("CF_ADS_PASSWORD")
+    if not username or not password:
+        raise QualitySyncError("CF-Ads 配置缺失")
     session = requests.Session()
     session.trust_env = False
     response = session.post(
         f"{CF_BASE}/api/v1/auth/login",
         json={
-            "username": config["CF_ADS_USER"],
-            "password": config["CF_ADS_PASSWORD"],
+            "username": username,
+            "password": password,
         },
         timeout=20,
     )
@@ -817,8 +863,8 @@ def run(args: argparse.Namespace) -> int:
         return 0
 
     try:
-        metabase_config = load_env(METABASE_ENV)
-        oss_config = load_env(OSS_ENV)
+        metabase_config = os.environ
+        oss_config = os.environ
         bucket = make_bucket(oss_config)
         mb_token = metabase_session(metabase_config)
         quality_rows = get_quality_materials(
@@ -837,7 +883,7 @@ def run(args: argparse.Namespace) -> int:
         cf_session: requests.Session | None = None
         cf_token: str | None = None
         if quality_rows:
-            cf_config = load_env(CF_ENV)
+            cf_config = os.environ
             cf_session, cf_token = cf_login(cf_config)
 
         results: list[dict[str, Any]] = []

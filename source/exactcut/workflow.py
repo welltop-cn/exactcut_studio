@@ -8,7 +8,6 @@ import os
 import shutil
 import signal
 import re
-import subprocess
 import sys
 import time
 import threading
@@ -17,15 +16,15 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import quote
 from . import batch_control
-from .catalog import HUB_PYTHON, HUB_SCRIPT
 from .intake import validate_draft, download_plan
 from .llm_intake import read_excel
-from .material_download import mirror_videos, run_download, validate_downloaded_video
+from .material_download import validate_downloaded_video
 from .models import BatchManifest
 from .preview import make_preview, available_preview
 from .util import read_json, write_json_atomic, load_config, load_env_file, file_sha256, now_iso
 
-from .runtime import CODE_ROOT, data_root, require_external, instance_marker, environment, release_id, maintenance_file
+from .runtime import CODE_ROOT, data_root, instance_marker, environment, release_id, maintenance_file, source_root
+from .runtime import project_env_file
 
 ROOT = data_root()
 BATCHES = ROOT / '.web-state/batches'
@@ -173,6 +172,66 @@ def allocate_sequences(draft, batch_id, *, all_new=False):
     return changed
 
 
+def create_blank(author='', *, display_name=''):
+    """Empty copy of the current editor. No spreadsheet and no model call."""
+    from .intake import blank_clip
+    batch_id = uuid.uuid4().hex
+    path = BATCHES / batch_id
+    path.mkdir(parents=True)
+    row = {'request_id': 'R' + batch_id[:8], 'seq': 1, 'title_cn': '', 'hook_text': '', 'structure': '顺叙',
+           'notes': '', 'timeline_text': '', 'source': '网页填写',
+           'hook_options': {'mode': 'ai', 'style': 'auto', 'position': 'auto', 'duration_ms': None, 'manual_ranges': []},
+           'clips': [blank_clip()]}
+    draft = {'drama_id': '', 'drama_title': '', 'business_date': '', 'author': '',
+             'creator2': 'agent', 'material_type': 'typezxraw', 'time_notation': 'seconds', 'rows': [row]}
+    write_json_atomic(path / 'draft.json', {'id': batch_id, 'filename': '网页填写', 'display_name': display_name,
+                                            'created_at': now_iso(), 'revision': 1,
+                                            'draft': draft, 'warnings': []})
+    write_json_atomic(path / 'runtime.json', {'status': 'draft', 'message': '请填写剧集、日期和剪辑时间',
+                                              'updated_at': now_iso(), 'events': []})
+    return detail(batch_id)
+
+
+def save_ending_image(batch_id, request_id, payload):
+    if not isinstance(request_id, str) or not re.fullmatch(r'[\w-]{1,80}', request_id):
+        raise ValueError('需求编号无效')
+    raw = base64.b64decode(payload or '', validate=True)
+    if not raw or len(raw) > 4_000_000:
+        raise ValueError('结尾图片需在 4 MB 以内')
+    if raw.startswith(b'\x89PNG\r\n\x1a\n'):
+        ext = '.png'
+    elif raw.startswith(b'\xff\xd8\xff'):
+        ext = '.jpg'
+    elif raw.startswith(b'RIFF') and raw[8:12] == b'WEBP':
+        ext = '.webp'
+    else:
+        raise ValueError('结尾图片只接受 PNG、JPEG 或 WebP')
+    folder_path = folder(batch_id)
+    batch_control.ensure_editable(folder_path, execution=False)
+    if runtime(folder_path)['status'] != 'draft' or (folder_path / 'confirmed.json').exists():
+        raise ValueError('已确认批次不可修改；请复制为新草稿后调整')
+    destination = folder_path / 'endings'
+    destination.mkdir(exist_ok=True)
+    for old in destination.glob(request_id + '.*'):
+        old.unlink()
+    name = request_id + ext
+    target = destination / name
+    temporary = target.with_suffix(target.suffix + '.part')
+    temporary.write_bytes(raw)
+    os.replace(temporary, target)
+    return {'image': name}
+
+
+def ending_image_file(batch_id, request_id):
+    if not re.fullmatch(r'[\w-]{1,80}', request_id or ''):
+        raise ValueError('需求编号无效')
+    folder_path = folder(batch_id) / 'endings'
+    matches = [path for path in folder_path.glob(request_id + '.*') if path.suffix in {'.png', '.jpg', '.webp'}]
+    if len(matches) != 1:
+        raise ValueError('还没有结尾图片')
+    return matches[0]
+
+
 def import_excel(data):
     payload = base64.b64decode(data.get('content', ''), validate=True)
     name = Path(str(data.get('filename', 'upload.xlsx'))).name
@@ -225,8 +284,9 @@ def archive_draft(path):
     target = project / 'requests' / ('import-' + data['id'])
     target.mkdir(parents=True, exist_ok=True)
     original = target / 'original.xlsx'
-    if not original.exists():
-        original.write_bytes((path / 'source.xlsx').read_bytes())
+    source_xlsx = path / 'source.xlsx'
+    if not original.exists() and source_xlsx.is_file():
+        original.write_bytes(source_xlsx.read_bytes())
     from .intake import normalized_timeline
     rows = []
     for row in draft['rows']:
@@ -309,7 +369,7 @@ def summaries():
     result = []
     for p in BATCHES.glob('*/draft.json'):
         item = read_json(p)
-        result.append({'id': item['id'], 'filename': item['filename'], 'created_at': item['created_at'],
+        result.append({'id': item['id'], 'filename': item['filename'], 'display_name': item.get('display_name', ''), 'created_at': item['created_at'],
                        'drama_id': item['draft'].get('drama_id'), 'drama_title': item['draft'].get('drama_title'),
                        'count': len(item['draft'].get('rows', [])), **batch_control.present(p.parent, runtime(p.parent))})
     from .error_guidance import redact
@@ -329,19 +389,13 @@ def delete_batch(batch_id, confirmation):
             raise ValueError('请先归档项目，再永久删除')
         jobs_dir = ROOT / '.web-state/jobs'
         jobs = [p for p in jobs_dir.glob('*.json') if read_json(p).get('batch_id') == batch_id]
-        root = batch_control.roots().get(batch_id)
-        if root:
-            batch_control.suspend(path, root)
-        identities = batch_control.read(path).get('suspended', [])
-        for identity in reversed(identities):
-            batch_control._signal(identity, signal.SIGKILL)
+        identities = batch_control.recorded_children(path)
+        for identity in identities:
+            batch_control.signal_identity(identity, signal.SIGKILL)
         deadline = time.monotonic() + 5
         while True:
-            snapshot = batch_control.processes()
-            alive = any(snapshot.get(i['pid'], {}).get('born') == i['born'] and 'Z' not in snapshot[i['pid']]['stat'] for i in identities)
-            # A legacy server owns its completion callback. Let it finish writing first.
-            legacy_writing = root and root['ppid'] != os.getpid() and any(p.exists() and read_json(p).get('status') in ('running', 'queued') for p in jobs)
-            if not alive and not legacy_writing:
+            alive = any(batch_control.child_state(identity) not in {None, 'Z'} for identity in identities)
+            if not alive:
                 break
             if time.monotonic() > deadline:
                 raise ValueError('执行进程正在退出，请稍后再次删除')
@@ -376,6 +430,10 @@ def _save_draft(batch_id, data):
     draft = data.get('draft')
     if not isinstance(draft, dict) or not isinstance(draft.get('rows'), list) or not all(isinstance(row, dict) for row in draft['rows']):
         raise ValueError('标准化内容格式错误')
+    from .intake import compile_clips, compile_composition
+    for row in draft['rows']:
+        compile_composition(row)
+        compile_clips(row)
     if len(json.dumps(draft)) > 1_000_000:
         raise ValueError('草稿内容过大')
     changed = allocate_sequences(draft, batch_id)
@@ -409,7 +467,9 @@ def _clone_batch(batch_id, *, purpose='copy'):
     batch_id = uuid.uuid4().hex
     path = BATCHES / batch_id
     path.mkdir()
-    (path / 'source.xlsx').write_bytes((source / 'source.xlsx').read_bytes())
+    source_xlsx = source / 'source.xlsx'
+    if source_xlsx.is_file():
+        (path / 'source.xlsx').write_bytes(source_xlsx.read_bytes())
     data.update(id=batch_id, created_at=now_iso(), revision=1)
     data.update(source_batch_id=source.name, source_revision=source_revision, clone_purpose=purpose)
     data.pop('imported_batches', None)
@@ -459,6 +519,7 @@ def _start_batch(batch_id, revision):
     from .intake import timing_explanation
     from .storage import require_space
     require_space(ROOT)
+    require_space(source_root())
     timing=timing_explanation(manifest,project)
     errors=[s['error'] for t in timing for s in t['segments'] if s.get('error')]
     if errors:raise ValueError('\n'.join(errors))
@@ -524,11 +585,19 @@ def _make_batch_previews(batch_id):
     return 2 if failures else 0
 
 
+def reject_review_sha(record, sha256):
+    review = record.get('review') if isinstance(record.get('review'), dict) else {}
+    review_sha = review.get('sha256')
+    if review_sha and sha256 == review_sha and sha256 != record.get('output_sha256'):
+        raise ValueError('不能使用审片文件的校验值上传，请确认正式成片')
+
+
 def queue_publish(batch_id, request_id, sha256):
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
     if runtime(path)['status'] in ACTIVE - {'publishing'}:
         raise ValueError('当前批次正在制作，请完成后再提交上传')
+    reject_review_sha(result_records(path).get(request_id, {}), sha256)
     video, record = preview_file(batch_id, request_id)
     if sha256 != record.get('output_sha256') or file_sha256(video) != sha256:
         raise ValueError('成片版本已变化，请重新预览后再确认')
@@ -573,52 +642,64 @@ def feedback_summary(can_access=None):
 
 
 def download(path, manifest, project):
-    require_external('物料下载与同步')
     plan = download_plan(manifest)
-    update(path, 'downloading', f"准备正片：优先前 10 集，本批获取上限 EP{plan['episode_limit']}", plan=plan)
-    source = Path.home() / 'Downloads/auto-cut/projects' / f'#{manifest.drama_id}#' / 'source/videos'
-    log_path = path / 'download.log'
+    update(path, 'downloading', f"准备正片：本批需要 {'、'.join(plan['required'])}", plan=plan,
+           download_current_episode=None, download_current_received=0,
+           download_current_total=0, download_speed_bps=None)
     checkpoint(path, 'download')
-    previous_files = None
-    def progress(files):
-        nonlocal previous_files
-        if files != previous_files:
-            checkpoint(path, 'download', files=len(files), bytes=sum(size for _, size, _ in files))
-            previous_files = list(files)
-        update(path, download_files=sum(name.endswith('.mp4') for name, _, _ in files),
-               download_bytes=sum(size for _, size, _ in files))
-    with log_path.open('wb') as log:
-        for attempt in range(2):
-            update(path, message=f'获取并校验正片（第 {attempt + 1}/2 次）', download_attempt=attempt + 1)
-            try:
-                code = run_download([str(HUB_PYTHON), str(HUB_SCRIPT), 'sync', '--drama-id', manifest.drama_id,
-                                     '--restore-missing', '--only', 'videos', '--episode-limit', str(plan['episode_limit'])], source, log, progress)
-                break
-            except TimeoutError:
-                log.flush()
-                shutil.copy2(log_path, path / f'download-attempt-{attempt + 1}.log')
-                if attempt == 1:
-                    raise
-                log.seek(0)
-                log.truncate()
-    mirror_videos(project, source, episodes=plan['required'])
-    raw = log_path.read_text(errors='replace')
-    try:
-        report = json.loads(raw[raw.index('{'):])
-    except (ValueError, json.JSONDecodeError):
-        raise RuntimeError('物料中心未返回有效结果，请查看下载日志')
-    write_json_atomic(path / 'download-report.json', report)
-    item = next((r for r in report.get('items', []) if str(r.get('drama_id')) == manifest.drama_id), {})
-    missing = [ep for ep in plan['required'] if not (project / 'source/videos' / (ep + '.mp4')).is_file()
-               or (project / 'source/videos' / (ep + '.mp4')).stat().st_size == 0]
+    from .errors import ValidationError
+    from .material_download import validate_downloaded_video as check_video
+    from .media import resolve_episode_video, validate_manifest_sources
+    from .source_cache import ensure, reused_episodes
+    found = {}
+    skipped = []
+    missing = []
+    for episode in plan['required']:
+        try:
+            video = resolve_episode_video(project, episode)
+            check_video(video)
+        except (ValidationError, RuntimeError, OSError):
+            missing.append(episode)
+        else:
+            found[episode] = video
+            skipped.append(episode)
     if missing:
-        raise RuntimeError('缺少剪辑必需正片：' + '、'.join(missing))
-    from .media import validate_manifest_sources
+        from .runtime import source_root
+        last_sample = None
+
+        def report_download(episode, received, expected):
+            nonlocal last_sample
+            total_files = 0
+            total_bytes = received
+            directory = source_root() / manifest.drama_id
+            for required in plan['required']:
+                video = directory / f'{required}.mp4'
+                try:
+                    total_bytes += video.stat().st_size
+                    total_files += 1
+                except OSError:
+                    continue
+            now = time.monotonic()
+            speed = runtime(path).get('download_speed_bps') if last_sample and last_sample[0] == episode else None
+            if last_sample and last_sample[0] == episode and received > last_sample[1]:
+                elapsed = now - last_sample[2]
+                if elapsed > 0:
+                    speed = (received - last_sample[1]) / elapsed
+            if not last_sample or last_sample[0] != episode or received > last_sample[1]:
+                last_sample = (episode, received, now)
+            update(path, download_files=total_files, download_bytes=total_bytes,
+                   download_current_episode=episode, download_current_received=received,
+                   download_current_total=expected, download_speed_bps=speed,
+                   download_activity_at=now_iso(), last_progress_at=now_iso())
+
+        found.update(ensure(manifest.drama_id, missing, on_progress=report_download))
+        skipped.extend(reused_episodes())
     validate_manifest_sources(manifest, project)
-    expected = item['categories']['videos'].get('expected', [])
-    update(path, message=f"正片准备完成：{len(expected)} 集，所需集数全部到齐", download_complete=True,
-           downloaded_episodes=expected, material_report_status=item.get('status'),
-           material_warnings=item.get('errors', []), notification=report.get('notification'), hub_exit_code=code)
+    fields = {'download_complete': True, 'downloaded_episodes': list(found),
+              'download_current_episode': None, 'download_speed_bps': None}
+    if skipped:
+        fields['reused_local_episodes'] = skipped
+    update(path, message=f"正片准备完成：{len(found)} 集，所需集数全部到齐", **fields)
 
 
 def produce(batch_id):
@@ -731,7 +812,7 @@ def _publish(batch_id, request_id):
 
 
 if __name__ == '__main__':
-    load_env_file(ROOT / '.env')
+    load_env_file(project_env_file())
     if sys.argv[1] == 'produce':
         raise SystemExit(produce(sys.argv[2]))
     if sys.argv[1] == 'preview':

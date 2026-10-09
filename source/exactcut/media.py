@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
 from .errors import ValidationError
+from .runtime import source_root
 
 
 def run_checked(command: list[str], *, capture: bool = True, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
@@ -31,7 +33,26 @@ def duration_ms(path: Path) -> int:
     return round(float(payload.get("format", {}).get("duration") or 0) * 1000)
 
 
+def _project_drama_id(project_dir: Path) -> str:
+    config = project_dir / "project.json"
+    if config.is_file():
+        try:
+            value = str(json.loads(config.read_text(encoding="utf-8")).get("project_id") or "").strip().strip("#")
+        except (OSError, ValueError):
+            value = ""
+        if value:
+            return value
+    return project_dir.name if re.fullmatch(r"\d{6}", project_dir.name) else ""
+
+
 def resolve_episode_video(project_dir: Path, episode: str) -> Path:
+    drama_id = _project_drama_id(project_dir)
+    if drama_id:
+        root = source_root() / drama_id
+        for name in (episode, episode.upper()):
+            cached = root / f"{name}.mp4"
+            if cached.is_file() and not cached.is_symlink():
+                return cached.resolve()
     directory = project_dir / "source" / "videos"
     candidates = [
         directory / f"{episode}.mp4",

@@ -328,6 +328,150 @@ def finish_draft(rows, metas, ambiguous_dotted):
     return draft, warnings
 
 
+HOOK_STYLES = {'default', 'neon_reversal', 'danger_warning', 'ceo_luxury', 'emotional_diary', 'cold_mystery', 'raw_conflict'}
+
+
+def blank_composition():
+    return {
+        'opening': {'text': '', 'style': 'default', 'size': 'm', 'length': 'standard', 'position': 'bottom', 'duration_s': 5},
+        'plots': [{'episode': '', 'start': '', 'end': ''}],
+        'ending': {'guide': '', 'image': ''},
+    }
+
+
+def compile_composition(row):
+    """Turn the step-2 form into the hook and timeline the current cutter already reads.
+
+    Size, length, and the ending image stay on the row. They are not added to the timeline.
+    """
+    composition = row.get('composition')
+    if not isinstance(composition, dict):
+        return
+    from .timecode import format_ms, parse_timepoint
+    opening = composition.get('opening') if isinstance(composition.get('opening'), dict) else {}
+    text = str(opening.get('text') or '').replace('\n', ' ').strip()
+    style = opening.get('style') if opening.get('style') in HOOK_STYLES else 'default'
+    position = opening.get('position') if opening.get('position') in {'top', 'middle', 'bottom'} else 'bottom'
+    size = opening.get('size') if opening.get('size') in {'s', 'm', 'l'} else 'm'
+    length = opening.get('length') if opening.get('length') in {'short', 'standard', 'long'} else 'standard'
+    try:
+        duration_s = float(5 if opening.get('duration_s') in (None, '') else opening.get('duration_s'))
+    except (TypeError, ValueError):
+        duration_s = 5
+    duration_s = min(12.0, max(1.0, duration_s))
+    plots = composition.get('plots') if isinstance(composition.get('plots'), list) else []
+    clean_plots, lines = [], []
+    for plot in plots[:12]:
+        if not isinstance(plot, dict):
+            continue
+        episode = str(plot.get('episode') or '').strip().upper()
+        if episode.isdigit():
+            episode = 'EP' + str(int(episode))
+        start, end = str(plot.get('start') or '').strip(), str(plot.get('end') or '').strip()
+        clean_plots.append({'episode': episode, 'start': start, 'end': end})
+        if not (episode and start and end):
+            continue
+        try:
+            start_ms, end_ms = parse_timepoint(start), parse_timepoint(end)
+        except (ValidationError, ValueError):
+            continue
+        if re.fullmatch(r'EP[1-9]\d{0,2}', episode) and int(episode[2:]) <= 500 and end_ms > start_ms:
+            lines.append(f'{episode} {format_ms(start_ms)}-{format_ms(end_ms)}')
+    ending = composition.get('ending') if isinstance(composition.get('ending'), dict) else {}
+    image = str(ending.get('image') or '')
+    if not re.fullmatch(r'[\w.-]{1,80}', image):
+        image = ''
+    row['composition'] = {
+        'opening': {'text': text, 'style': style, 'size': size, 'length': length, 'position': position,
+                    'duration_s': duration_s},
+        'plots': clean_plots or [{'episode': '', 'start': '', 'end': ''}],
+        'ending': {'guide': str(ending.get('guide') or '').replace('\r', '').strip()[:200], 'image': image},
+    }
+    row['hook_text'] = text
+    row['hook_options'] = {'mode': 'none', 'style': style, 'position': position,
+                           'duration_ms': int(round(duration_s * 1000)), 'manual_ranges': []}
+    row['timeline_text'] = '\n'.join(lines)
+
+
+_CLIP_LIMITS = (('start_m', 999), ('start_s', 59), ('start_ms', 999), ('end_m', 999), ('end_s', 59), ('end_ms', 999))
+
+
+def blank_clip():
+    return {'episode': '', 'start_m': '00', 'start_s': '00', 'start_ms': '000', 'end_m': '00', 'end_s': '00', 'end_ms': '000'}
+
+
+def _clip_number(value, limit):
+    text = str('' if value is None else value).strip()
+    if text == '':
+        return 0
+    if not re.fullmatch(r'\d{1,3}', text):
+        return None
+    number = int(text)
+    return number if number <= limit else None
+
+
+def _clip_fields(clip):
+    episode = re.sub(r'(?i)^ep', '', str(clip.get('episode') or '').strip())
+    stored = {'episode': episode}
+    numbers = {}
+    for key, limit in _CLIP_LIMITS:
+        raw = str('' if clip.get(key) is None else clip.get(key)).strip()
+        stored[key] = raw
+        numbers[key] = _clip_number(raw, limit)
+    return stored, numbers
+
+
+def _clip_idle(stored, numbers):
+    """A row still showing 00:00:000 and no episode is unused, not an error."""
+    if stored['episode']:
+        return False
+    return all(number in (None, 0) for number in numbers.values())
+
+
+def _clip_line(stored, numbers):
+    """分:秒:毫秒 becomes the minute:second.millisecond line the current cutter reads."""
+    episode = stored['episode']
+    if not (episode.isdigit() and 1 <= int(episode) <= 500 and all(number is not None for number in numbers.values())):
+        return None
+    start = numbers['start_m'] * 60000 + numbers['start_s'] * 1000 + numbers['start_ms']
+    end = numbers['end_m'] * 60000 + numbers['end_s'] * 1000 + numbers['end_ms']
+    if end <= start:
+        return None
+    return f'EP{int(episode)} {format_ms(start)}-{format_ms(end)}'
+
+
+def compile_clips(row):
+    clips = row.get('clips')
+    if not isinstance(clips, list):
+        return
+    clean, lines = [], []
+    for clip in clips[:40]:
+        if not isinstance(clip, dict):
+            continue
+        stored, numbers = _clip_fields(clip)
+        clean.append(stored)
+        line = _clip_line(stored, numbers)
+        if line:
+            lines.append(line)
+    row['clips'] = clean or [blank_clip()]
+    row['timeline_text'] = '\n'.join(lines)
+
+
+def clip_problems(row):
+    clips = row.get('clips')
+    if not isinstance(clips, list):
+        return []
+    problems = []
+    for index, clip in enumerate(clips[:40], 1):
+        if not isinstance(clip, dict):
+            continue
+        stored, numbers = _clip_fields(clip)
+        if _clip_idle(stored, numbers) or not any(stored.values()) or _clip_line(stored, numbers):
+            continue
+        problems.append(f'片段 {index} 须填写集号和分:秒:毫秒，秒为 0～59，结束要晚于开始')
+    return problems
+
+
 def validate_draft(draft, source=''):
     errors, requests = [], []
     drama_id = str(draft.get('drama_id', '')).strip().strip('#')
@@ -371,8 +515,11 @@ def validate_draft(draft, source=''):
                     if item.type == 'episode' and (not re.fullmatch(r'EP[1-9]\d{0,2}', item.episode) or int(item.episode[2:]) > 500 or item.start_ms < 0):
                         raise ValueError('集数需为 EP1～EP500，起点不能为负数')
                     timeline.append(item)
+            problems = clip_problems(row)
             if not timeline:
-                raise ValueError('请填写至少一个有效片段')
+                raise ValueError('；'.join(problems) if problems else '请填写至少一个有效片段')
+            if problems:
+                raise ValueError('；'.join(problems))
             validate_hook_layout(str(row.get('hook_text', '')))
             seq = int(row.get('seq', i))
             if not str(draft.get('author', '')).strip():

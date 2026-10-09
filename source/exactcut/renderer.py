@@ -14,7 +14,9 @@ from typing import Any
 from PIL import Image, ImageDraw, ImageFont
 
 from .errors import ValidationError
+from .fonts import font_path, load_font
 from .media import resolve_episode_video, run_checked, duration_ms
+from .source_cache import hold_shared_for, shared_for
 from .hook_visual import resolve_hook_visual, render_personalized_hook_png
 from .hook_emphasis import resolve_emphasis, manual_emphasis, plain_hook
 from .runtime import environment, protect_path
@@ -24,18 +26,7 @@ from .util import file_sha256, json_sha256, read_json, write_json_atomic
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    candidates = [
-        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-        "/System/Library/Fonts/PingFang.ttc",
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    ]
-    for candidate in candidates:
-        if Path(candidate).exists():
-            try:
-                return ImageFont.truetype(candidate, size=size)
-            except OSError:
-                pass
-    return ImageFont.load_default()
+    return load_font(font_path('title_card'), size)
 
 
 def _draw_centered_text(image: Image.Image, text: str, *, y: int, font_size: int, max_chars: int = 28) -> None:
@@ -89,7 +80,7 @@ def _render_card_unit(text: str, duration_ms: int, output: Path, render: dict[st
     ])
 
 
-def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any]) -> None:
+def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any], expected_ms: int) -> None:
     command = ["ffmpeg", "-y", "-v", "error"]
     for item in inputs:
         command += ["-i", str(item)]
@@ -102,6 +93,7 @@ def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any]) -> N
     chains.append(f"{''.join(labels)}concat=n={len(inputs)}:v=1:a=1[joined][a];[joined]fps={render['fps']},setpts=N/({render['fps']}*TB)[v]")
     command += [
         "-filter_complex", ";".join(chains), "-map", "[v]", "-map", "[a]",
+        "-r", str(render["fps"]), "-t", f"{expected_ms / 1000:.3f}",
         "-c:v", render["video_codec"], "-preset", render["preset"], "-crf", str(render["crf"]),
         "-pix_fmt", "yuv420p", "-c:a", render["audio_codec"], "-ar", str(render["audio_rate"]),
         "-ac", str(render["audio_channels"]), "-movflags", "+faststart", str(output),
@@ -158,11 +150,12 @@ def source_fingerprints(project_dir: Path, timeline: list[dict], source_cache=No
         if item['type'] != 'episode' or item['episode'] in sources:
             continue
         source = resolve_episode_video(project_dir, item['episode'])
-        protect_path(source)
-        stat = source.stat()
-        identity = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
-        cached = (source_cache or {}).get(str(source))
-        digest = cached['sha256'] if cached and cached['identity'] == identity else file_sha256(source)
+        with shared_for(source):
+            protect_path(source)
+            stat = source.stat()
+            identity = (stat.st_ino, stat.st_size, stat.st_mtime_ns)
+            cached = (source_cache or {}).get(str(source))
+            digest = cached['sha256'] if cached and cached['identity'] == identity else file_sha256(source)
         if source_cache is not None:
             source_cache[str(source)] = {'identity':identity,'sha256':digest}
         sources[item['episode']] = {'episode':item['episode'], 'sha256':digest}
@@ -203,7 +196,7 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
     timings['ai_emphasis'] = round(time.monotonic()-started, 3)
     # Hook-only edits and renaming reuse the checked cut; source bytes and encoder settings are part of the key.
     base_render = {k:v for k,v in render.items() if not k.startswith('hook_')}
-    identity = {'version':1,'timeline':safe_timeline,'sources':sources,
+    identity = {'version':2,'timeline':safe_timeline,'sources':sources,
                 'render':base_render}
     key = json_sha256(identity)
     cache = project_dir/'cache/render-base'
@@ -232,6 +225,7 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                     unit = work/f'unit-{index:04d}.mp4'
                     if item['type'] == 'episode':
                         source = resolve_episode_video(project_dir,item['episode'])
+                        hold_shared_for(source)
                         duration = int(item['end_ms'])-int(item['start_ms'])
                         _render_episode_unit(source,int(item['start_ms']),int(item['end_ms']),unit,render)
                     else:
@@ -249,7 +243,7 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                     step('base_cut', segment=index+1, total=len(safe_timeline), completed=index+1)
                 joined = work/'joined.mp4'
                 step('concat', completed=len(units), total=len(units))
-                _concat_units(units,joined,render)
+                _concat_units(units,joined,render,expected_ms)
                 if abs(duration_ms(joined)-expected_ms)>int(render['duration_tolerance_ms']):
                     raise ValidationError('拼接后的计划与实际时长不一致，未缓存')
                 # Atomic publication on the cache filesystem; never link a writable original/output.

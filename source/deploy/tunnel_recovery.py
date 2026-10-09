@@ -11,6 +11,7 @@ from pathlib import Path
 import plistlib
 import shutil
 import subprocess
+import sys
 import time
 from urllib.request import build_opener, ProxyHandler, Request
 from zoneinfo import ZoneInfo
@@ -108,6 +109,9 @@ def rollback():
     return {'restored':current['original'],'note':'Original DNS discovery is restored; existing VPN DNS issues may return.'}
 
 def main():
+    if sys.platform != 'darwin':
+        print('此入口仅适用于 macOS Cloudflare Tunnel；Linux 使用 nginx + TLS。', file=sys.stderr)
+        raise SystemExit(2)
     os.umask(0o077)
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest='command',required=True)

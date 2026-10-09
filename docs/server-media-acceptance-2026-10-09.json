@@ -1,0 +1,86 @@
+{
+  "scope": "complete OSS reads and local production render; no publication",
+  "downloads": [
+    {
+      "episode": "EP1",
+      "bytes": 157111543,
+      "seconds": 28.721,
+      "mib_per_second": 5.217,
+      "duration_ms": 124715,
+      "sha256": "dc6b84e3ccc1cc44044d98a7e78e9da30adbb7be53c9c4b79eee3e1c66be1c78"
+    },
+    {
+      "episode": "EP2",
+      "bytes": 122461144,
+      "seconds": 22.603,
+      "mib_per_second": 5.167,
+      "duration_ms": 97873,
+      "sha256": "ff81cb9aa1b60d0dc798f60cf81b1a12aeab277451875fddf7568dbd8dbeec7f"
+    }
+  ],
+  "render": {
+    "status": "qc_passed",
+    "duration_ms": 101500,
+    "qc": {
+      "checked_at": "2026-10-09T08:02:14.946424+00:00",
+      "status": "passed",
+      "allowed": true,
+      "errors": [],
+      "video_sha256": "33829810337ed53dd44149f9da230edcd1f66d7c7343f0184f47eadf4d110787",
+      "actual_duration_ms": 101500,
+      "expected_duration_ms": 101500,
+      "first_frame_mean_luma": 31.152639853395062
+    },
+    "unit_checks": [
+      {
+        "segment": 1,
+        "expected_ms": 45000,
+        "actual_ms": 45000
+      },
+      {
+        "segment": 2,
+        "expected_ms": 45000,
+        "actual_ms": 45000
+      },
+      {
+        "segment": 3,
+        "expected_ms": 1500,
+        "actual_ms": 1500
+      },
+      {
+        "segment": 4,
+        "expected_ms": 10000,
+        "actual_ms": 10000
+      }
+    ],
+    "stage_seconds": {
+      "ai_emphasis": 7.42,
+      "base_cut": 1468.351,
+      "frame_sampling": 13.395,
+      "hook_overlay": 1293.065,
+      "qc": 1.191,
+      "preview": 112.963
+    },
+    "hook_ai_source": "ai_semantic",
+    "placement_source": "ai_sampled_frames",
+    "hook_warnings": [
+      "各候选位置均有遮挡风险，请在预览中调整位置或精简文案"
+    ],
+    "avg_frame_rate": "30/1",
+    "width": 1080,
+    "height": 1920,
+    "preview": {
+      "master_sha256": "33829810337ed53dd44149f9da230edcd1f66d7c7343f0184f47eadf4d110787",
+      "sha256": "f25bd1141abe463a7b10367b0d5a31b2911ae3bee192ee0eb58af69bf9fc5132",
+      "bytes": 4643822,
+      "master_bytes": 66232712,
+      "duration_ms": 101518,
+      "elapsed_seconds": 112.593
+    }
+  },
+  "cache_reuse": true,
+  "status": "passed",
+  "elapsed_seconds": 2956.563,
+  "acceptance_image": "sha256:d8f09470d99333563d3ae85528db794d0d747f3cf7a7196e0194e7baca84e51c",
+  "timing_note": "Wall times include a deliberate deployment-priority pause and concurrent work; not dedicated-server throughput."
+}

@@ -1,5 +1,16 @@
 {
   "schema_version": 1,
+  "web": {
+    "base_path": ""
+  },
+  "storage": {
+    "reserve_gib": 5,
+    "base_cache_gib": 20,
+    "base_cache_days": 7,
+    "source_cache_gib": 20,
+    "source_evict_below_gib": 20,
+    "episode_budget_gib": 2
+  },
   "render": {
     "width": 1080,
     "height": 1920,
@@ -15,7 +26,7 @@
     "duration_tolerance_ms": 500,
     "hook_style": "auto",
     "hook_fade_out_ms": 1000,
-    "hook_layout_version": 7,
+    "hook_layout_version": 8,
     "hook_emphasis": "ai_semantic_v1"
   },
   "publish": {

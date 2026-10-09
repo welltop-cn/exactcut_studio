@@ -20,7 +20,7 @@ RESPONSE = {'style': 'cold_mystery', 'highlights': [
 
 
 def permit_mock(monkeypatch):
-    monkeypatch.setattr(semantic, 'require_external', lambda operation: None)
+    monkeypatch.setattr(semantic, 'require_ai', lambda: None)
     monkeypatch.setattr(semantic, 'load_env_file', lambda path: None)
     monkeypatch.setenv('EXACTCUT_HOOK_MODEL', 'mock-semantic-model')
 
@@ -78,7 +78,7 @@ def test_repeated_phrase_targets_only_the_selected_occurrence():
 
 
 def test_manual_marks_win_without_any_external_call(tmp_path, monkeypatch):
-    monkeypatch.setattr(semantic, 'require_external', lambda _: pytest.fail('Manual text needs no AI'))
+    monkeypatch.setattr(semantic, 'require_ai', lambda: pytest.fail('Manual text needs no AI'))
     text = 'She kept her secret, but **her secret** made her **Queen**.'
     result = semantic.resolve_emphasis(text, tmp_path)
     assert result['source'] == 'manual'
@@ -230,7 +230,7 @@ def test_retry_only_for_transient_failure(monkeypatch):
 @pytest.mark.parametrize('status',[429,503,401])
 def test_http_retry_distinguishes_temporary_service_failure_from_credentials(monkeypatch,status,tmp_path):
     import httpx
-    monkeypatch.setattr(semantic,'require_external',lambda _:None)
+    monkeypatch.setattr(semantic,'require_ai',lambda:None)
     monkeypatch.setattr(semantic,'load_env_file',lambda _:None)
     monkeypatch.setattr(semantic.time,'sleep',lambda _:None)
     monkeypatch.setenv('OPENAI_API_KEY','independent-unit-test')

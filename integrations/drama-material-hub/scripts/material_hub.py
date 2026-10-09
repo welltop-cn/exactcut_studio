@@ -28,20 +28,61 @@ try:
     import oss2
 except ImportError as exc:
     raise SystemExit(
-        "Missing oss2. Run with "
-        "~/.openclaw/workspace/skills/oss-manager/.venv/bin/python"
+        "Missing oss2. Run this script with the project virtualenv."
     ) from exc
 
+
+def project_env_file() -> Path:
+    override = os.environ.get("EXACTCUT_ENV_FILE", "").strip()
+    if override:
+        return Path(override).expanduser()
+    if os.environ.get("EXACTCUT_ENVIRONMENT", "development") != "development":
+        raise RuntimeError("此环境需要明确指定 EXACTCUT_ENV_FILE，禁止回退本机配置")
+    return Path(__file__).resolve().parents[3] / "source" / ".env.development"
+
+
+def load_project_env() -> None:
+    path = project_env_file()
+    if not path.is_file():
+        return
+    values = {}
+    for raw in path.read_text(encoding="utf-8-sig").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].strip()
+        key, sep, value = line.partition("=")
+        if not sep:
+            continue
+        values[key.strip()] = value.strip().strip("'\"")
+    current = os.environ.get("EXACTCUT_ENVIRONMENT", "development")
+    filename_owner = next((value for value in ("development", "staging", "production", "test")
+                           if path.name in {f".env.{value}", f"{value}.env"}), None)
+    if ((values.get("EXACTCUT_ENVIRONMENT") and values["EXACTCUT_ENVIRONMENT"] != current)
+            or (filename_owner and filename_owner != current)):
+        raise RuntimeError("配置环境与当前进程环境不一致；拒绝读取配置")
+    for key, value in values.items():
+        os.environ.setdefault(key, value)
+
+
+load_project_env()
 
 HOME = Path.home()
 SKILL_DIR = Path(__file__).resolve().parent.parent
 STATE_FILE = SKILL_DIR / "data" / "sync_state.json"
 SOURCE_LEDGER_FILE = SKILL_DIR / "data" / "source_sync_ledger.json"
 SOURCE_LEDGER_LOCK_FILE = SKILL_DIR / "data" / "source_sync_ledger.lock"
-METABASE_ENV = HOME / ".openclaw/workspace/.secrets/metabase.env"
-OSS_ENV = HOME / ".openclaw/workspace/skills/oss-manager/.env"
-OPENCLAW_CONFIG = HOME / ".openclaw/openclaw.json"
-AUTO_CUT_ROOT = HOME / "Downloads/auto-cut/projects"
+
+
+def material_local_root() -> Path:
+    raw = os.environ.get("MATERIAL_HUB_LOCAL_ROOT", "").strip()
+    if raw:
+        return Path(raw).expanduser()
+    return Path(__file__).resolve().parents[3] / "source" / "material-local"
+
+
+AUTO_CUT_ROOT = material_local_root()
 QUALITY_SYNC_SCRIPT = SKILL_DIR / "scripts" / "quality_sync.py"
 SUGGESTION_SOURCE_FILE = SKILL_DIR / "data" / "suggestion_sources.json"
 
@@ -231,19 +272,20 @@ def parse_text_file(path: Path) -> str:
     if suffix == ".docx":
         return parse_docx(path)
     if suffix == ".doc":
-        output = path.with_suffix(path.suffix + ".txt")
-        result = subprocess.run(
-            ["textutil", "-convert", "txt", "-output", str(output), str(path)],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
-        if result.returncode != 0 or not output.exists():
-            raise HubError(f"DOC 解析失败: {result.stderr.strip()}")
         try:
-            return output.read_text(encoding="utf-8")
-        finally:
-            output.unlink(missing_ok=True)
+            result = subprocess.run(
+                ["antiword", "-m", "UTF-8.txt", str(path)],
+                capture_output=True,
+                encoding="utf-8",
+                timeout=60,
+            )
+        except FileNotFoundError as exc:
+            raise HubError("读取旧版 DOC 附件需要安装 antiword；正片下载不需要该工具") from exc
+        except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
+            raise HubError(f"DOC 解析失败: {exc}") from exc
+        if result.returncode != 0:
+            raise HubError(f"DOC 解析失败: {result.stderr.strip()}")
+        return result.stdout
     for encoding in ("utf-8-sig", "utf-8", "gb18030"):
         try:
             return path.read_text(encoding=encoding)
@@ -280,10 +322,9 @@ def extract_mp4_url(value: Any) -> str | None:
 
 class MetabaseClient:
     def __init__(self) -> None:
-        config = load_env_file(METABASE_ENV)
-        self.host = config.get("METABASE_HOST", "").rstrip("/")
-        self.user = config.get("METABASE_USER", "")
-        self.password = config.get("METABASE_PASSWORD", "")
+        self.host = os.environ.get("METABASE_HOST", "").rstrip("/")
+        self.user = os.environ.get("METABASE_USER", "")
+        self.password = os.environ.get("METABASE_PASSWORD", "")
         if not all((self.host, self.user, self.password)):
             raise HubError("Metabase 配置缺失")
         self.session = requests.Session()
@@ -442,22 +483,19 @@ ORDER BY first_public_at ASC
 
 class OssStore:
     def __init__(self) -> None:
-        config = load_env_file(OSS_ENV)
-        key_id = config.get("ALIYUN_OSS_ACCESS_KEY_ID", "")
-        key_secret = config.get("ALIYUN_OSS_ACCESS_KEY_SECRET", "")
-        endpoint = config.get("ALIYUN_OSS_ENDPOINT", "")
+        key_id = os.environ.get("ALIYUN_OSS_ACCESS_KEY_ID", "")
+        key_secret = os.environ.get("ALIYUN_OSS_ACCESS_KEY_SECRET", "")
+        endpoint = os.environ.get("ALIYUN_OSS_ENDPOINT", "")
         if not all((key_id, key_secret, endpoint)):
             raise HubError("OSS 配置缺失")
         auth = oss2.Auth(key_id, key_secret)
-        self.target_name = config.get("ALIYUN_OSS_BUCKET") or TARGET_BUCKET_DEFAULT
-        self.source_name = config.get("ALIYUN_OSS_SOURCE_BUCKET") or SOURCE_BUCKET_DEFAULT
+        self.target_name = os.environ.get("ALIYUN_OSS_BUCKET") or TARGET_BUCKET_DEFAULT
+        self.source_name = os.environ.get("ALIYUN_OSS_SOURCE_BUCKET") or SOURCE_BUCKET_DEFAULT
         self.target = oss2.Bucket(auth, endpoint, self.target_name, connect_timeout=30)
         self.source = oss2.Bucket(auth, endpoint, self.source_name, connect_timeout=30)
-        # OSS traffic in this environment requires the configured local proxy.
-        # Keep requests' proxy environment instead of forcing a direct TLS path
-        # that can hang during uploads/downloads.
-        self.target.session.session.trust_env = True
-        self.source.session.session.trust_env = True
+        use_local_proxy = os.environ.get("EXACTCUT_ENVIRONMENT") == "development"
+        for bucket in (self.target, self.source):
+            bucket.session.session.trust_env = use_local_proxy
 
     def exists(self, key: str, *, source: bool = False) -> bool:
         bucket = self.source if source else self.target
@@ -511,27 +549,41 @@ class OssStore:
 
     def download(self, key: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        oss2.resumable_download(
-            self.target,
-            key,
-            str(path),
-            multiget_threshold=32 * 1024 * 1024,
-            part_size=8 * 1024 * 1024,
-            num_threads=4,
-        )
+        progress = path.with_name(path.name + ".progress.json")
+
+        def report(received: int, total: int) -> None:
+            payload = {"received": received, "total": total}
+            temporary = progress.with_name(progress.name + ".tmp")
+            temporary.write_text(json.dumps(payload), encoding="utf-8")
+            temporary.replace(progress)
+
+        progress.unlink(missing_ok=True)
+        try:
+            for attempt in range(8):
+                try:
+                    oss2.resumable_download(
+                        self.target,
+                        key,
+                        str(path),
+                        multiget_threshold=32 * 1024 * 1024,
+                        part_size=2 * 1024 * 1024,
+                        num_threads=4,
+                        progress_callback=report,
+                    )
+                    break
+                except (requests.exceptions.RequestException, oss2.exceptions.RequestError):
+                    if attempt == 7:
+                        raise
+                    print(f"OSS 下载连接中断，保留已完成分片，重试 {attempt + 1}/7", file=sys.stderr, flush=True)
+                    time.sleep(min(2 * (attempt + 1), 10))
+        finally:
+            progress.unlink(missing_ok=True)
 
 
 class FeishuClient:
     def __init__(self) -> None:
-        config = json.loads(OPENCLAW_CONFIG.read_text(encoding="utf-8"))
-        channel = config.get("channels", {}).get("feishu", {})
-        app_id = channel.get("appId")
-        app_secret = channel.get("appSecret")
-        if not app_id or not app_secret:
-            accounts = channel.get("accounts", {})
-            account = accounts.get("default") or next(iter(accounts.values()), {})
-            app_id = account.get("appId")
-            app_secret = account.get("appSecret")
+        app_id = os.environ.get("MATERIAL_HUB_FEISHU_APP_ID", "")
+        app_secret = os.environ.get("MATERIAL_HUB_FEISHU_APP_SECRET", "")
         if not app_id or not app_secret:
             raise HubError("飞书应用配置缺失")
         self.session = requests.Session()
@@ -642,31 +694,33 @@ class FeishuClient:
                 f"飞书在线文档读取失败: code={payload.get('code')}"
             )
 
+        # raw_content is plain text; write a minimal WordprocessingML package.
+        # This preserves the same plain-text semantics without a system converter.
         path.parent.mkdir(parents=True, exist_ok=True)
-        source = path.with_suffix(".txt")
-        source.write_text(content, encoding="utf-8")
-        try:
-            completed = subprocess.run(
-                [
-                    "textutil",
-                    "-convert",
-                    "docx",
-                    "-encoding",
-                    "UTF-8",
-                    "-output",
-                    str(path),
-                    str(source),
-                ],
-                check=False,
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-        finally:
-            source.unlink(missing_ok=True)
-        if completed.returncode != 0 or not path.exists() or path.stat().st_size == 0:
-            message = (completed.stderr or completed.stdout or "未知错误").strip()
-            raise HubError(f"飞书在线文档转 DOCX 失败: {message}")
+        document = ElementTree.Element(WORD_NS + "document")
+        body = ElementTree.SubElement(document, WORD_NS + "body")
+        for line in content.split("\n"):
+            paragraph = ElementTree.SubElement(body, WORD_NS + "p")
+            run = ElementTree.SubElement(paragraph, WORD_NS + "r")
+            text = ElementTree.SubElement(run, WORD_NS + "t")
+            text.set("{http://www.w3.org/XML/1998/namespace}space", "preserve")
+            text.text = line
+        with ZipFile(path, "w") as archive:
+            archive.writestr("[Content_Types].xml", (
+                '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+                '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+                '<Default Extension="xml" ContentType="application/xml"/>'
+                '<Override PartName="/word/document.xml" '
+                'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+                '</Types>'
+            ))
+            archive.writestr("_rels/.rels", (
+                '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+                '<Relationship Id="rId1" '
+                'Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+                'Target="word/document.xml"/></Relationships>'
+            ))
+            archive.writestr("word/document.xml", ElementTree.tostring(document, encoding="utf-8", xml_declaration=True))
         try:
             with ZipFile(path) as archive:
                 if "word/document.xml" not in archive.namelist():
@@ -2337,6 +2391,29 @@ def run_automatic(args: argparse.Namespace, *, cron: bool) -> int:
     return exit_code(results)
 
 
+def episode_label(value: str) -> str:
+    text = str(value).strip()
+    match = re.fullmatch(r"(?i)ep(\d+)", text) or re.fullmatch(r"(\d+)", text)
+    if not match:
+        raise HubError(f"无效集号: {value}")
+    return f"EP{int(match.group(1))}"
+
+
+def run_fetch_episode(args: argparse.Namespace) -> int:
+    """Download one episode file to dest. Used by Exact Cut as drama_id episode dest."""
+    drama_id = normalize_drama_id(args.drama_id)
+    label = episode_label(args.episode)
+    dest = Path(args.dest)
+    hub = MaterialHub(dry_run=False)
+    target_key = hub.target_key(drama_id, f"video/{label}.mp4")
+    if not hub.oss.exists(target_key):
+        source_key = f"{SOURCE_PREFIX}/{drama_id}/{label}.mp4"
+        if not hub.oss.copy_source(source_key, target_key):
+            raise HubError(f"{label} 源片不存在")
+    hub.oss.download(target_key, dest)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="同步短剧完整物料到 OSS 与本地 auto-cut"
@@ -2398,6 +2475,14 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help=f"不向飞书群「{FEISHU_NOTIFY_CHAT_NAME}」发送结果卡片",
     )
+
+    fetch_parser = subparsers.add_parser(
+        "fetch-episode",
+        help="把一集正片下载到指定路径",
+    )
+    fetch_parser.add_argument("drama_id")
+    fetch_parser.add_argument("episode")
+    fetch_parser.add_argument("dest")
     return parser
 
 
@@ -2416,6 +2501,8 @@ def main() -> int:
             code = run_automatic(args, cron=False)
         elif args.command == "cron":
             code = run_automatic(args, cron=True)
+        elif args.command == "fetch-episode":
+            code = run_fetch_episode(args)
         else:
             parser.error(f"未知命令: {args.command}")
             return 1

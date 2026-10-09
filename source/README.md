@@ -140,16 +140,16 @@ projects/101460/outputs/20260902/
 
 Hook 文案仍从 Excel 的「标题EN/Hook」列读取，不自动生成或改写。可在单元格内换行指定上下两行，用 `**重点词**` 标记强调短语；星号不会出现在成片中。保持两行排版、各样式字体和配色；按实际字体宽度自适应字号，超长文案报错，不截断文案。描边随字号缩细，减弱光晕和阴影，避免字母空隙被填满。
 
-默认 `render.hook_style=auto`：根据输入文案的关键词选择风格，并根据成片首帧顶部的冷暖色、亮度和对比度调整配色与衬底。没有匹配信号时使用 `default`。普通 Hook 默认显示 4.5 秒，最后 1 秒淡出；短视频将显示时长限制到实际片长。字体缺失时回退到可用字体。
+默认 `render.hook_style=auto`：根据输入文案的关键词选择风格，并根据成片首帧顶部的冷暖色、亮度和对比度调整配色与衬底。没有匹配信号时使用 `default`。普通 Hook 默认显示 4.5 秒，最后 1 秒淡出；短视频将显示时长限制到实际片长。字体随应用打包，缺失时报错，不使用宿主字体回退。
 
 | 配置值 | 风格 | 字体与视觉 |
 | --- | --- | --- |
-| `neon_reversal` | 霓虹反转 | Arial Narrow Bold，紫粉描边及发光 |
-| `danger_warning` | 危险警告 | Impact，红/黄重点和厚黑描边 |
-| `ceo_luxury` | CEO 奢华 | Didot，奶油白与金色 |
-| `emotional_diary` | 情绪日记 | Arial Rounded Bold，暖白与粉色 |
-| `cold_mystery` | 冷感悬疑 | Arial Narrow Bold，青蓝/紫色重点 |
-| `raw_conflict` | 原生冲突 | Impact，黄/红重点和厚黑描边 |
+| `neon_reversal` | 霓虹反转 | 内置 DejaVu Sans Bold Oblique，紫粉描边及发光 |
+| `danger_warning` | 危险警告 | 内置 DejaVu Sans Bold，红/黄重点和厚黑描边 |
+| `ceo_luxury` | CEO 奢华 | 内置 DejaVu Serif Bold，奶油白与金色 |
+| `emotional_diary` | 情绪日记 | 内置 DejaVu Sans Bold，暖白与粉色 |
+| `cold_mystery` | 冷感悬疑 | 内置 DejaVu Sans Bold Oblique，青蓝/紫色重点 |
+| `raw_conflict` | 原生冲突 | 内置 DejaVu Sans Bold，黄/红重点和厚黑描边 |
 | `default` | 默认清晰 | 白字、橙色重点、黑色描边 |
 
 可新建配置文件，例如 `hook-config.json`，固定本批次风格：
@@ -166,7 +166,20 @@ Hook 文案仍从 Excel 的「标题EN/Hook」列读取，不自动生成或改�
 
 通过 `./bin/exactcut --config hook-config.json execute ...` 使用。`--config` 位于子命令之前。选择结果、首帧分析、配色和展示时长保存到 `audit/<request_id>/clip_plan.json` 的 `hook_visual` 字段。
 
-## 网页控制台部署
+## Linux 容器部署
+
+Linux 的环境隔离、生产候选配置、字体与文档转换边界见 [Linux 运行说明](../docs/linux-portability.md)。镜像包含素材下载脚本，不需要 macOS、系统字体、textutil 或 Cloudflare Tunnel。首期 nginx 沿用80端口，提供 IP 的 `/exactcut/` 入口，后端仅监听本地 :18792；开发 :8793。首期仅维护开发、生产两份配置，配置与数据独立，生产启用下载、AI、飞书/FBBM 发布。Linux正式版本已上线，公网地址为 http://124.156.228.202/exactcut/ 。登录与工作台、真实多集下载/制作、AI Hook、QC和缓存复用验收通过；真实业务上传与飞书/FBBM最终发布仍需预览确认。版本与证据见[上线记录](../docs/server-deployment-2026-10-09.md)。
+
+本地开发使用独立配置，不读取旧 `.env`：
+
+```bash
+cp .env.development.example .env.development
+EXACTCUT_PYTHON=/Users/matao/miniconda3/envs/py3.12/bin/python3.12 ./bin/dev-web
+```
+
+实际生产凭据放在服务器 `<部署根>/config/production.env`，默认 `/srv/exactcut/config/production.env`。主机目录、后端端口、实例名和资源限制可指定，换机器不修改应用代码。外部检查与迁移顺序见 [Linux 部署与迁移](../docs/linux-migration.md)。开发和预发布仅使用独立夹具。上文 `.env` 与 Mac 安装命令属于历史流程，不用于 Linux 新部署。
+
+## 历史 macOS 网页控制台部署
 
 访问地址：https://cut.oulagrowth.com 。控制台由本机 `exactcut.webserver` 提供，监听 `127.0.0.1:8790`，通过独立 Cloudflare Tunnel 接入 HTTPS。登录信息保存在本机 `.web-state/登录信息.txt`，不要提交或对外分享。
 
@@ -191,7 +204,7 @@ Hook 文案仍从 Excel 的「标题EN/Hook」列读取，不自动生成或改�
 
 直接运行 `deploy/install.py` 和手工重启服务的旧部署方式已关闭。先在隔离环境开发、测试并构建版本，再通过运维入口切换。
 
-本机登录密码保存在 `.web-state/password`；修改后需重启网页服务。Cloudflare Tunnel ID 固定在 `deploy/install.py`，迁移机器时须重新配置 Tunnel 和凭证。
+历史 Mac 服务的登录密码保存在 `.web-state/password`；修改后需重启网页服务。旧 Tunnel 运维入口仅适用于 Mac，不用于 Linux 部署。
 
 ### 剧目候选与正片补齐
 
@@ -227,3 +240,5 @@ Hook 文案仍从 Excel 的「标题EN/Hook」列读取，不自动生成或改�
 整集写法已支持：`EP4`、`EP4 全集` 或 `EP4 整集` 都表示从该集开头使用到结尾。确认清单保留整集意图，下载完成后用 ffprobe 读取实际时长，生成 `production/resolved.manifest.json` 记录最终起止点。单个时间点（如 `EP5:01:22`）表示从 01:22 到片尾，并保留起点；起点不小于实际片尾时会报错。
 
 编导格式的详细约定见 `docs/编导Excel转换规则.md`：`+` 拆为同集独立选段，重复与回溯不重排；只修正已确认的 `1..44s` 笔误并记录来源。缺失结构、Hook、日期保持空白。多剧原文件副本与含「片段1、片段2…」字段的 `normalized.json` 保存在 `projects/<剧ID>/requests/import-<batch_id>/`，导入归档不会创建授权配置或触发制作。未知转场文字、旧素材文件引用继续标注待确定。
+
+首次进入工作台按账号创建默认项目并直接进入编辑器，随后恢复服务器记录的上次项目；网页已移除Excel导入入口。规则及迁移状态见[首次进入与项目恢复](../docs/workspace-startup.md)。

@@ -13,7 +13,7 @@ from urllib.parse import quote
 import requests
 
 from .errors import PublishError
-from .runtime import require_external
+from .runtime import require_publish
 from .naming import validate_material_filename
 from .util import env, file_sha256, now_iso
 
@@ -56,20 +56,26 @@ def _response_json(response: requests.Response, action: str) -> dict[str, Any]:
 
 class OssPublisher:
     def __init__(self) -> None:
+        self.bucket_name = str(env("ALIYUN_OSS_BUCKET", required=False, default="local-dry-run"))
+        self.endpoint = str(env("ALIYUN_OSS_ENDPOINT", required=False, default="https://example.invalid"))
+        self.prefix = str(env("ALIYUN_OSS_PREFIX", required=False, default="fb-bm-assets"))
+        self.public_base = env("ALIYUN_OSS_PUBLIC_BASE_URL", required=False)
+        self.bucket = None
+
+    def connect(self):
+        if self.bucket is not None:
+            return self.bucket
+        require_publish()
         try:
             import oss2
         except ImportError as exc:
             raise PublishError("缺少oss2依赖") from exc
         access_id = env("ALIYUN_OSS_ACCESS_KEY_ID")
         secret = env("ALIYUN_OSS_ACCESS_KEY_SECRET")
-        endpoint = env("ALIYUN_OSS_ENDPOINT")
-        self.bucket_name = str(env("ALIYUN_OSS_BUCKET"))
         token = env("ALIYUN_SECURITY_TOKEN", required=False)
         auth = oss2.StsAuth(access_id, secret, token) if token else oss2.Auth(access_id, secret)
-        self.bucket = oss2.Bucket(auth, endpoint, self.bucket_name)
-        self.endpoint = str(endpoint)
-        self.prefix = str(env("ALIYUN_OSS_PREFIX", required=False, default="fb-bm-assets"))
-        self.public_base = env("ALIYUN_OSS_PUBLIC_BASE_URL", required=False)
+        self.bucket = oss2.Bucket(auth, self.endpoint, self.bucket_name)
+        return self.bucket
 
     def key_for(self, video: Path) -> tuple[str, dict[str, str]]:
         parsed = validate_material_filename(video.name)
@@ -88,10 +94,10 @@ class OssPublisher:
         digest = file_sha256(video)
         existed = False
         if not dry_run:
-            require_external('OSS 上传')
-            existed = self.bucket.object_exists(key)
+            bucket = self.connect()
+            existed = bucket.object_exists(key)
             if existed:
-                meta = self.bucket.get_object_meta(key)
+                meta = bucket.get_object_meta(key)
                 remote_hash = meta.headers.get("x-oss-meta-sha256") or meta.headers.get("X-Oss-Meta-Sha256")
                 if not remote_hash:
                     raise PublishError(f"OSS已有同名对象但缺少SHA-256元数据，禁止复用：{key}")
@@ -99,12 +105,12 @@ class OssPublisher:
                     raise PublishError(f"OSS同名对象内容不同，必须更换素材序号：{key}")
             else:
                 content_type = mimetypes.guess_type(video.name)[0] or "video/mp4"
-                result = self.bucket.put_object_from_file(
+                result = bucket.put_object_from_file(
                     key, str(video), headers={"Content-Type": content_type, "x-oss-meta-sha256": digest}
                 )
                 if result.status not in (200, 201):
                     raise PublishError(f"OSS上传失败：status={result.status}")
-            self.bucket.put_object_acl(key, "public-read")
+            bucket.put_object_acl(key, "public-read")
         return {
             **parsed, "oss_key": key, "oss_url": self.public_url(key), "oss_existed": existed,
             "sha256": digest, "size": video.stat().st_size, "dry_run": dry_run,
@@ -113,7 +119,7 @@ class OssPublisher:
 
 class FeishuClient:
     def __init__(self) -> None:
-        require_external('飞书访问')
+        require_publish()
         self.app_token = str(env("FEISHU_BITABLE_APP_TOKEN"))
         self.table_id = str(env("FEISHU_BITABLE_TABLE_ID"))
         response = requests.post(
@@ -211,7 +217,7 @@ class FeishuClient:
 
 class CfAdsClient:
     def __init__(self) -> None:
-        require_external('CF-Ads/FBBM 访问')
+        require_publish()
         self.base = str(env("CF_ADS_BASE_URL")).rstrip("/")
         self.username = str(env("CF_ADS_USERNAME"))
         self.password = str(env("CF_ADS_PASSWORD"))

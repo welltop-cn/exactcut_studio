@@ -50,11 +50,12 @@ def write_json_atomic(path: Path, payload: Any) -> None:
 def load_env_file(path: Path | None) -> None:
     if path is None:
         return
-    from .runtime import protect_path
+    from .runtime import protect_path, validate_env_owner
     protect_path(path)
     if not path.exists():
         raise FileNotFoundError(path)
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    values = {}
+    for number, raw in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -62,8 +63,11 @@ def load_env_file(path: Path | None) -> None:
             line = line[7:].strip()
         key, sep, value = line.partition("=")
         if not sep:
-            raise ValueError(f"Invalid env line: {raw}")
-        os.environ.setdefault(key.strip(), value.strip().strip("'\""))
+            raise ValueError(f"Invalid env line at {number}")
+        values[key.strip()] = value.strip().strip("'\"")
+    validate_env_owner(path, values)
+    for key, value in values.items():
+        os.environ.setdefault(key, value)
 
 
 def env(name: str, *, required: bool = True, default: str | None = None) -> str | None:
@@ -74,10 +78,15 @@ def env(name: str, *, required: bool = True, default: str | None = None) -> str 
 
 
 def load_config(path: Path | None = None) -> dict[str, Any]:
+    from .runtime import protect_path, validate_env_owner
     default_path = Path(__file__).resolve().parent.parent / "config" / "default.json"
     config = read_json(default_path)
+    if path is None and os.environ.get('EXACTCUT_CONFIG_FILE', '').strip():
+        path = Path(os.environ['EXACTCUT_CONFIG_FILE']).expanduser()
     if path:
+        protect_path(path)
         override = read_json(path)
+        validate_env_owner(path, {'EXACTCUT_ENVIRONMENT': override.get('environment')})
         for section, values in override.items():
             if isinstance(values, dict) and isinstance(config.get(section), dict):
                 config[section].update(values)

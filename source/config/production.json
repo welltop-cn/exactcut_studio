@@ -1,0 +1,14 @@
+{
+  "environment": "production",
+  "web": {
+    "base_path": "/exactcut"
+  },
+  "storage": {
+    "reserve_gib": 10,
+    "base_cache_gib": 8,
+    "base_cache_days": 7,
+    "source_cache_gib": 8,
+    "source_evict_below_gib": 16,
+    "episode_budget_gib": 2
+  }
+}

@@ -17,11 +17,12 @@ from typing import Any
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
 from .hook_emphasis import manual_emphasis
+from .fonts import font_path as bundled_font_path, load_font
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(__file__).with_name("hook_visual_styles.json")
-HOOK_LAYOUT_VERSION = 7
+HOOK_LAYOUT_VERSION = 8
 HOOK_MAX_LINES = 3
 HOOK_WIDTH_RATIO = 0.86
 HOOK_HEIGHT_RATIO = 0.18
@@ -32,15 +33,6 @@ AUTO_STYLE_IDS = {
     "emotional_diary",
     "cold_mystery",
     "raw_conflict",
-}
-
-_FONT_PATHS = {
-    "neon_reversal": "/System/Library/Fonts/Supplemental/Arial Narrow Bold.ttf",
-    "danger_warning": "/System/Library/Fonts/Supplemental/Impact.ttf",
-    "ceo_luxury": "/System/Library/Fonts/Supplemental/Didot.ttc",
-    "emotional_diary": "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf",
-    "cold_mystery": "/System/Library/Fonts/Supplemental/Arial Narrow Bold.ttf",
-    "raw_conflict": "/System/Library/Fonts/Supplemental/Impact.ttf",
 }
 
 _STYLE_PALETTES: dict[str, dict[str, dict[str, str]]] = {
@@ -267,7 +259,7 @@ def choose_hook_visual(
         }
         label = "默认清晰"
         matched: list[str] = []
-        font_path = "/System/Library/Fonts/Supplemental/Arial Rounded Bold.ttf"
+        font_path = bundled_font_path('default')
     else:
         palette = dict(
             _STYLE_PALETTES[style_id].get(temperature)
@@ -275,7 +267,7 @@ def choose_hook_visual(
         )
         label = payload["styles"][style_id]["label_zh"]
         matched = sorted(set(signals[style_id]))
-        font_path = _FONT_PATHS[style_id]
+        font_path = bundled_font_path(style_id)
     hook_text = str(plan.get("hook_text") or "")
     reason_bits = [f"剧情匹配 {', '.join(matched[:4])}" if matched else "剧情信号较弱"]
     reason_bits.append(
@@ -320,13 +312,7 @@ def resolve_hook_visual(
 
 
 def _font(path: str, size: int):
-    for candidate in (path, "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
-                      "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"):
-        try:
-            return ImageFont.truetype(candidate, size)
-        except OSError:
-            continue
-    return ImageFont.load_default(size=size)
+    return load_font(path, size)
 
 
 def _wrap_lines(

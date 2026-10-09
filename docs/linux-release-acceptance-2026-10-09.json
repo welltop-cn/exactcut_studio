@@ -1,0 +1,55 @@
+{
+  "scope": "isolated Docker release acceptance; blank credentials",
+  "checks": {
+    "failed_initial_release_cleanup": true,
+    "initial_publish_after_failure": true,
+    "upgrade_to_distinct_commit": true,
+    "automatic_restore_after_real_startup_failure": true,
+    "explicit_rollback": true,
+    "rollback_preserves_latest_database_and_material": true,
+    "active_work_blocks_switch": true,
+    "failed_recovery_keeps_gate_then_recover_clears_it": true
+  },
+  "health": {
+    "status": "ok",
+    "release": "acceptance-20261009-a2",
+    "environment": "production",
+    "maintenance": false,
+    "worker_alive": true,
+    "worker_heartbeat_age_seconds": 0.5
+  },
+  "commits": {
+    "acceptance-20261009-a2": "eeada4bd0da6bcce4c928aaa715ce3e1f2b29e04",
+    "acceptance-20261009-b": "6ad5c1fc5a5a9b39a47104702ef5607e05cacaf1"
+  },
+  "status": "passed",
+  "remaining_containers": false,
+  "date": "2026-10-09",
+  "host_regression": {
+    "passed": 316,
+    "skipped": 1,
+    "seconds": 40.29
+  },
+  "linux_regression": {
+    "passed": 314,
+    "skipped": 3,
+    "seconds": [
+      113.55,
+      112.9
+    ],
+    "cpus": 1,
+    "memory_gib": 2
+  },
+  "nginx": {
+    "syntax_check": "passed",
+    "enabled": false
+  },
+  "formal_deployment": false,
+  "real_publish_tested": false,
+  "pending": [
+    "real long video and multi-episode workflow",
+    "actual DOC attachment parsing",
+    "formal clean-source release and public IP entry",
+    "scoped OSS/Feishu/FBBM publication"
+  ]
+}

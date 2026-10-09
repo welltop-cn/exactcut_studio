@@ -1,0 +1,65 @@
+{
+  "checked_at": "2026-10-09T05:43:44.677063+00:00",
+  "environment": "production",
+  "server": "124.156.228.202",
+  "image": "exactcut-web:preflight-20261009",
+  "image_manifest": "sha256:c79502b65d9f9e6469139ea3801840ca487cca5f5c00a6adf2cd694468c4406d",
+  "python": "3.11.17",
+  "ffmpeg": "5.1.9-0+deb12u1",
+  "checks": {
+    "oss": {
+      "status": "ok",
+      "drama_id": "101460",
+      "episode": "EP1",
+      "sample_bytes_per_bucket": 33554432,
+      "object_bytes": 157111543,
+      "target_bucket_mib_per_second": 4.552,
+      "source_bucket_mib_per_second": 4.15,
+      "upload_permission": "not_verified"
+    },
+    "ai": {
+      "status": "ok",
+      "models": [
+        "gpt-5.6-sol"
+      ],
+      "structured_responses": true,
+      "application_scenarios": "not_verified"
+    },
+    "feishu": {
+      "status": "ok",
+      "missing_fields": [],
+      "wrong_types": [],
+      "missing_status_options": [],
+      "write_permission": "not_verified"
+    },
+    "cf_ads": {
+      "status": "ok",
+      "facebook_available": true,
+      "ingestion_and_sync": "not_verified"
+    }
+  },
+  "status": "ok",
+  "production_web_service_deployed": false,
+  "publish_performed": false,
+  "startup_acceptance": {
+    "status": "ok",
+    "bind": "127.0.0.1:18794",
+    "environment": "production",
+    "release": "startup-acceptance",
+    "worker_alive": true,
+    "credentials": "blank_fixture",
+    "data": "ephemeral_tmpfs",
+    "container_stopped": true
+  },
+  "linux_regression": {
+    "passed": 289,
+    "skipped": 3,
+    "failed": 0,
+    "seconds": 116.1,
+    "cpu_limit": 1,
+    "memory_gib": 2,
+    "image": "exactcut-web:tests-20261009",
+    "production_credentials_mounted": false,
+    "production_data_mounted": false
+  }
+}

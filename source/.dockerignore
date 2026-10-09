@@ -1,0 +1,12 @@
+.venv
+.web-state
+projects
+feedback
+sources
+outputs
+.git
+.pytest_cache
+**/__pycache__
+*.egg-info
+.env
+.env.*

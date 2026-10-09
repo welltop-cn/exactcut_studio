@@ -8,11 +8,12 @@ from pathlib import Path
 import plistlib
 import socket
 import sqlite3
+import signal
 import subprocess
 import sys
 import threading
 import time
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 import pytest
 from exactcut import runtime, batch_control, publish, llm_intake
 from exactcut.webserver import Handler
@@ -21,14 +22,22 @@ from exactcut.webserver import Handler
 def test_external_clients_and_ai_are_blocked_before_network(monkeypatch):
     monkeypatch.setenv('EXACTCUT_ENVIRONMENT','staging')
     monkeypatch.setenv('EXACTCUT_ALLOW_EXTERNAL_WRITES','1')
+    monkeypatch.delenv('EXACTCUT_ALLOW_PUBLISH', raising=False)
+    monkeypatch.delenv('EXACTCUT_ALLOW_AI', raising=False)
     request=Mock()
     monkeypatch.setattr(publish.requests,'post',request)
-    for operation in [publish.FeishuClient,publish.CfAdsClient,lambda:llm_intake.interpret('{}')]:
-        with pytest.raises(RuntimeError,match='隔离环境'):operation()
+    for operation, flag in ((publish.FeishuClient,'EXACTCUT_ALLOW_PUBLISH'),
+                            (publish.CfAdsClient,'EXACTCUT_ALLOW_PUBLISH'),
+                            (lambda: llm_intake.interpret('{}'),'EXACTCUT_ALLOW_AI')):
+        with pytest.raises(RuntimeError, match=flag):
+            operation()
     request.assert_not_called()
     monkeypatch.setenv('EXACTCUT_ENVIRONMENT','production')
     monkeypatch.setenv('EXACTCUT_ALLOW_EXTERNAL_WRITES','0')
     with pytest.raises(RuntimeError):runtime.require_external('upload')
+    with pytest.raises(RuntimeError, match='EXACTCUT_ALLOW_PUBLISH'):
+        publish.FeishuClient()
+    request.assert_not_called()
 
 def test_production_paths_and_secrets_cannot_be_used_in_development(tmp_path,monkeypatch):
     state=tmp_path/'.web-state';state.mkdir();(state/'production.json').write_text('{}')
@@ -45,10 +54,22 @@ def test_process_discovery_only_sees_its_data_instance(tmp_path,monkeypatch):
     monkeypatch.setenv('EXACTCUT_DATA_ROOT',str(tmp_path/'staging'))
     foreign=runtime.instance_marker()
     monkeypatch.setenv('EXACTCUT_DATA_ROOT',str(tmp_path/'production'))
-    def row(pid,batch,marker):
-        return {'pid':pid,'stat':'S','command':f'/usr/bin/python -m exactcut.workflow produce {batch} {marker}'}
-    snapshot={1:row(1,'a'*32,own),2:row(2,'b'*32,foreign),3:row(3,'c'*32,'')}
-    assert list(batch_control.roots(snapshot))==['a'*32]
+    token='a'*32
+    args=['python','-X','exactcut_process_token='+token]
+    table=batch_control.FakeProcessTable({1:{'pgid':1,'arguments':args,'state':'S'},
+                                          2:{'pgid':2,'arguments':args,'state':'S'}})
+    assert batch_control.belongs({'instance':own,'pid':1,'process_token':token})
+    assert not batch_control.belongs({'instance':foreign,'pid':2,'process_token':token})
+    with patch.object(os,'killpg') as kill:
+        assert batch_control.signal_identity({'pid':1,'pgid':1,'process_token':token,'instance':own}, signal.SIGSTOP, table)
+        kill.assert_called_once()
+        kill.reset_mock()
+        assert not batch_control.signal_identity({'pid':1,'pgid':1,'process_token':token,'instance':foreign}, signal.SIGSTOP, table)
+        kill.assert_not_called()
+        assert not batch_control.signal_identity({'pid':1,'pgid':1,'process_token':token}, signal.SIGSTOP, table)
+        kill.assert_not_called()
+        assert not batch_control.signal_identity({'pid':2,'pgid':2,'process_token':'b'*32,'instance':own}, signal.SIGSTOP, table)
+        kill.assert_not_called()
 
 
 def test_maintenance_denies_writes_and_keeps_health_available(tmp_path,monkeypatch):

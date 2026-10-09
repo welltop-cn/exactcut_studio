@@ -9,7 +9,7 @@
   const el=id=>document.getElementById(id), chats=new Map();
   let activeKey='';
   const batch=()=>typeof current!=='undefined'&&current&&!document.getElementById('workspace').hidden?selectedId:null;
-  function chat(){const key=batch()||'';if(!chats.has(key))chats.set(key,{id:crypto.randomUUID(),messages:[],pending:false,draft:''});activeKey=key;return chats.get(key)}
+  function chat(){const key=batch()||'';if(!chats.has(key))chats.set(key,{id:randomId(),messages:[],pending:false,draft:''});activeKey=key;return chats.get(key)}
   function draw(){const c=chat();el('helpContext').textContent=activeKey?`当前剧：${current.draft.drama_id} · ${current.draft.drama_title||'制作批次'}`:'制作流程通用问答';el('helpMessages').replaceChildren();
     const messages=c.messages.length?c.messages:[{answer:'你好，我可以解释 Excel 整理、时间线、正片准备、制作预览和 FBBM 上传。打开具体批次后，也可以问我当前进度。'}];
     for(const m of messages){const row=document.createElement('div');row.className='help-message'+(m.question?' help-user':'');row.textContent=m.question||m.answer;if(m.sources?.length){const source=document.createElement('div');source.className='help-source';source.textContent='依据：'+m.sources.map(s=>s.title).join('、');row.append(source)}el('helpMessages').append(row)}

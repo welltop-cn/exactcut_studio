@@ -15,7 +15,8 @@ import httpx
 from pydantic import BaseModel, ConfigDict
 
 from .errors import ValidationError
-from .runtime import data_root, require_external, protect_path
+from .runtime import data_root, require_ai, protect_path
+from .runtime import project_env_file
 from .util import load_env_file, write_json_atomic, now_iso
 
 VERSION = 1
@@ -51,7 +52,7 @@ class TransientHookAIError(ValidationError):
 
 
 def ai_model() -> str:
-    load_env_file(data_root() / '.env')
+    load_env_file(project_env_file())
     return os.getenv('EXACTCUT_HOOK_MODEL', os.getenv('EXACTCUT_INTAKE_MODEL', os.getenv('EXACTCUT_HELP_MODEL', 'gpt-5.6-sol')))
 
 
@@ -111,8 +112,8 @@ def grounded_analysis(text: str, value: dict) -> dict:
 
 
 def responses_json(instructions: str, content, schema: dict, name: str, model: str) -> dict:
-    require_external('AI Hook 语义理解')
-    load_env_file(data_root() / '.env')
+    require_ai()
+    load_env_file(project_env_file())
     key = os.getenv('OPENAI_API_KEY', '').strip()
     if not key:
         raise ValidationError('AI Hook 语义理解服务尚未配置，请联系管理员')
@@ -188,9 +189,9 @@ def resolve_emphasis(text: str, cache_dir: Path) -> dict:
     manual = manual_emphasis(text)
     if manual:
         return manual
-    require_external('AI Hook 语义理解')
+    require_ai()
     protect_path(cache_dir)
-    load_env_file(data_root() / '.env')
+    load_env_file(project_env_file())
     model = ai_model()
     clean = plain_hook(text)
     identity = {'version': VERSION, 'text': clean, 'model': model, 'prompt_sha256': hashlib.sha256(SYSTEM.encode()).hexdigest()}

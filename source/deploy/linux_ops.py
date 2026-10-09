@@ -1,0 +1,448 @@
+#!/usr/bin/env python3
+"""Portable Docker releases. Code rollback always retains current business data."""
+import argparse
+from contextlib import contextmanager
+from datetime import datetime, timezone
+import fcntl
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+from urllib.request import build_opener, ProxyHandler
+
+
+ACTIVE = {'queued', 'downloading', 'indexing', 'producing', 'publishing', 'running'}
+
+
+def read(path, default=None):
+    return json.loads(path.read_text()) if path.exists() else ({} if default is None else default)
+
+
+def write(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(dir=path.parent, prefix='.' + path.name)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2)
+            stream.write('\n')
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def sha(path):
+    digest = hashlib.sha256()
+    with path.open('rb') as stream:
+        for chunk in iter(lambda: stream.read(1024**2), b''):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def run(*args, **kwargs):
+    return subprocess.run(list(map(str, args)), check=True, **kwargs)
+
+
+def output(*args, **kwargs):
+    return run(*args, capture_output=True, text=True, **kwargs).stdout.strip()
+
+
+def version_path(root, version):
+    if not isinstance(version, str) or not re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,79}', version):
+        raise ValueError('无效版本标识')
+    return root / 'releases' / version
+
+
+@contextmanager
+def operation_lock(root):
+    with (root / 'deployment.lock').open('a') as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX)
+        yield
+
+
+def initialize(root, profile, *, instance, backend_port, public_port, cpus, memory):
+    if not root.is_absolute() or not re.fullmatch(r'[a-z0-9][a-z0-9_-]{0,63}', instance):
+        raise ValueError('部署目录必须绝对路径，实例名仅允许小写字母、数字、下划线和连字符')
+    if not 1024 <= backend_port <= 65535 or not 1 <= public_port <= 65535 or backend_port == public_port:
+        raise ValueError('前台与后端端口必须不同；后端1024–65535，公网1–65535')
+    if not math.isfinite(cpus) or cpus <= 0 or not re.fullmatch(r'[1-9][0-9]*[mg]', memory):
+        raise ValueError('无效资源限制')
+    runtime = read(profile)
+    if runtime.get('environment') != 'production':
+        raise RuntimeError('运行配置必须属于production')
+    root.mkdir(parents=True, exist_ok=True)
+    with operation_lock(root):
+        settings = root / 'config/deployment.json'
+        if settings.exists():
+            raise RuntimeError('部署配置已存在；禁止初始化时覆盖')
+        for directory in ('config', 'data', 'bin', 'releases', 'history'):
+            (root / directory).mkdir(exist_ok=True)
+        owner = read(root / 'data/.web-state/environment.json').get('environment')
+        if owner and owner != 'production':
+            raise RuntimeError('数据目录属于其他环境')
+        target = root / 'config/runtime.json'
+        if target.exists():
+            if read(target).get('environment') != 'production':
+                raise RuntimeError('运行配置属于其他环境')
+        else:
+            write(target, runtime)
+        write(settings, {'instance': instance, 'backend_port': backend_port, 'public_port': public_port,
+                         'cpus': cpus, 'memory': memory})
+    return read(settings)
+
+
+class Docker:
+    def inspect_image(self, image):
+        item = json.loads(output('docker', 'image', 'inspect', image))[0]
+        return item['Id'], (item.get('Config', {}).get('Labels') or {}).get('org.opencontainers.image.revision')
+
+    def occupied(self, settings):
+        return bool(output('docker', 'ps', '-a', '--filter',
+                           'label=com.docker.compose.project=' + settings['instance'], '--format', '{{.ID}}'))
+
+    def compose(self, root, release, settings, *arguments):
+        # --env-file prevents Compose's automatic discovery of a neighboring legacy .env.
+        env = dict(os.environ, EXACTCUT_DEPLOY_ROOT=str(root), EXACTCUT_INSTANCE=settings['instance'],
+                   EXACTCUT_BACKEND_PORT=str(settings['backend_port']), EXACTCUT_CPUS=str(settings['cpus']),
+                   EXACTCUT_MEMORY=settings['memory'], EXACTCUT_IMAGE=release['image'],
+                   EXACTCUT_RELEASE_ID=release['version'])
+        return run('docker', 'compose', '--env-file', '/dev/null', '-f',
+                   version_path(root, release['version']) / 'compose.yml', '-p', settings['instance'],
+                   *arguments, env=env, capture_output=True, text=True)
+
+    def apply(self, root, release, settings):
+        self.compose(root, release, settings, 'up', '-d', '--no-build', '--pull', 'never', 'web')
+
+    def stop(self, root, release, settings):
+        self.compose(root, release, settings, 'stop', '-t', '60', 'web')
+
+    def remove(self, root, release, settings):
+        self.compose(root, release, settings, 'rm', '-f', 'web')
+
+    def health(self, settings, version, timeout):
+        opener = build_opener(ProxyHandler({}))
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                with opener.open(f'http://127.0.0.1:{settings["backend_port"]}/healthz', timeout=3) as reply:
+                    value = json.load(reply)
+                if (value.get('status') == 'ok' and value.get('environment') == 'production'
+                        and value.get('release') == version and value.get('worker_alive') is True):
+                    return value
+            except (OSError, ValueError):
+                pass
+            if time.monotonic() >= deadline:
+                raise RuntimeError('版本健康检查失败')
+            time.sleep(1)
+
+
+def verify(root, version, engine):
+    folder = version_path(root, version)
+    release = read(folder / 'release.json')
+    if release.get('version') != version or not re.fullmatch(r'[a-f0-9]{40}', release.get('commit', '')):
+        raise RuntimeError('版本元数据校验失败')
+    if not re.fullmatch(r'sha256:[a-f0-9]{64}', release.get('image', '')):
+        raise RuntimeError('必须使用固定镜像ID')
+    if release.get('tests', {}).get('exit_code') != 0 or release.get('tests', {}).get('passed', 0) < 1:
+        raise RuntimeError('版本缺少通过的测试证据')
+    for name, key in [('compose.yml', 'compose_sha256'), ('tests.log', 'tests_sha256')]:
+        if sha(folder / name) != release.get(key):
+            raise RuntimeError('版本文件校验失败')
+    schema = read(root / 'data/.web-state/data-schema.json', {'version': 1}).get('version')
+    policy = release.get('data_schema', {})
+    if schema != 1 or policy.get('version') != schema or schema not in policy.get('readable', []):
+        raise RuntimeError('data schema兼容检查失败；禁止自动迁移或还原旧数据')
+    image_id, commit = engine.inspect_image(release['image'])
+    if image_id != release['image'] or commit != release['commit']:
+        raise RuntimeError('镜像与提交校验失败')
+    return release
+
+
+def active_records(root):
+    state = root / 'data/.web-state'
+    records = [*(state / 'jobs').glob('*.json'), *(state / 'batches').glob('*/runtime.json')]
+    return [str(path.relative_to(root)) for path in records if read(path).get('status') in ACTIVE]
+
+
+def await_idle(root, timeout):
+    deadline = time.monotonic() + timeout
+    while active_records(root):
+        if time.monotonic() >= deadline:
+            raise RuntimeError('现有任务未结束，停止发布；不会强制终止任务')
+        time.sleep(.25)
+
+
+@contextmanager
+def write_barrier(root, timeout):
+    state = root / 'data/.web-state'
+    state.mkdir(parents=True, exist_ok=True)
+    gate = state / 'maintenance.json'
+    if gate.exists():
+        raise RuntimeError('维护标记已存在，请检查状态并执行recover')
+    write(gate, {'reason': 'release', 'at': datetime.now(timezone.utc).isoformat()})
+    keep = {'maintenance': False}
+    try:
+        with (state / 'mutation.lock').open('a') as stream:
+            deadline = time.monotonic() + timeout
+            while True:
+                try:
+                    fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError('进行中的请求未结束，停止发布')
+                    time.sleep(.1)
+            yield keep
+    finally:
+        if not keep['maintenance']:
+            gate.unlink(missing_ok=True)
+
+
+def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
+    engine = engine or Docker()
+    with operation_lock(root):
+        settings = read(root / 'config/deployment.json')
+        target = verify(root, version, engine)
+        current = read(root / 'current.json')
+        if current.get('version') == version:
+            raise RuntimeError('已经运行此版本')
+        old = verify(root, current['version'], engine) if current.get('version') else None
+        if not old and engine.occupied(settings):
+            raise RuntimeError('同名实例已有未登记容器，禁止接管')
+        owner = read(root / 'data/.web-state/environment.json').get('environment')
+        if owner and owner != 'production':
+            raise RuntimeError('数据目录属于其他环境')
+        if read(root / 'config/runtime.json').get('environment') != 'production':
+            raise RuntimeError('运行配置属于其他环境')
+        config = root / 'config/production.env'
+        if not config.is_file() or (config.stat().st_mode & 0o077):
+            raise RuntimeError('生产密钥配置必须存在且权限为0600')
+        with write_barrier(root, timeout) as gate:
+            await_idle(root, timeout)
+            attempted = False
+            receipt = {'at': datetime.now(timezone.utc).isoformat(), 'from': current.get('version'), 'to': version}
+            history = root / 'history' / f'{time.time_ns()}-{version}.json'
+            try:
+                attempted = True
+                if old:
+                    engine.stop(root, old, settings)
+                    await_idle(root, 0)
+                engine.apply(root, target, settings)
+                check = engine.health(settings, version, health_timeout)
+                write(root / 'data/.web-state/data-schema.json', {'version': 1})
+                write(history, {**receipt, 'status': 'ok', 'health': check})
+                write(root / 'current.json', {'version': version, 'previous': current.get('version'),
+                                            'commit': target['commit'], 'image': target['image']})
+                return {**receipt, 'status': 'ok', 'health': check}
+            except Exception as exc:
+                recovery_error = None
+                if attempted:
+                    try:
+                        engine.stop(root, target, settings)
+                        if old:
+                            engine.apply(root, old, settings)
+                            engine.health(settings, old['version'], health_timeout)
+                        else:
+                            engine.remove(root, target, settings)
+                    except Exception as restore:
+                        recovery_error = type(restore).__name__
+                        gate['maintenance'] = True
+                write(root / 'current.json', current)
+                write(history, {**receipt, 'status': 'failed', 'error_type': type(exc).__name__,
+                                'restored': old['version'] if old and not recovery_error else None,
+                                'recovery_error_type': recovery_error})
+                if recovery_error:
+                    raise RuntimeError('版本切换失败且恢复失败；维护标记保留，请执行recover') from exc
+                raise RuntimeError('版本切换失败，已恢复上一状态；业务数据未还原') from exc
+
+
+def build(root, repo, version):
+    """Archive clean committed source, build once, run isolated Linux tests, seal metadata."""
+    with operation_lock(root):
+        if output('git', '-C', repo, 'status', '--porcelain'):
+            raise RuntimeError('只允许从已提交且干净的仓库构建版本')
+        commit = output('git', '-C', repo, 'rev-parse', 'HEAD')
+        folder = version_path(root, version)
+        if folder.exists():
+            raise RuntimeError('版本目录已存在，禁止覆盖')
+        folder.mkdir(parents=True)
+        source = folder / 'source'
+        source.mkdir()
+        with tempfile.TemporaryFile() as archive:
+            run('git', '-C', repo, 'archive', '--format=tar', 'HEAD', stdout=archive)
+            archive.seek(0)
+            with tarfile.open(fileobj=archive) as stream:
+                for member in stream:
+                    relative = Path(member.name)
+                    if relative.is_absolute() or '..' in relative.parts or not (member.isdir() or member.isfile()):
+                        raise RuntimeError('工程归档含不安全路径或链接')
+                    if relative.name == '.env' or (relative.name.startswith('.env.') and not relative.name.endswith('.example')):
+                        raise RuntimeError('工程归档含真实环境配置')
+                    business_directories = {'.web-state', '.dev-state', 'sources', 'material-local',
+                                            'projects', 'feedback', 'outputs', 'output', 'logs',
+                                            'backups', '.work', '.venv'}
+                    project_readme = relative == Path('source/projects/README.md')
+                    private_file = relative.suffix.lower() in {'.sqlite', '.sqlite3', '.db', '.mp4', '.mov', '.mkv'}
+                    if (private_file or (member.isfile() and not project_readme
+                            and any(part in business_directories for part in relative.parts))):
+                        raise RuntimeError('工程归档含业务数据或本地环境')
+                    destination = source / relative
+                    if member.isdir():
+                        destination.mkdir(parents=True, exist_ok=True)
+                    else:
+                        destination.parent.mkdir(parents=True, exist_ok=True)
+                        with stream.extractfile(member) as incoming, destination.open('wb') as outgoing:
+                            shutil.copyfileobj(incoming, outgoing)
+                        destination.chmod(member.mode & 0o777)
+        policy = read(source / 'source/deploy/data-schema.json')
+        if policy != {'version': 1, 'readable': [1]}:
+            raise RuntimeError('此阶段只允许data schema 1')
+        image = 'exactcut-web:' + version.lower()
+        with (folder / 'build.log').open('w') as log:
+            run('docker', 'build', '--build-arg', 'EXACTCUT_COMMIT=' + commit, '-t', image,
+                '-f', source / 'source/Dockerfile', source, stdout=log, stderr=subprocess.STDOUT)
+        image_id, revision = Docker().inspect_image(image)
+        if revision != commit:
+            raise RuntimeError('镜像提交标签不匹配')
+        test_image = 'exactcut-validation:' + version.lower()
+        # BuildKit treats a bare sha256 ID in FROM as a Docker Hub repository.
+        # Use the local tag only for the validation build, then recheck its ID.
+        dockerfile = (f'FROM {image}\nRUN apt-get update && apt-get install -y --no-install-recommends git '
+                      '&& rm -rf /var/lib/apt/lists/*\n')
+        with (folder / 'test-image.log').open('w') as log:
+            run('docker', 'build', '-t', test_image, '-', input=dockerfile, text=True,
+                stdout=log, stderr=subprocess.STDOUT)
+        if Docker().inspect_image(image) != (image_id, commit):
+            raise RuntimeError('测试镜像构建期间运行镜像被替换')
+        command = ['docker', 'run', '--rm', '--cpus=1', '--memory=2g', '--pids-limit=256',
+                   '--entrypoint', 'python', '-v', str(source) + ':/acceptance:ro', '-w', '/acceptance/source',
+                   '-e', 'PYTHONPATH=/acceptance/source', '-e', 'EXACTCUT_DATA_ROOT=/tmp/exactcut-tests',
+                   '-e', 'EXACTCUT_ENVIRONMENT=development', '-e', 'EXACTCUT_WORKER_ENABLED=1',
+                   '-e', 'EXACTCUT_ALLOW_AI=0', '-e', 'EXACTCUT_ALLOW_PUBLISH=0',
+                   '-e', 'EXACTCUT_ALLOW_MATERIAL_FETCH=0', '-e', 'EXACTCUT_ALLOW_EXTERNAL_WRITES=0',
+                   test_image, '-m', 'pytest', '-o', 'addopts=', '-q', '--tb=short', '-p', 'no:cacheprovider']
+        with (folder / 'tests.log').open('w') as log:
+            run(*command, stdout=log, stderr=subprocess.STDOUT)
+        summary = (folder / 'tests.log').read_text()
+        passed = re.search(r'(\d+) passed', summary)
+        if not passed:
+            raise RuntimeError('缺少测试通过结果')
+        shutil.copyfile(source / 'source/docker-compose.production.yml', folder / 'compose.yml')
+        record = {'version': version, 'commit': commit, 'image': image_id, 'data_schema': policy,
+                  'tests': {'exit_code': 0, 'passed': int(passed[1])},
+                  'compose_sha256': sha(folder / 'compose.yml'), 'tests_sha256': sha(folder / 'tests.log')}
+        write(folder / 'release.json', record)
+        verify(root, version, Docker())
+        return record
+
+
+def nginx_config(settings, base_path=''):
+    if base_path:
+        if not re.fullmatch(r'(?:/[a-zA-Z0-9_-]+)+', base_path):
+            raise ValueError('无效web.base_path')
+        return '''location = %(base_path)s {
+    return 301 %(base_path)s/;
+}
+location %(base_path)s/ {
+    client_max_body_size 15m;
+    proxy_pass http://127.0.0.1:%(backend_port)s;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_read_timeout 180s;
+    proxy_buffering off;
+}
+''' % {**settings, 'base_path': base_path}
+    return '''server {
+    listen %(public_port)s;
+    server_name _;
+    client_max_body_size 15m;
+    location / {
+        proxy_pass http://127.0.0.1:%(backend_port)s;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+        proxy_buffering off;
+    }
+}
+''' % settings
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--root', type=Path, default=Path('/srv/exactcut'))
+    sub = parser.add_subparsers(dest='command', required=True)
+    init = sub.add_parser('init')
+    init.add_argument('--runtime-config', type=Path, required=True)
+    init.add_argument('--instance', default='exactcut-production')
+    init.add_argument('--backend-port', type=int, default=18792)
+    init.add_argument('--public-port', type=int, default=80)
+    init.add_argument('--cpus', type=float, default=1)
+    init.add_argument('--memory', default='2g')
+    build_command = sub.add_parser('build')
+    build_command.add_argument('version')
+    build_command.add_argument('--repo', type=Path, required=True)
+    for command in ('publish', 'rollback'):
+        item = sub.add_parser(command)
+        item.add_argument('version', nargs='?' if command == 'rollback' else None)
+        item.add_argument('--drain-timeout', type=float, default=300)
+        item.add_argument('--health-timeout', type=float, default=60)
+    sub.add_parser('status')
+    sub.add_parser('nginx')
+    sub.add_parser('recover')
+    args = parser.parse_args()
+    root = args.root.expanduser().resolve()
+    if args.command in {'build', 'publish', 'rollback', 'recover'} and sys.platform != 'linux':
+        raise RuntimeError('此运维操作只适用于Linux Docker，不操作Mac历史服务')
+    if args.command == 'init':
+        result = initialize(root, args.runtime_config, instance=args.instance, backend_port=args.backend_port,
+                            public_port=args.public_port, cpus=args.cpus, memory=args.memory)
+    elif args.command == 'build':
+        result = build(root, args.repo.resolve(), args.version)
+    elif args.command in {'publish', 'rollback'}:
+        version = args.version or read(root / 'current.json').get('previous')
+        if not version:
+            raise RuntimeError('没有上一版本可回滚')
+        result = transition(root, version, timeout=args.drain_timeout, health_timeout=args.health_timeout)
+    elif args.command == 'recover':
+        with operation_lock(root):
+            current = read(root / 'current.json')
+            engine = Docker()
+            release = verify(root, current.get('version'), engine)
+            settings = read(root / 'config/deployment.json')
+            engine.apply(root, release, settings)
+            result = engine.health(settings, release['version'], 60)
+            (root / 'data/.web-state/maintenance.json').unlink(missing_ok=True)
+    elif args.command == 'nginx':
+        base_path = read(root / 'config/runtime.json').get('web', {}).get('base_path', '')
+        print(nginx_config(read(root / 'config/deployment.json'), base_path), end='')
+        return
+    else:
+        result = {'current': read(root / 'current.json'), 'settings': read(root / 'config/deployment.json'),
+                  'active_tasks': active_records(root),
+                  'maintenance': (root / 'data/.web-state/maintenance.json').exists()}
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+
+
+if __name__ == '__main__':
+    try:
+        main()
+    except Exception as error:
+        # Compose/provider errors may echo env values; only our own messages are safe.
+        message = str(error) if isinstance(error, (RuntimeError, ValueError)) else type(error).__name__
+        print(message, file=sys.stderr)
+        raise SystemExit(1)
