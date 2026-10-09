@@ -393,6 +393,11 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
             if job.get('instance') and not batch_control.belongs(job):
                 continue
             batch = job.get('batch_id')
+            if job.get('status') == 'waiting_resource':
+                # Retain the persisted due time; resource waits are reentrant,
+                # and must never be treated as an orphaned verification handoff.
+                job['status'] = 'queued'
+                save(job)
             if job['id'] in owned:
                 if batch and (workflow.BATCHES / batch / 'draft.json').exists():
                     path = workflow.BATCHES / batch
@@ -1095,7 +1100,7 @@ class Handler(BaseHTTPRequestHandler):
                 if previous: return self.respond(200, batch_response(batch_id, previous))
                 if snapshot() != before: return self.respond(409, {'error': '确认期间批次已变化，请重新确认'})
                 if queue_size() >= 10: return self.respond(429, {'error': '任务队列已满，请稍后再试'})
-                if action == 'verify-delivery' and any(job.get('batch_id') == batch_id and job.get('status') in {'queued', 'running'} for job in stored_jobs()):
+                if action == 'verify-delivery' and any(job.get('batch_id') == batch_id and job.get('status') not in {'completed', 'failed', 'interrupted', 'unverified'} for job in stored_jobs()):
                     raise ValueError('请等待当前批次任务结束后核实')
                 if getattr(self.server, 'auth_db', None):
                     accounts.audit(self.server.auth_db, self.user['username'], action, batch_id)

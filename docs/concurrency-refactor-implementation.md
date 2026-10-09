@@ -481,3 +481,13 @@ with tempfile.TemporaryDirectory(prefix='exactcut-round2-clean-') as folder:
     raise SystemExit(code)
 PY
 ```
+
+## 第 3 轮最终收尾（2026-10-10，本会话不部署）
+
+### R3-A / P1-A：持久核实等待不能当孤儿
+
+测试先行：新增 `tests/test_round3_verification.py`，先观察 waiting_resource / 未知等待状态的 publication 被回滚，以及75等待后重入失败；queued/running 的重复请求原本返回已有job（200），测试保留这一幂等合同，不要求创建新job。修复把“匹配job已存在”作为交接提交证据，不以状态白名单判断落盘；只有真正缺job才补偿。持久 waiting_resource 恢复为queued并保留not_before；重复核实对其他未终结状态拒绝。退出75的阶段结果与持久job状态是两层：当前worker通常把前者转成queued，本回归同时覆盖持久waiting_resource的兼容窗口。
+
+独立临时数据根、假进程表与模拟客户端覆盖：75→资源等待、两次tick不回滚、不占执行位、固定时钟到期→原record/material只查询一次；期间新核实拒绝/已有queued请求复用原job。不存在OSS/飞书创建/ingest/resync。聚焦命令（source目录）：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py tests/test_round3_verification.py tests/test_round2_verification.py`：13 passed /6.89s。
+
+R3-A完整pytest（同一清凭据、临时数据根隔离脚本，无固定SOURCE_ROOT）：654 passed /91.17s，退出0。macOS15.8.1 arm64、conda-forge Python3.12.12。`git diff --check`通过。

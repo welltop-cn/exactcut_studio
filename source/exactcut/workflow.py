@@ -695,7 +695,10 @@ def recover_verification_queue(jobs, *, batch_id=None):
                 matched = any(job.get('batch_id') == path.name and job.get('request_id') == rid
                               and job.get('action') == 'verify-delivery' and job.get('phase') == 'poll'
                               and job.get('verification_only') == entry.get('verification_only')
-                              and job.get('status') in {'queued', 'running', 'completed'}
+                              # Existence commits the handoff, including durable
+                              # resource/due-time waits and future wait states.
+                              # A terminal job is also evidence of a saved handoff;
+                              # only a missing job warrants compensation.
                               and (not transaction or job.get('id') == transaction.get('job_id')) for job in jobs)
                 if matched:
                     if transaction: entry.pop('verification_queue'); changed = True
