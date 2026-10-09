@@ -68,10 +68,20 @@ def test_resume_retains_batch_serial_limit(runner, monkeypatch):
     assert kill.call_count == 1
 
 
-@pytest.mark.parametrize('config', [{}, {'concurrency': {'render': 3, 'fetch': 2}}])
-def test_missing_total_is_conservative_without_default_merge(monkeypatch, config):
-    monkeypatch.setattr(concurrency, 'load_config', lambda: config)
-    assert concurrency.settings()['max_active_children'] == 1
+def test_ceiling_defaults_to_sum_of_lanes_and_no_section_is_serial(monkeypatch):
+    # No concurrency section anywhere -> conservative global serial.
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {})
+    limits = concurrency.settings()
+    assert all(limits[lane] == 1 for lane in concurrency.LANES)
+    assert limits['max_active_children'] == 1
+    # A configured section opts into per-lane concurrency; the ceiling defaults
+    # to the sum of lanes (including lanes left at their default of 1).
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 3, 'fetch': 2}})
+    assert concurrency.settings()['max_active_children'] == 7
+    # An explicit lower ceiling is honored as the emergency lever.
+    monkeypatch.setattr(concurrency, 'load_config',
+                        lambda: {'concurrency': {'render': 3, 'fetch': 2, 'max_active_children': 2}})
+    assert concurrency.settings()['max_active_children'] == 2
 
 
 @pytest.mark.parametrize('segment', [None, {'render': 3}, {'enabled': True, 'render': 3, 'fetch': 2, 'upload': 2, 'poll': 4, 'max_active_children': 8}])
@@ -83,7 +93,13 @@ def test_startup_logs_merged_effective_limits_before_initializing_data(runner, m
     monkeypatch.setenv('EXACTCUT_CONFIG_FILE', str(config))
     monkeypatch.setattr(concurrency, 'load_config', load_config)
     limits = concurrency.settings()
-    assert limits['max_active_children'] == (8 if segment and 'max_active_children' in segment else 1)
+    if segment is None:
+        expected_total = 1
+    elif 'max_active_children' in segment:
+        expected_total = segment['max_active_children']
+    else:
+        expected_total = sum(segment.get(lane, 1) for lane in concurrency.LANES)
+    assert limits['max_active_children'] == expected_total
     monkeypatch.setattr(web, 'load_env_file', lambda *a: None)
     def claim():
         message = next(record.getMessage() for record in caplog.records if 'Effective concurrency settings:' in record.getMessage())

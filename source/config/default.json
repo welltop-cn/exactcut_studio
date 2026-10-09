@@ -34,18 +34,5 @@
     "feishu_initial_status": "待处理",
     "wait_timeout_seconds": 1800,
     "poll_seconds": 15
-  },
-  "concurrency": {
-    "enabled": true,
-    "fetch": 1,
-    "render": 1,
-    "upload": 1,
-    "poll": 1,
-    "max_active_children": 1,
-    "hook_previews": 1,
-    "ai": {
-      "requests_per_minute": 6,
-      "burst": 1
-    }
   }
 }

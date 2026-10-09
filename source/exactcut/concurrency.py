@@ -20,26 +20,35 @@ def ai_settings(config):
 
 
 def settings():
-    config = load_config().get('concurrency', {})
-    if not isinstance(config, dict):
+    section = load_config().get('concurrency')
+    if section is None:
+        # No concurrency section configured anywhere: keep conservative global
+        # serial behaviour with safe defaults.
+        capacities = {name: 1 for name in LANES}
+        return {**capacities, 'max_active_children': 1, 'enabled': True,
+                'hook_previews': 1, 'ai': ai_settings({})}
+    if not isinstance(section, dict):
         raise ValueError('concurrency 必须为对象')
-    enabled = config.get('enabled', True)
+    enabled = section.get('enabled', True)
     if not isinstance(enabled, bool):
         raise ValueError('concurrency.enabled 必须为布尔值')
     capacities = {}
     for name in LANES:
-        value = config.get(name, 1)
+        value = section.get(name, 1)
         if not isinstance(value, int) or isinstance(value, bool) or value < 1:
             raise ValueError('concurrency.' + name + ' 必须为正整数')
         capacities[name] = value
-    total = config.get('max_active_children', 1)
+    # A configured section opts into per-lane concurrency. Default the global
+    # ceiling to the sum of lanes so it never couples or starves lanes; only an
+    # explicit lower value (emergency lever) reduces it.
+    total = section.get('max_active_children', sum(capacities.values()))
     if not isinstance(total, int) or isinstance(total, bool) or total < 1:
         raise ValueError('concurrency.max_active_children 必须为正整数')
-    previews = config.get('hook_previews', 1)
+    previews = section.get('hook_previews', 1)
     if isinstance(previews, bool) or not isinstance(previews, int) or previews < 1:
         raise ValueError('concurrency.hook_previews 必须为正整数')
     return {**capacities, 'max_active_children': total, 'enabled': enabled,
-            'hook_previews': previews, 'ai': ai_settings(config)}
+            'hook_previews': previews, 'ai': ai_settings(section)}
 
 
 def lane(job):
