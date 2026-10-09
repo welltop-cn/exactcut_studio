@@ -1,25 +1,25 @@
 # 并发改造 · 生产真实验收记录（2026-10-09/10）
 
 环境：美东生产实例 `8.221.122.75`，宿主 16 vCPU / 约 30 GiB，容器 `cpus=14 / mem=24g / pids=512`。
-部署版本 `us-east-20261010-concurrency`，commit `399917136fe1c665a20b4357111608ea30ddedb1`，镜像 `sha256:7f9727bfc4b7684187284fff53b571040dcddebee7f89c270d10959e1273091a`。
-回滚目标：`us-east-20261009-1`（image `sha256:3986618e599deb32d6edf6c65ba5a2b10d553e9686444bde15915807d6d889f7`）。
+部署版本（当前）`us-east-20261010-ceiling-derived2`，commit `d7c048cd5854ff753d5ff6ed342a3da7fa96aae1`，镜像 `sha256:cf01ada129d9a5ed63d049ba42e76b22b5212eaa39aff98cf072d3209565fc85`。
+上一版本 `us-east-20261010-concurrency`（commit `3999171`）。首次生产基线回滚目标 `us-east-20261009-1`（image `sha256:3986618e599deb32d6edf6c65ba5a2b10d553e9686444bde15915807d6d889f7`）。
 
 ## 1. 代码与测试（三方一致）
 
 | 项 | 结果 |
 | --- | --- |
-| 代码提交 | `e142997`…`3999171`（第 1–3 步 + 三轮审查修复），分支 `concurrency-refactor` |
-| 本机 macOS 全量 pytest | **677 passed**，连跑 3 次均 exit 0（另干净 clone 677 passed） |
-| 发布构建内 Linux 容器回归 | **670 passed / 7 skipped**（跳过项为 Docker/Node 环境检查） |
+| 代码提交 | `e142997`…`d7c048c`（第 1–3 步 + 三轮审查修复 + 全局总闸语义 + 测试确定性），分支 `concurrency-refactor` |
+| 本机 macOS 全量 pytest | **677 passed**，连跑多次 exit 0；干净 clone 677 passed |
+| 发布构建内 Linux 容器回归 | **669 passed / 7 skipped**（跳过项为 Docker/Node 环境检查） |
 | 独立复审 | Grok 第 1–4 轮；第 4 轮结论「P1-A/P1-B/偶发测试均已修复，无新 P0/P1，可进入生产真实验收」；审查记录见 `docs/concurrency-refactor-grok-review.md` |
 | TDD | 每个改动先写失败回归再实现；证据见 `docs/concurrency-refactor-implementation.md` |
 
 ## 2. 发布与生效配置
 
-- `linux-ops build` → `check-switch` allowed=true → `publish` 成功：`us-east-20261009-1` → `us-east-20261010-concurrency`，healthz `status=ok / environment=production / worker_alive=true`。
-- 容器生效 `Effective concurrency settings`：`fetch=2, render=3, upload=2, poll=4, max_active_children=8, hook_previews=1, ai={6,1}`。
+- `linux-ops build` → `check-switch` allowed=true → `publish` 成功：… → `us-east-20261010-ceiling-derived2`，healthz `status=ok / environment=production / worker_alive=true`。
+- 容器生效 `Effective concurrency settings`：`fetch=2, render=3, upload=2, poll=4, max_active_children=11, hook_previews=1, ai={6,1}`。
+- **全局总闸不再写进配置**：`max_active_children` 留空即自动 = 各 lane 之和（2+3+2+4=11）；改 lane 时自动跟随，不需手工维护；仅在应急降级时显式写一个更小的值。生产 `runtime.json` 与 `production.json` 模板均不含该字段。
 - 容器限额实测：`NanoCpus=14000000000`、`Memory=25769803776`、`PidsLimit=512`、`io.exactcut.stage-protocol=1`。
-- 宿主 `/srv/exactcut/config/runtime.json` 的 `concurrency` 已与生产模板一致（sha256 `1276eac15cc43f631839cd41be0a8ce7bc1a38b2c8203c91a0ac3f81f17b211e`）。
 
 ## 3. 真实验收结果
 
@@ -59,6 +59,30 @@
 - 代码回退：`linux-ops rollback` → `us-east-20261009-1`；有未完成阶段/待核实交付时被守卫拒绝，需先排空或按操作单离线核实。
 - 容量回退：改 `runtime.json` 的 `concurrency` 后重发布；`enabled=false` 或各容量=1 即回到串行，业务数据不还原。
 
-## 6. 遗留测试数据
+## 6. 负载与容量实测（2026-10-10，生产）
+
+### 6.1 render=3 并发编码
+
+| 指标 | 实测 | 解读 |
+| --- | --- | --- |
+| 容器 CPU | **~950–1060% / 1400%** | 14 核约用 10 核，留约 4 核 |
+| 容器内存 | **~1.6 GiB / 24 GiB** | 约 7%，内存极富余 |
+| ffmpeg | 3 进程、共 **18 线程**、RSS 合计 **~1.6 GB**（每个约 530 MB） | 每路约 6 线程，与 `-threads 4` 一致 |
+| 宿主 load average | **~6.6 / 16**（1 分钟） | 整机约 40% 忙 |
+| 容器 PIDs | ~88 / 512 | 宽余 |
+
+每路渲染约吃 **3.2–3.5 核**。14 核 ÷ 3.3 ≈ **最多 4 路**。`render=4` 可行但接近配额上限；`render≥5` 会超订。内存不是约束。
+
+### 6.2 网络带宽（同一 OSS 链路）
+
+- 单流下载：**~11–13 MiB/s**（app 报峰值 12.99 MiB/s）。
+- 4 路并发下载不同集（合计 ~424 MB）：耗时 35.0 秒，**聚合 ~12.15 MiB/s**。
+- 结论：链路上限约 **12 MiB/s（≈100 Mbps）**，**单流即接近饱和**；提高 `fetch` 只会分摊带宽、不增加总吞吐。保留 `fetch=2` 的价值是重叠与容错，不是翻倍。一集约 120 MB → 满速约 10 秒，下载非瓶颈。
+
+### 6.3 瓶颈排序与建议
+
+**CPU(render) > 网络(约 12 MiB/s 共享，够用) > 内存(极富余)**。提升吞吐应调整 `render`（3→4 上限）或增加容器 CPU，而不是增加 `fetch`。
+
+## 7. 遗留测试数据
 
 生产数据根生成了 6 个验收批次（剧 101460）：`验收A`（EP1 00:05-00:20）、`验收B`（EP2 00:05-00:20）、`验收C`（EP1 00:30-00:45）、`验收D`（EP2 00:30-00:45）、`验收E`（EP1 00:00-01:00，崩溃恢复）、`验收F`（EP1 00:00-00:20，守卫测试）。均为 `review` 状态、未上传。可按需在界面删除。
