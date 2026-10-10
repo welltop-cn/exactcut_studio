@@ -54,7 +54,8 @@ function warmBatch(id){
 function displayBatch(item){
  archivedView=!!item.runtime.archived;current=item;dirty=false;assetKeys='';hookPreviews.clear();validationDismissed=false;
  localStorage.setItem('exactcut.batch',item.id);history.replaceState(null,'','#'+item.id);
- showPage('workspace');renderEditor();renderRuntime();setTab(item.runtime.status==='draft'?'editor':item.assets.some(a=>a.preview)?'review':'progress');
+ setTab(item.runtime.status==='draft'?'editor':'progress');
+ showPage('workspace');renderEditor();renderRuntime();
 }
 async function openBatch(id,{refreshList=false}={}){
  if(dirty&&!window.confirm('当前修改尚未保存，是否离开？'))return;
