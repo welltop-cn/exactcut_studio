@@ -44,10 +44,14 @@ def _draw_centered_text(image: Image.Image, text: str, *, y: int, font_size: int
         cursor += height + 18
 
 
-def _make_card_png(path: Path, text: str, width: int, height: int) -> None:
+def title_card_image(text: str, width: int, height: int) -> Image.Image:
     image = Image.new("RGB", (width, height), "black")
     _draw_centered_text(image, text, y=height // 2, font_size=64, max_chars=26)
-    image.save(path)
+    return image
+
+
+def _make_card_png(path: Path, text: str, width: int, height: int) -> None:
+    title_card_image(text, width, height).save(path)
 
 
 def _render_episode_unit(source: Path, start_ms: int, end_ms: int, output: Path, render: dict[str, Any]) -> None:
@@ -138,7 +142,7 @@ def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[st
         "ffmpeg", "-y", "-v", "error", "-i", str(input_video),
         "-loop", "1", "-framerate", str(render["fps"]), "-i", str(overlay),
         "-filter_complex", overlay_filter + f"[0:v][ov]overlay=0:0:format=auto:eof_action=pass:enable='lt(t,{end_s:.3f})',fps={render['fps']},setpts=N/({render['fps']}*TB),format=yuv420p[v]",
-        "-map", "[v]", "-map", "0:a:0?", "-t", f"{total_s:.3f}",
+        "-map", "[v]", "-map", "0:a:0?", "-r", str(render["fps"]), "-t", f"{total_s:.3f}",
         "-c:v", render["video_codec"], "-preset", render["preset"],
         "-crf", str(render["crf"]), "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output),
     ])

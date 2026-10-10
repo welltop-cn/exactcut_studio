@@ -197,7 +197,7 @@ def execute_batch(
             })
             stage('qc')
             stage_started = time.monotonic()
-            qc = inspect_output(staged, int(render_plan["expected_duration_ms"]), config)
+            qc = inspect_output(staged, int(render_plan["expected_duration_ms"]), config, timeline)
             diag.event('render.qc', level='info' if qc['allowed'] else 'error', request_id=request.request_id,
                        expected_ms=qc.get('expected_duration_ms'), actual_ms=qc.get('actual_duration_ms'),
                        allowed=qc['allowed'], errors=qc.get('errors'))

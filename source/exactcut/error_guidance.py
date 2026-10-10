@@ -36,6 +36,12 @@ def guidance(message, stage=None, *, continuation=False):
         code, title, action = 'fbbm_continue', 'FBBM 尚未就绪', '点击“继续查询 FBBM”沿用原记录；如平台报告失败，先查看平台原因。'
     elif stage == 'preview':
         code, title, action = 'preview', '轻量预览未生成', '可先查看正式成片，也可点击“生成轻量预览”重试。'
+    elif 'title card text is missing or unreadable' in lower:
+        code, title, action = 'qc', '字卡文字未正常显示', '检查字卡文字及字幕位置，避免遮挡；修改后重新制作，如仍失败请查看技术详情。'
+    elif 'first frame is black' in lower:
+        code, title, action = 'qc', '成片开头画面过暗或疑似黑屏', '检查开头画面和剪辑起点；若原片开头为黑屏，请调整起点后重新制作。'
+    elif 'cannot extract first frame' in lower:
+        code, title, action = 'qc', '无法读取成片开头画面', '查看技术详情并重试制作；检查原片及编码是否完整。'
     elif any(s in lower for s in ('时长不符', 'qc未通过', '时长不一致')):
         code, title, action = 'qc', '成片时长或格式校验未通过', '查看时长校对及技术详情；检查原片，必要时修改时间线后重新制作。'
     elif any(s in lower for s in ('缺少', '正片', '尾帧', 'decode', 'moov atom')):
