@@ -141,6 +141,10 @@ def queue_snapshot(user):
         paused = control.get('paused') or control.get('archived')
         status = 'paused' if paused else job['status']
         pools[lane][status] += 1
+        execution_path = path
+        if path and workflow.material_versions.internal(path):
+            bid = workflow.material_versions.internal(path)['parent_batch_id']
+            path = workflow.BATCHES / bid
         if user['role'] != 'admin' and (path is None or not accounts.allowed(path, user)):
             continue
         draft = read_json(path / 'draft.json') if path else {}
@@ -156,7 +160,7 @@ def queue_snapshot(user):
             task['elapsed_seconds'] = max(0, int(now - job['started']))
         if path:
             from .progress import observation
-            record = workflow.result_records(path).get(job.get('request_id'), {}) if job.get('request_id') else read_json(path / 'runtime.json')
+            record = workflow.result_records(execution_path).get(job.get('request_id'), {}) if job.get('request_id') else read_json(execution_path / 'runtime.json')
             task['observation'] = observation(record, paused=bool(paused))
         if user['role'] == 'admin':
             task['owner'] = accounts.owner(path) if path else job.get('actor', 'admin')
@@ -186,7 +190,8 @@ def asset_timing(request_id, jobs, *, now=None):
 
 def batch_response(batch_id, job=None):
     result = workflow.detail(batch_id)
-    jobs = [item for item in stored_jobs() if item.get('batch_id') == batch_id]
+    from .material_workers import parent_batch_id
+    jobs = [item for item in stored_jobs() if item.get('batch_id') and parent_batch_id(item['batch_id']) == batch_id]
     for asset in result.get('assets', []):
         asset['timing'] = asset_timing(asset['request_id'], jobs)
     if job is None:
@@ -624,6 +629,7 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
     queued.update(job.get('batch_id') for job in stored_jobs() if job.get('status') == 'queued')
     for file in workflow.BATCHES.glob('*/runtime.json'):
         path = file.parent
+        if workflow.material_versions.managed(path): continue
         if path.name in live or path.name in queued:
             continue
         if workflow.runtime(path)['status'] in workflow.ACTIVE:
@@ -745,6 +751,7 @@ def release_hook_preview(token):
 
 
 def worker_tick(pending, owned):
+    workflow.material_versions.recover_outbox()
     while True:
         try:
             entry = WORK.get_nowait()
@@ -831,6 +838,9 @@ def worker_tick(pending, owned):
             if job.get('not_before', 0) > time.time():
                 log_wait(job, 'retry_backoff', not_before=job['not_before'])
                 continue
+            if (job.get('phase') in {'render', 'media-upload'} and job.get('attempt') and job.get('batch_id')
+                    and workflow.material_versions.internal(workflow.BATCHES / job['batch_id'])):
+                continue  # Pre-tick recovery gives each render attempt a fresh container.
             resource = concurrency.lane(job)
             if counts[resource] >= limits[resource] or len(tokens) >= limits['max_active_children']:
                 log_wait(job, 'pool_full', pools=counts, resident_count=len(tokens))
@@ -1072,7 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def can_access(self, batch_id):
         path = workflow.BATCHES / batch_id
-        return (path / 'draft.json').exists() and accounts.allowed(path, self.user)
+        return (path / 'draft.json').exists() and not workflow.material_versions.internal(path) and accounts.allowed(path, self.user)
 
     def is_admin(self):
         if self.user['role'] == 'admin':
@@ -1317,6 +1327,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.normalize_path()
+        match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/([^/]+)', self.path)
+        if match:
+            path = workflow.BATCHES / match[1]
+            if workflow.material_versions.managed(path) or workflow.material_versions.internal(path) or (workflow.material_versions.enabled() and match[2] in {'enroll', 'clone', 'start'}):
+                with mutation_lock():
+                    return self.material_submission(*match.groups())
         match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/hook-preview', self.path)
         if match:
             return self.hook_preview(match[1])
@@ -1327,6 +1343,61 @@ class Handler(BaseHTTPRequestHandler):
             return self.handle_post()
         with mutation_lock():
             self.handle_post()
+
+    def material_submission(self, batch_id, action):
+        """Managed CAS transactions run outside legacy mutation/thread locks."""
+        m = workflow.material_versions
+        if not self.authorized(): return
+        if self.headers.get('X-Exactcut-Request') != '1':
+            return self.respond(403, {'error': '无效请求来源'})
+        if not self.can_access(batch_id):
+            return self.respond(404, {'error': '项目不存在或无权访问'})
+        if maintenance_file().exists():
+            return self.respond(503, {'error': '系统正在发布维护，请稍后再试'})
+        if os.environ.get('EXACTCUT_WORKER_ENABLED', '1') != '1':
+            return self.respond(503, {'error': '验收实例禁止修改项目'})
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 1 <= size <= 15_000_000: raise ValueError('无效请求大小')
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict): raise ValueError('无效请求')
+            path = workflow.folder(batch_id)
+            if not m.managed(path):
+                if action == 'clone' and data.get('purpose') == 'copy':
+                    return self.respond(201, self.new_batch(workflow.clone_batch(batch_id)))
+                if not m.enabled(): raise ValueError('素材版本功能尚未启用')
+                m.enroll(path)
+            code = 200
+            result = None
+            if action == 'save':
+                with workflow.naming_lock(): result = m.save_draft(path, data)
+            elif action == 'start':
+                with workflow.naming_lock(): result = m.confirm(path, data)
+                code = 202
+            elif action == 'publish':
+                require_publish()
+                result = m.queue_delivery(path, data); code = 202
+            elif action == 'verify-delivery':
+                if not self.is_admin(): return
+                result = m.queue_verification(path, data); code = 202
+            elif action == 'restore': result = m.restore(path, data.get('request_id'), data)
+            elif action in {'delete', 'pause', 'resume', 'archive', 'unarchive'}: result = m.control(path, action, data)
+            elif action == 'clone':
+                if data.get('purpose', 'copy') == 'copy':
+                    return self.respond(201, self.new_batch(workflow.clone_batch(batch_id, purpose='copy')))
+                if data.get('purpose') != 'repair': raise ValueError('未知复制操作')
+            elif action == 'ending-image':
+                return self.respond(200, m.save_ending_image(path, data.get('request_id'), data.get('content')))
+            elif action == 'enroll': pass
+            elif action == 'feedback': return self.respond(201, workflow.add_feedback(batch_id, data))
+            else: raise ValueError('纳管项目不支持此旧写入操作')
+            if getattr(self.server, 'auth_db', None):
+                accounts.audit(self.server.auth_db, self.user['username'], action, batch_id)
+            response = m.detail(path)
+            if result and result.get('mutation'): response['mutation'] = result['mutation']
+            return self.respond(code, response)
+        except (ValueError, KeyError, TypeError, OSError, RuntimeError) as exc:
+            return self.respond(409 if '更新' in str(exc) or '幂等' in str(exc) else 400, {'error': str(exc)})
 
     def publication_submission(self, batch_id, action):
         """Prepare the full approval SHA outside LOCK, then fence before enqueue."""

@@ -43,5 +43,9 @@
   },
   "preview": {
     "oss_enabled": true
+  },
+  "material_lifecycle": {
+    "enabled": false,
+    "delivery_enabled": false
   }
 }

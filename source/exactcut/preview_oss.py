@@ -54,7 +54,8 @@ def upload_generated_preview(batch_dir, request, record):
         return
     try:
         bucket = _connect()
-        record['preview']['oss'] = _ensure_uploaded(video, batch_dir.parent.name, request.request_id, bucket=bucket,
+        from .material_workers import parent_batch_id
+        record['preview']['oss'] = _ensure_uploaded(video, parent_batch_id(batch_dir.parent.name), request.request_id, bucket=bucket,
                                                    receipt=record['preview'].get('oss'))
         record.pop('preview_oss_error', None)
         diag.event('preview.oss_ready', request_id=request.request_id)
@@ -70,7 +71,8 @@ def upload_generated_original(batch_dir, request, record):
     if not video.is_file() or not record.get('output_sha256'):
         return
     try:
-        record['original_oss'] = _ensure_uploaded(video, batch_dir.parent.name, request.request_id,
+        from .material_workers import parent_batch_id
+        record['original_oss'] = _ensure_uploaded(video, parent_batch_id(batch_dir.parent.name), request.request_id,
                                                   bucket=_connect(), receipt=record.get('original_oss'))
         record.pop('original_oss_error', None)
     except Exception as exc:
@@ -79,7 +81,9 @@ def upload_generated_original(batch_dir, request, record):
 
 
 def save_media_receipt(batch_dir, request_id, record, video, receipt, *, original=False):
-    from . import result_store
+    from . import result_store, material_versions
+    if material_versions.managed(batch_dir.parent):
+        return material_versions.save_receipt(batch_dir.parent, request_id, record, video, receipt, original=original)
     from .util import read_json, write_json_atomic
     with result_store.locked(batch_dir, request_id) as file:
         latest = read_json(file) if file.exists() else result_store.read(batch_dir)['requests'].get(request_id, {})

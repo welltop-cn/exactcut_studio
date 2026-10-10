@@ -16,7 +16,18 @@ ACTIVE = {'queued', 'downloading', 'indexing', 'producing', 'publishing'}
 
 def read(path):
     file = path / 'control.json'
-    return read_json(file) if file.exists() else {'paused': False, 'archived': False, 'suspended': []}
+    value = read_json(file) if file.exists() else {'paused': False, 'archived': False, 'suspended': []}
+    from . import material_versions as m
+    identity = m.internal(path)
+    if identity:
+        state = m.read(path.parent / identity['parent_batch_id'])
+        stale = state['deleted_at'] or state['assets'][identity['asset_id']]['deleted_at']
+        if identity['kind'] == 'candidate':
+            version = state['versions'][identity['version_id']]
+            stale = stale or version['child_id'] != path.name or version['status'] in {'superseded', 'failed'}
+        value['paused'] = bool(state['control']['paused'] or stale)
+        value['archived'] = bool(state['control']['archived'])
+    return value
 
 
 def write(path, control, message=None):

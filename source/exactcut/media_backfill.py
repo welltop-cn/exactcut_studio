@@ -19,6 +19,11 @@ def backfill(*, apply=False, batch_id=None, progress=None):
     for path in sorted(workflow.BATCHES.glob('*')):
         if not re.fullmatch(r'[0-9a-f]{32}', path.name) or path.is_symlink() or (batch_id and path.name != batch_id):
             continue
+        from . import material_versions
+        if material_versions.internal(path): continue
+        if material_versions.managed(path):
+            emit({'batch_id': path.name, 'status': 'managed'})
+            continue
         if not (path / 'confirmed.json').is_file():
             continue
         manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))

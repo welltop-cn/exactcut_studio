@@ -24,6 +24,8 @@ def read(directory):
 
 @contextmanager
 def locked(directory, request_id):
+    from .material_versions import reject_legacy_write
+    reject_legacy_write(directory.parent)
     file = file_for(directory, request_id)
     file.parent.mkdir(parents=True, exist_ok=True)
     with file.with_suffix('.lock').open('a') as stream:

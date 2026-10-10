@@ -385,11 +385,16 @@ def run_child(operation, *args):
     job = next((read_json(p) for p in jobs.glob('*.json') if read_json(p).get('process_token') == token), None) if token else None
     fields = {key: job.get(key) for key in ('trace_id', 'batch_id', 'request_id', 'actor', 'phase', 'attempt')} if job else {}
     with diag.context(job_id=job['id'] if job else None, **fields), diag.span('stage.execute'):
-        try: code = operation(*args)
+        from . import material_workers
+        try:
+            if job: material_workers.stage_enter(job)
+            code = operation(*args)
         except ResourceDeferred as exc:
             diag.event('stage.deferred', reason=str(exc), not_before=exc.not_before)
             if job: complete(job, jobs, workflow.BATCHES, workflow.ROOT, 75, status='waiting_resource', not_before=exc.not_before)
             return 75
-        if job: complete(job, jobs, workflow.BATCHES, workflow.ROOT, code)
+        if job:
+            material_workers.stage_finish(job, code)
+            complete(job, jobs, workflow.BATCHES, workflow.ROOT, code)
         diag.event('stage.result', level='info' if code == 0 else 'warning', exit_code=code)
         return code

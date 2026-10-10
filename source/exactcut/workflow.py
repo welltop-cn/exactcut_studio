@@ -16,7 +16,7 @@ import uuid
 from collections import Counter
 from pathlib import Path
 from urllib.parse import quote
-from . import batch_control, result_store
+from . import batch_control, result_store, material_versions
 from . import diagnostics as diag
 from .intake import validate_draft, download_plan
 from .llm_intake import read_excel
@@ -55,6 +55,7 @@ def publication_lock(path):
 
 
 def store_publication(path, request_id, entry):
+    material_versions.reject_legacy_write(path)
     with publication_lock(path):
         all_entries = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
         all_entries[request_id] = entry
@@ -69,6 +70,7 @@ def store_publication(path, request_id, entry):
 
 
 def runtime(path, *, jobs=None):
+    if material_versions.managed(path): return material_versions.detail(path)['runtime']
     data = read_json(path / 'runtime.json')
     batch_executor = bool(data.get('executor_running'))
     records = result_records(path)
@@ -152,6 +154,7 @@ def production_summary(path, data, records=None, *, jobs=None):
 
 
 def update(path, status=None, message=None, **fields):
+    material_versions.reject_legacy_write(path)
     with (path / 'runtime.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         return _update_locked(path, status, message, **fields)
@@ -276,19 +279,21 @@ def allocate_sequences(draft, batch_id, *, all_new=False):
         return False  # Missing metadata stays editable; validation still blocks execution.
     used = set()
     for file in BATCHES.glob('*/draft.json'):
-        if file.parent.name == batch_id:
+        from .material_versions import internal
+        if file.parent.name == batch_id or internal(file.parent):
             continue
-        other = read_json(file)['draft']
+        other = material_versions.read(file.parent)['draft'] if material_versions.managed(file.parent) else read_json(file)['draft']
         try:
             if naming_scope(other) == scope:
                 used.update(int(row['seq']) for row in other.get('rows', []) if str(row.get('seq', '')).isdigit())
         except (ValueError, RuntimeError):
             continue
     for file in BATCHES.glob('*/confirmed.json'):
-        if file.parent.name == batch_id:
+        from .material_versions import internal
+        if file.parent.name == batch_id or internal(file.parent):
             continue
-        for request in read_json(file)['requests']:
-            parsed = validate_material_filename(request['output_filename'])
+        for name in material_versions.reserved_names(file.parent):
+            parsed = validate_material_filename(name)
             if tuple(parsed[key] for key in ('date', 'type', 'creator1', 'creator2', 'novel_id')) == scope:
                 used.add(int(parsed['seq']))
     local = [int(row['seq']) for row in draft['rows'] if str(row.get('seq', '')).isdigit()]
@@ -328,6 +333,7 @@ def create_blank(author='', *, display_name=''):
 
 
 def save_ending_image(batch_id, request_id, payload):
+    material_versions.reject_legacy_write(folder(batch_id))
     if not isinstance(request_id, str) or not re.fullmatch(r'[\w-]{1,80}', request_id):
         raise ValueError('需求编号无效')
     raw = base64.b64decode(payload or '', validate=True)
@@ -360,7 +366,15 @@ def save_ending_image(batch_id, request_id, payload):
 def ending_image_file(batch_id, request_id):
     if not re.fullmatch(r'[\w-]{1,80}', request_id or ''):
         raise ValueError('需求编号无效')
-    folder_path = folder(batch_id) / 'endings'
+    parent = folder(batch_id)
+    if material_versions.managed(parent):
+        state = material_versions.read(parent)
+        asset = state['assets'].get(request_id)
+        if state['deleted_at'] or not asset or asset['deleted_at']: raise ValueError('素材不存在')
+        name = (asset['row'].get('composition') or {}).get('ending', {}).get('image', '')
+        if not re.fullmatch(r'[a-f0-9]{64}\.(png|jpg|webp)', name): raise ValueError('还没有结尾图片')
+        return parent / 'endings' / name
+    folder_path = parent / 'endings'
     matches = [path for path in folder_path.glob(request_id + '.*') if path.suffix in {'.png', '.jpg', '.webp'}]
     if len(matches) != 1:
         raise ValueError('还没有结尾图片')
@@ -432,11 +446,17 @@ def archive_draft(path):
 
 
 def result_records(path):
+    if material_versions.managed(path):
+        state = material_versions.read(path)
+        return {rid: {**state['versions'][asset['current_version']]['record'], 'media_version_id': asset['current_version']}
+                for rid, asset in state['assets'].items() if asset['current_version'] and not asset['deleted_at']}
     return result_store.read(path / 'production')['requests']
 
 
 def detail(batch_id):
     path = folder(batch_id)
+    if material_versions.managed(path):
+        return material_versions.detail(path)
     data = read_json(path / 'draft.json')
     manifest, errors = validate_draft(data['draft'], str(path / 'source.xlsx'))
     if (path / 'confirmed.json').exists():
@@ -503,16 +523,19 @@ def summaries(can_access=None, *, compact=False):
     result = []
     jobs = [read_json(file) for file in (ROOT / '.web-state/jobs').glob('*.json')] if compact else None
     for p in BATCHES.glob('*/draft.json'):
+        from .material_versions import internal
+        if internal(p.parent):
+            continue
         if can_access is not None and not can_access(p.parent.name):
             continue
-        item = read_json(p)
+        item = material_versions.detail(p.parent) if material_versions.managed(p.parent) else read_json(p)
         result.append({'id': item['id'], 'filename': item['filename'], 'display_name': item.get('display_name', ''), 'created_at': item['created_at'],
                        'drama_id': item['draft'].get('drama_id'), 'drama_title': item['draft'].get('drama_title'),
-                       'count': len(item['draft'].get('rows', [])), **batch_control.present(p.parent, runtime(p.parent, jobs=jobs))})
+                       'count': len(item['draft'].get('rows', [])), **(item['runtime'] if item.get('media_managed') else batch_control.present(p.parent, runtime(p.parent, jobs=jobs))), 'media_managed': bool(item.get('media_managed')), 'deleted_at': item.get('deleted_at'), 'revision': item['revision']})
     if compact:
         # Sidebar contract: histories and execution details belong to the selected project.
         fields = ('id', 'filename', 'display_name', 'created_at', 'drama_id', 'drama_title', 'count', 'status', 'archived')
-        return sorted(({key: item.get(key) for key in fields} for item in result),
+        return sorted(({**{key: item.get(key) for key in fields}, **({key: item.get(key) for key in ('media_managed', 'deleted_at', 'revision')} if item.get('media_managed') else {})} for item in result),
                       key=lambda item: item['created_at'], reverse=True)
     from .error_guidance import redact
     for item in result:
@@ -524,6 +547,9 @@ def summaries(can_access=None, *, compact=False):
 def delete_batch(batch_id, confirmation):
     """Permanently remove one archived batch, never drama-level shared media."""
     path = folder(batch_id)
+    from .material_versions import reject_legacy_write
+    reject_legacy_write(path)
+    if material_versions.internal(path): raise ValueError('内部执行项目禁止物理删除')
     if confirmation != batch_id:
         raise ValueError('请确认永久删除此项目，删除后不可恢复')
     with batch_control.LOCK:
@@ -562,6 +588,7 @@ def save_draft(batch_id, data):
 
 
 def _save_draft(batch_id, data):
+    material_versions.reject_legacy_write(folder(batch_id))
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=False)
     if (path / 'confirmed.json').exists() or runtime(path)['status'] != 'draft':
@@ -600,11 +627,19 @@ def clone_batch(batch_id, *, purpose='copy'):
 
 def _clone_batch(batch_id, *, purpose='copy'):
     source = folder(batch_id)
+    managed = material_versions.managed(source)
+    if managed and purpose == 'repair':
+        return detail(batch_id)
     if purpose not in {'copy', 'repair'}:
         raise ValueError('无效草稿用途')
     if purpose == 'repair' and runtime(source)['status'] not in {'failed', 'partial', 'interrupted', 'review'}:
         raise ValueError('请等待当前制作结束，再修改后重新制作')
-    data = read_json(source / 'draft.json')
+    data = material_versions.detail(source) if managed else read_json(source / 'draft.json')
+    if managed:
+        for key in ('assets', 'runtime', 'media_managed', 'deleted_assets', 'deleted_at', 'errors', 'plan', 'feedback', 'feedback_count', 'timing_explanation'):
+            data.pop(key, None)
+        for row in data['draft']['rows']:
+            row['request_id'] = 'R' + uuid.uuid4().hex
     source_revision = data['revision']
     batch_id = uuid.uuid4().hex
     path = BATCHES / batch_id
@@ -631,6 +666,7 @@ def start_batch(batch_id, revision):
 
 
 def _start_batch(batch_id, revision):
+    material_versions.reject_legacy_write(folder(batch_id))
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
     state = runtime(path)
@@ -683,7 +719,12 @@ def _start_batch(batch_id, revision):
 
 
 def request_for(path, request_id):
-    manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
+    if material_versions.managed(path):
+        state = material_versions.read(path); asset = state['assets'].get(request_id)
+        if not asset or asset['deleted_at'] or not asset['current_version']: raise ValueError('当前素材不存在')
+        manifest = BatchManifest.model_validate(state['versions'][asset['current_version']]['manifest'])
+    else:
+        manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
     request = next((r for r in manifest.requests if r.request_id == request_id), None)
     if request is None:
         raise ValueError('素材不存在')
@@ -692,6 +733,8 @@ def request_for(path, request_id):
 
 def preview_file(batch_id, request_id, *, lightweight=False):
     path = folder(batch_id)
+    if material_versions.managed(path):
+        return material_versions.current_file(path, request_id, lightweight=lightweight)
     _, request = request_for(path, request_id)
     record = result_records(path).get(request_id, {})
     if record.get('status') not in SAFE:
@@ -705,12 +748,14 @@ def preview_file(batch_id, request_id, *, lightweight=False):
 
 
 def make_batch_previews(batch_id):
+    material_versions.reject_legacy_write(folder(batch_id))
     with execution(folder(batch_id)):
         return _make_batch_previews(batch_id)
 
 
 def _make_batch_previews(batch_id):
     path = folder(batch_id)
+    material_versions.reject_legacy_write(path)
     manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
     results = result_store.read(path / 'production')
     failures = 0
@@ -758,6 +803,7 @@ def approval_evidence(batch_id, request_id, sha256, evidence=None):
 
 
 def queue_publish(batch_id, request_id, sha256, *, _evidence=None):
+    material_versions.reject_legacy_write(folder(batch_id))
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
     if not runtime(path).get('request_parallel') and runtime(path)['status'] in ACTIVE - {'publishing'}:
@@ -806,6 +852,7 @@ def verification_binding(entry):
 
 
 def queue_verify_delivery(batch_id, request_id, sha256, *, _evidence=None, _job_id=None):
+    material_versions.reject_legacy_write(folder(batch_id))
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
     if not runtime(path).get('request_parallel') and runtime(path)['status'] in ACTIVE - {'publishing'}:
@@ -836,6 +883,7 @@ def recover_verification_queue(jobs, *, batch_id=None):
     paths = [folder(batch_id)] if batch_id else [file.parent for file in BATCHES.glob('*/publications.json')]
     for path in paths:
         file = path / 'publications.json'
+        if material_versions.managed(path) or material_versions.internal(path): continue
         if not file.exists(): continue
         with publication_lock(path):
             publications = read_json(file)
@@ -882,6 +930,7 @@ def add_feedback(batch_id, data):
     entry = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'request_id': request_id, 'drama_id': manifest.drama_id,
              'drama_title': manifest.drama_title, 'filename': request.output_filename, 'sha256': current_record.get('output_sha256'),
              'category': category, 'message': message, 'created_at': now_iso(), 'status': '待复盘'}
+    if material_versions.managed(path): entry['version_id'] = current_record['media_version_id']
     FEEDBACK.mkdir(exist_ok=True)
     write_json_atomic(FEEDBACK / f"{batch_id}-{entry['id']}.json", entry)
     return entry
@@ -957,6 +1006,7 @@ def download(path, manifest, project):
 
 
 def produce(batch_id):
+    material_versions.reject_legacy_write(folder(batch_id))
     with execution(folder(batch_id), phase='render'):
         return _produce(batch_id)
 
@@ -1019,6 +1069,7 @@ def _produce(batch_id, *, render_only=False, request_id=None):
 
 
 def fetch(batch_id):
+    material_versions.reject_legacy_write(folder(batch_id))
     """Prepare required sources using the same cache as draft prefetch."""
     path = folder(batch_id)
     with execution(path):
@@ -1036,6 +1087,7 @@ def fetch(batch_id):
 
 
 def render(batch_id, request_id=None):
+    material_versions.reject_legacy_write(folder(batch_id))
     with execution(folder(batch_id), request_id, phase='render'):
         return _produce(batch_id, render_only=True, request_id=request_id)
 
@@ -1063,6 +1115,7 @@ def delivery_intent(path, request_id, entry, phase, video=None):
 
 
 def upload(batch_id, request_id):
+    material_versions.reject_legacy_write(folder(batch_id))
     """Persist intent before remote writes; ambiguous writes are never replayed."""
     from .publish import publish_to_queue, guarded_delivery
     path = folder(batch_id)
@@ -1110,6 +1163,7 @@ def upload(batch_id, request_id):
 
 
 def poll(batch_id, request_id):
+    material_versions.reject_legacy_write(folder(batch_id))
     """One guarded sync (which may ingest/resync/write), then release the lane."""
     from .publish import sync_record_once, verify_record_once, guarded_delivery
     path = folder(batch_id)
@@ -1181,6 +1235,10 @@ if __name__ == '__main__':
     load_env_file(project_env_file())
     diag.configure()
     diag.install_logging()
+    if sys.argv[1] == 'media-upload':
+        from .stage_results import run_child
+        from .material_workers import retry_media_upload
+        raise SystemExit(run_child(retry_media_upload, sys.argv[2], sys.argv[3]))
     if sys.argv[1] in {'fetch', 'render'}:
         from .stage_results import run_child
         args = [sys.argv[2]]
