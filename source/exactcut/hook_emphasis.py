@@ -13,6 +13,7 @@ from typing import Literal
 
 import httpx
 from . import ai_rate
+from . import diagnostics as diag
 from pydantic import BaseModel, ConfigDict
 
 from .errors import ValidationError
@@ -112,6 +113,7 @@ def grounded_analysis(text: str, value: dict) -> dict:
             'highlights': sorted(spans, key=lambda span: span['start']), 'reason': analysis.reason}
 
 
+@diag.traced('ai.responses')
 def responses_json(instructions: str, content, schema: dict, name: str, model: str) -> dict:
     require_ai()
     load_env_file(project_env_file())
@@ -127,6 +129,7 @@ def responses_json(instructions: str, content, schema: dict, name: str, model: s
         with httpx.Client(timeout=httpx.Timeout(45, connect=10)) as client:
             response = client.post(os.getenv('OPENAI_BASE_URL', 'https://api.openai.com/v1').rstrip('/') + '/responses',
                                    headers={'Authorization': f'Bearer {key}'}, json=body)
+            diag.event('ai.http', model=model, operation=name, status=response.status_code)
             response.raise_for_status()
         payload = response.json()
         if payload.get('status') == 'incomplete':
@@ -149,6 +152,7 @@ def retry_ai(operation):
         try:
             return operation()
         except TransientHookAIError:
+            diag.event('ai.retry', attempt=attempt+1, retrying=attempt == 0)
             if attempt:
                 raise
             time.sleep(1)

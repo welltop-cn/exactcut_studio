@@ -1,5 +1,11 @@
 {
   "schema_version": 1,
+  "logging": {
+    "enabled": true,
+    "retention_days": 14,
+    "max_file_bytes": 20971520,
+    "max_total_bytes": 1073741824
+  },
   "web": {
     "base_path": "/home"
   },

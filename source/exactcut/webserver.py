@@ -23,6 +23,7 @@ from .util import json_sha256, write_json_atomic, read_json, load_env_file
 
 from .runtime import CODE_ROOT, data_root, require_publish, feature_flags, instance_marker, environment, release_id, maintenance_file, mutation_lock
 from .runtime import project_env_file, claim_data_root
+from . import diagnostics as diag
 
 ROOT = data_root()
 STATE = ROOT / '.web-state'
@@ -74,9 +75,16 @@ def job_command(data):
 
 
 def save(job):
+    if diag.current().get('trace_id'):
+        job.setdefault('trace_id', diag.current()['trace_id'])
     job.setdefault('lane', concurrency.lane(job))
     path = JOBS / (job['id'] + '.json')
     write_json_atomic(path, job)
+    diag.throttled('job.state', (job['id'], job.get('status'), job.get('attempt'),
+                                job.get('phase'), job.get('adopted_after_restart'), job.get('not_before')),
+                   **{key: job.get(key) for key in ('trace_id', 'batch_id', 'request_id', 'actor', 'phase', 'lane',
+                       'status', 'attempt', 'exit_code', 'not_before', 'adopted_after_restart', 'recovered_from_stage')},
+                   job_id=job['id'], child_pid=job.get('pid'))
 
 
 def stored_jobs():
@@ -236,7 +244,7 @@ def advance_stage(job):
         if phase == 'fetch' and rid is not None: identity += ':' + rid
         successor_id = uuid.uuid5(uuid.NAMESPACE_URL, identity).hex
         if (JOBS / (successor_id + '.json')).exists(): continue
-        successor = {key: job[key] for key in ('batch_id', 'project', 'owner', 'actor', 'action', 'request_id') if key in job}
+        successor = {key: job[key] for key in ('batch_id', 'project', 'owner', 'actor', 'action', 'request_id', 'trace_id') if key in job}
         if rid is not None: successor['request_id'] = rid
         successor.update(id=successor_id, parent_id=job['id'], phase=next_phase, lane=next_phase,
                          created=time.time(), status='queued', instance=instance_marker())
@@ -734,6 +742,9 @@ def worker_tick(pending, owned):
         limits = concurrency.settings()
         counts, tokens, batches, legacy_projects = resource_usage(owned)
         project_renders = project_render_usage(owned)
+        diag.throttled('scheduler.snapshot', 'worker', pending=len(pending), running=len(owned),
+                       pools=counts, limits=limits, resident_count=len(tokens),
+                       oldest_wait_seconds=round(max((time.time()-e[0].get('created', time.time()) for e in pending), default=0)))
         batches.update(evidence_waiting)
         for owner, entry in fair_pending(pending):
             job, cmd = entry
@@ -746,29 +757,37 @@ def worker_tick(pending, owned):
                 WORK.task_done()
                 continue
             if job.get('not_before', 0) > time.time():
+                log_wait(job, 'retry_backoff', not_before=job['not_before'])
                 continue
             resource = concurrency.lane(job)
             if counts[resource] >= limits[resource] or len(tokens) >= limits['max_active_children']:
+                log_wait(job, 'pool_full', pools=counts, resident_count=len(tokens))
                 continue
             if not limits['enabled'] and sum(counts.values()):
+                log_wait(job, 'serial_mode')
                 continue
             batch = job.get('batch_id')
             if not batch and job.get('project') in legacy_projects: continue
             if batch:
                 control = batch_control.read(workflow.folder(batch))
                 if control.get('paused') or control.get('archived') or concurrency.scope_blocked(concurrency.scope(job), batches):
+                    log_wait(job, 'paused' if control.get('paused') else 'archived' if control.get('archived') else 'dependency_active')
                     continue
                 if resource == 'render' and project_renders.get(batch, 0) >= limits['per_project']:
+                    log_wait(job, 'project_render_limit')
                     continue
             try:
                 fingerprint = stage_results.scheduler_fingerprint(job, workflow.BATCHES, workflow.ROOT, jobs=JOBS)
             except stage_results.EvidencePending:
+                log_wait(job, 'evidence_pending')
                 continue
             except (ValueError, RuntimeError, OSError) as exc:
                 finish_job(job, -1, str(exc), local_failure=True, scheduler=True); pending.remove(entry); WORK.task_done(); continue
             try:
                 allocations = storage.scheduler_job_budget(job, workflow.BATCHES, workflow.ROOT)
-                if not storage.reserve(job['id'], allocations, JOBS): continue
+                if not storage.reserve(job['id'], allocations, JOBS):
+                    log_wait(job, 'disk_reservation', requested_bytes=sum(allocations.values()))
+                    continue
                 job['admission'] = {'paths': allocations, 'allocations': storage.device_allocations(allocations), 'at': time.time()}
                 job['attempt'] = job.get('attempt', 0) + 1
                 job['input_fingerprint'] = fingerprint
@@ -787,6 +806,7 @@ def worker_tick(pending, owned):
                 save(job)
                 process = subprocess.Popen(cmd, cwd=CODE_ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
             except Exception as exc:
+                diag.event('job.spawn_failed', level='error', job_id=job['id'], batch_id=batch, error=exc)
                 if log is not None: log.close()
                 # No process was spawned; this is a known local failure.
                 finish_job(job, -1, '启动失败，可重试：' + type(exc).__name__, local_failure=True, scheduler=True)
@@ -801,6 +821,9 @@ def worker_tick(pending, owned):
                 if identity:
                     job.update(pid=identity['pid'], pgid=identity['pgid'])
                 save(job)
+                diag.event('job.started', job_id=job['id'], batch_id=batch, request_id=job.get('request_id'),
+                           trace_id=job.get('trace_id'), phase=job.get('phase'), attempt=job.get('attempt'),
+                           child_pid=process.pid, queue_seconds=round(time.time()-job.get('created', time.time()), 3))
                 if identity and batch:
                     batch_control.remember_child(workflow.folder(batch), identity)
                 counts[resource] += 1
@@ -811,6 +834,12 @@ def worker_tick(pending, owned):
                 elif job.get('project'):
                     legacy_projects.add(job['project'])
                 write_json_atomic(JOBS.parent / 'scheduler.json', {'owner': owner})
+
+
+def log_wait(job, reason, **fields):
+    diag.throttled('job.waiting', (job['id'], reason), job_id=job['id'], batch_id=job.get('batch_id'),
+                   request_id=job.get('request_id'), trace_id=job.get('trace_id'), lane=concurrency.lane(job),
+                   reason=reason, queue_seconds=round(time.time()-job.get('created', time.time()), 3), **fields)
 
 
 def worker():
@@ -828,6 +857,49 @@ def worker():
 
 
 class Handler(BaseHTTPRequestHandler):
+    def handle_one_request(self):
+        self.trace_id = uuid.uuid4().hex
+        self.diagnostic_status = None
+        self.diagnostic_route = None
+        self.user = None
+        started = time.monotonic()
+        with diag.context(trace_id=self.trace_id):
+            try:
+                return super().handle_one_request()
+            except Exception as exc:
+                diag.event('http.failed', level='error', route=self.diagnostic_route, error=exc)
+                raise
+            finally:
+                if self.diagnostic_route and self.diagnostic_route != '/healthz':
+                    fields = dict(route=self.diagnostic_route, method=self.command, status=self.diagnostic_status,
+                                  actor=(self.user or {}).get('username'), duration_ms=round((time.monotonic()-started)*1000))
+                    # Polls are sampled; failures, writes and slow responses always retained.
+                    if self.command == 'GET' and (self.diagnostic_status or 500) < 400 and fields['duration_ms'] < 2000:
+                        diag.throttled('http.completed', (fields['route'], fields['actor']), interval=30, **fields)
+                    else:
+                        diag.event('http.completed', **fields)
+
+    def parse_request(self):
+        valid = super().parse_request()
+        if valid:
+            route = self.path.partition('?')[0]
+            prefix = getattr(self.server, 'base_path', '')
+            if prefix and route.startswith(prefix + '/'):
+                route = route[len(prefix):]
+            self.diagnostic_route = route if re.fullmatch(r'/[a-zA-Z0-9_./-]{0,240}', route) else '/unrecognized'
+            batch = re.match(r'/api/batches/([0-9a-f]{32})(?:/|$)', route)
+            if batch:
+                diag.bind(batch_id=batch[1])
+            if self.command != 'GET':
+                diag.event('http.started', route=self.diagnostic_route, method=self.command)
+        return valid
+
+    def send_response(self, code, message=None):
+        self.diagnostic_status = code
+        super().send_response(code, message)
+        if getattr(self, 'trace_id', None):
+            self.send_header('X-Request-ID', self.trace_id)
+
     def public_url(self, path):
         return getattr(getattr(self, 'server', None), 'base_path', '') + path
 
@@ -839,6 +911,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def web_page(self, name):
         body = (CODE_ROOT / 'exactcut/web' / name).read_bytes()
+        if name == 'index.html':
+            body = body.replace(b'<script src="app.js">', b'<script src="diagnostics.js"></script><script src="app.js">')
         base = f'<base href="{self.public_url("/")}">'.encode()
         return body.replace(b'<meta', base + b'<meta', 1)
 
@@ -847,6 +921,10 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def respond(self, code, body, kind='application/json; charset=utf-8'):
+        if code >= 400:
+            diag.event('http.rejected', level='warning', status=code, route=getattr(self, 'diagnostic_route', None),
+                       actor=(getattr(self, 'user', None) or {}).get('username'),
+                       reason=body.get('error') if isinstance(body, dict) else None)
         if isinstance(body, dict) and body.get('error'):
             from .error_guidance import guidance, redact
             body = {**body, 'error': redact(body['error']),
@@ -894,6 +972,7 @@ class Handler(BaseHTTPRequestHandler):
             except (ValueError, UnicodeError):
                 pass
         if self.user:
+            diag.bind(actor=self.user['username'])
             return True
         if self.path == '/':
             self.send_response(302)
@@ -982,6 +1061,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200, (CODE_ROOT / 'exactcut/web/helper.js').read_bytes(), 'text/javascript; charset=utf-8')
         if self.path == '/app.js':
             return self.respond(200, (CODE_ROOT / 'exactcut/web/app.js').read_bytes(), 'text/javascript; charset=utf-8')
+        if self.path == '/diagnostics.js':
+            return self.respond(200, (CODE_ROOT / 'exactcut/web/diagnostics.js').read_bytes(), 'text/javascript; charset=utf-8')
         if self.path == '/api/batches':
             with LOCK:
                 return self.respond(200, {'batches': [{**b, 'owner': accounts.owner(workflow.BATCHES / b['id'])} for b in workflow.summaries() if self.can_access(b['id'])]})
@@ -1055,6 +1136,7 @@ class Handler(BaseHTTPRequestHandler):
         self.respond(404, {'error': '不存在'})
 
     def stream_video(self, path):
+        started = time.monotonic()
         size = path.stat().st_size
         start, end, code = 0, size - 1, 200
         requested = self.headers.get('Range')
@@ -1096,7 +1178,10 @@ class Handler(BaseHTTPRequestHandler):
                     self.wfile.write(chunk)
                     remaining -= len(chunk)
             except (BrokenPipeError, ConnectionResetError):
-                pass
+                diag.event('preview.client_disconnected', level='warning')
+            finally:
+                diag.event('preview.stream', file_bytes=size, range_start=start, range_end=end,
+                           sent_bytes=end-start+1-remaining, duration_ms=round((time.monotonic()-started)*1000))
 
     def do_POST(self):
         self.normalize_path()
@@ -1106,7 +1191,7 @@ class Handler(BaseHTTPRequestHandler):
         publication = re.fullmatch(r'/api/batches/([0-9a-f]{32})/(publish|verify-delivery)', self.path)
         if publication:
             return self.publication_submission(*publication.groups())
-        if self.path == '/api/help':
+        if self.path in {'/api/help', '/api/client-events'}:
             return self.handle_post()
         with mutation_lock():
             self.handle_post()
@@ -1188,6 +1273,7 @@ class Handler(BaseHTTPRequestHandler):
                 WORK.put((job, job['command']))
                 return self.respond(202, batch_response(batch_id, job))
         except (ValueError, KeyError, TypeError, RuntimeError, OSError) as exc:
+            diag.event('http.publication_rejected', level='warning', batch_id=batch_id, error=exc)
             if verification_started:
                 with mutation_lock(), LOCK:
                     workflow.recover_verification_queue(list(stored_jobs()), batch_id=batch_id)
@@ -1266,6 +1352,7 @@ class Handler(BaseHTTPRequestHandler):
         except stage_results.ResourceDeferred as exc:
             response = (429, {'error': str(exc), 'not_before': exc.not_before})
         except (ValueError,KeyError,TypeError,RuntimeError,OSError) as exc:
+            diag.event('http.hook_preview_failed', level='warning', batch_id=batch_id, error=exc)
             response = (400, {'error':str(exc)})
         finally:
             if admission:
@@ -1291,10 +1378,25 @@ class Handler(BaseHTTPRequestHandler):
             data = json.loads(self.rfile.read(size))
             if not isinstance(data, dict):
                 raise ValueError('无效请求')
+            if self.path == '/api/client-events':
+                allowed = {'page_error', 'unhandled_rejection', 'network_error', 'slow_request', 'action'}
+                if data.get('event') not in allowed or size > 4096:
+                    return self.respond(400, {'error': '无效诊断事件'})
+                fields = {key: data[key] for key in ('event', 'source', 'line', 'column', 'error_type',
+                          'http_trace_id', 'status', 'duration_ms', 'action') if key in data}
+                # Only fixed identifiers/numbers, never free text or user content.
+                if any(not isinstance(v, (int, float, str)) or (isinstance(v, str) and not re.fullmatch(r'[a-zA-Z0-9_.-]{0,100}', v)) for v in fields.values()):
+                    return self.respond(400, {'error': '无效诊断字段'})
+                diag.throttled('browser.event', (self.user['username'], data['event']), interval=10,
+                               actor=self.user['username'], browser=fields)
+                return self.respond(200, {'ok': True})
             if self.path == '/api/login':
                 user = accounts.authenticate(self.server.auth_db, data.get('username',''), data.get('password',''))
                 if not user:
+                    diag.event('auth.login_rejected', level='warning')
                     return self.respond(401, {'error':'账户或密码错误，连续失败请5分钟后再试'})
+                self.user = user
+                diag.event('auth.login_succeeded', actor=user['username'])
                 self.cookie(accounts.login(self.server.auth_db, user))
                 return self.respond(200, user)
             if self.path == '/api/help':
@@ -1435,9 +1537,11 @@ class Handler(BaseHTTPRequestHandler):
         except stage_results.ResourceDeferred as exc:
             self.respond(429, {'error': str(exc), 'not_before': exc.not_before})
         except (ValueError, KeyError, TypeError, RuntimeError) as exc:
+            diag.event('http.validation_failed', level='warning', error=exc)
             from .error_guidance import guidance, redact
             self.respond(400, {'error': redact(exc), 'error_info': guidance(str(exc))})
         except Exception as exc:
+            diag.event('http.handler_failed', level='error', error=exc)
             self.respond(400, {'error': f'处理失败（{type(exc).__name__}），请检查文件格式或查看服务日志'})
 
 
@@ -1447,9 +1551,11 @@ def main():
     if env_file.is_file() or os.environ.get('EXACTCUT_ENV_FILE'):
         load_env_file(env_file)
     limits = concurrency.settings()
-    logging.warning('Effective concurrency settings: %s', json.dumps(limits, sort_keys=True))
     base_path = web_base_path()
     claim_data_root()
+    diag.configure()
+    diag.install_logging()
+    logging.warning('Effective concurrency settings: %s', json.dumps(limits, sort_keys=True))
     worker_enabled = os.environ.get('EXACTCUT_WORKER_ENABLED', '1') == '1'
     JOBS.mkdir(parents=True, exist_ok=True)
     os.chmod(STATE, 0o700)
@@ -1470,6 +1576,8 @@ def main():
     server.password = password
     server.base_path = base_path
     server.auth_db = STATE / 'accounts.sqlite3'
+    diag.event('service.started', base_path=base_path, port=server.server_port, worker_enabled=worker_enabled,
+               concurrency=limits, features=feature_flags())
     accounts.initialize(server.auth_db, password)
     for path in workflow.BATCHES.glob('*/draft.json'):
         if not (path.parent / 'access.json').exists():

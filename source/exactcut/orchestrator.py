@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import result_store
+from . import diagnostics as diag
 from .compiler import compile_workbook
 from .errors import ExactCutError
 from .media import resolve_episode_video, validate_manifest_sources, resolve_full_episodes
@@ -46,7 +47,9 @@ def _request_fingerprint(project_dir: Path, request: Any, config: dict[str, Any]
                 if source_cache is not None:
                     source_cache[str(source)] = {'identity': identity, 'sha256': digest}
             sources.append({"path": str(source), "sha256": digest})
-    return json_sha256({"pipeline": "exact_timeline_v3_unit_qc", "request": request.model_dump(mode="json"), "sources": sources, "config": config})
+    # Operational log retention does not change media bytes or cache identity.
+    media_config = {key: value for key, value in config.items() if key != 'logging'}
+    return json_sha256({"pipeline": "exact_timeline_v3_unit_qc", "request": request.model_dump(mode="json"), "sources": sources, "config": media_config})
 
 
 def _new_results(manifest: BatchManifest) -> dict[str, Any]:
@@ -121,6 +124,7 @@ def execute_batch(
             and previous.get("status") in {"qc_passed", "publish_dry_run", "publish_failed", "fbbm_queued", "fbbm_ready"}
         )
         if reusable_output:
+            diag.event('render.output_reused', request_id=request.request_id, output_sha256=previous.get('output_sha256'))
             if not available_preview(batch_dir.parent, request, previous) and output_dir is not None:
                 try:
                     previous['preview'] = make_preview(output, batch_dir / 'previews' / request.output_filename, previous['output_sha256'])
@@ -194,6 +198,9 @@ def execute_batch(
             stage('qc')
             stage_started = time.monotonic()
             qc = inspect_output(staged, int(render_plan["expected_duration_ms"]), config)
+            diag.event('render.qc', level='info' if qc['allowed'] else 'error', request_id=request.request_id,
+                       expected_ms=qc['expected_duration_ms'], actual_ms=qc['actual_duration_ms'],
+                       allowed=qc['allowed'], errors=qc['errors'])
             record['stage_seconds']['qc'] = round(time.monotonic()-stage_started,3)
             write_json_atomic(request_audit / "render_qc.json", qc)
             if not qc["allowed"]:
@@ -224,6 +231,8 @@ def execute_batch(
                     record["status"] = "fbbm_ready"
         except Exception as exc:
             from .stage_results import ResourceDeferred
+            diag.event('render.request_failed', level='warning' if isinstance(exc, ResourceDeferred) else 'error',
+                       request_id=request.request_id, stage=record.get('stage'), error=exc)
             if isinstance(exc, ResourceDeferred):
                 record.update(status='waiting_resource', not_before=exc.not_before)
                 raise

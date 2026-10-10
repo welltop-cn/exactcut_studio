@@ -314,11 +314,16 @@ def device_allocations(paths):
 
 
 def reserve(job_id, paths, jobs=None):
+    from . import diagnostics as diag
     allocations = device_allocations(paths)
     with reservation_lock(jobs) as ledger:
         for device, allocation in allocations.items():
             used = sum(row.get(device, {}).get('bytes', 0) for key, row in ledger['jobs'].items() if key != job_id)
-            if shutil.disk_usage(allocation['path']).free < policy()['reserve_bytes'] + used + allocation['bytes']:
+            free = shutil.disk_usage(allocation['path']).free
+            if free < policy()['reserve_bytes'] + used + allocation['bytes']:
+                diag.throttled('storage.admission_denied', job_id, level='warning', job_id=job_id,
+                               free_bytes=free, reserved_bytes=used, requested_bytes=allocation['bytes'],
+                               safety_bytes=policy()['reserve_bytes'])
                 return False
         ledger['jobs'][job_id] = allocations
     return True

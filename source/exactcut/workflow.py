@@ -17,6 +17,7 @@ from collections import Counter
 from pathlib import Path
 from urllib.parse import quote
 from . import batch_control, result_store
+from . import diagnostics as diag
 from .intake import validate_draft, download_plan
 from .llm_intake import read_excel
 from .material_download import validate_downloaded_video
@@ -58,6 +59,12 @@ def store_publication(path, request_id, entry):
         all_entries = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
         all_entries[request_id] = entry
         write_json_atomic(path / 'publications.json', all_entries)
+        diag.throttled('publication.state', (path.name, request_id, entry.get('status'), entry.get('intent', {}).get('status')),
+                       batch_id=path.name, request_id=request_id, status=entry.get('status'),
+                       intent_status=entry.get('intent', {}).get('status'), error=entry.get('error'),
+                       record_id=(entry.get('publication') or {}).get('feishu_record_id'),
+                       platform_action=(entry.get('fbbm') or {}).get('action'),
+                       stage_seconds=entry.get('stage_seconds'))
         return all_entries
 
 
@@ -151,6 +158,7 @@ def update(path, status=None, message=None, **fields):
 
 def _update_locked(path, status=None, message=None, **fields):
     data = read_json(path / 'runtime.json')
+    previous_status = data.get('status')
     if status:
         data['status'] = status
     if message:
@@ -162,10 +170,15 @@ def _update_locked(path, status=None, message=None, **fields):
     # private snapshot, and never let a later heartbeat/message regress the sum.
     data.update(production_summary(path, data))
     write_json_atomic(path / 'runtime.json', data)
+    if data.get('status') != previous_status:
+        diag.event('batch.state', batch_id=path.name, previous_status=previous_status, status=data.get('status'),
+                   reason=message)
     return data
 
 
 def checkpoint(path, stage, *, advanced=True, request_id=None, **details):
+    diag.throttled('pipeline.checkpoint', (path.name, request_id, stage), interval=30,
+                   batch_id=path.name, request_id=request_id, stage=stage, advanced=advanced, details=details)
     if request_id is not None:
         record = result_records(path).get(request_id, {})
         fields = {'stage': stage, 'progress_details': details}
@@ -962,6 +975,7 @@ def _produce(batch_id, *, render_only=False, request_id=None):
     except Exception as exc:
         from .stage_results import ResourceDeferred
         if isinstance(exc, ResourceDeferred): raise
+        diag.event('production.failed', level='error', batch_id=batch_id, request_id=request_id, error=exc)
         if request_id is None: update(path, 'failed', str(exc), error=type(exc).__name__)
         else: result_store.patch(path / 'production', request_id, status='failed', error=str(exc), error_type=type(exc).__name__)
         return 2
@@ -979,6 +993,7 @@ def fetch(batch_id):
         except Exception as exc:
             from .stage_results import ResourceDeferred
             if isinstance(exc, ResourceDeferred): raise
+            diag.event('source.batch_failed', level='error', batch_id=batch_id, error=exc)
             update(path, 'failed', str(exc), error=type(exc).__name__)
             return 2
 
@@ -1047,6 +1062,8 @@ def upload(batch_id, request_id):
             entry.pop('error', None)
         except Exception as exc:
             unknown = attempted or delivery_blocked(entry) or bool(entry.get('verification_only') or entry.get('verification_history'))
+            diag.event('publication.failed', level='error', batch_id=batch_id, request_id=request_id,
+                       unknown_delivery=unknown, error=exc)
             entry.update(status='unverified' if unknown else 'publish_failed', error=('待核实：' if unknown else '') + str(exc))
         metrics = entry.setdefault('stage_seconds', {})
         metrics['upload'] = round(metrics.get('upload', 0) + time.monotonic() - started, 3)
@@ -1090,6 +1107,10 @@ def poll(batch_id, request_id):
             previous = entry.get('fbbm') or {}
             changed = any(result.get(key) != previous.get(key) for key in ('action', 'video_id', 'material_id', 'fb_status'))
             entry['fbbm'] = result
+            diag.event('fbbm.state', batch_id=batch_id, request_id=request_id, record_id=record_id,
+                       action=result.get('action'), material_id=result.get('material_id'),
+                       video_id=result.get('video_id'), fb_status=result.get('fb_status'),
+                       waiting_seconds=round(time.time()-entry['poll_started'], 1))
             checkpoint(path, 'fbbm', request_id=request_id, advanced=changed, platform_action=result.get('action', 'syncing'))
             if result.get('action') == 'ready' and result.get('video_id'):
                 entry.update(status='fbbm_ready', completed_at=now_iso()); entry.pop('error', None)
@@ -1100,6 +1121,8 @@ def poll(batch_id, request_id):
         except Exception as exc:
             unknown = attempted or delivery_blocked(entry) or bool(entry.get('verification_only') or entry.get('verification_history'))
             entry.update(status='unverified' if unknown else 'publish_failed', error=('待核实：' if unknown else '') + str(exc))
+            diag.event('fbbm.failed', level='error', batch_id=batch_id, request_id=request_id,
+                       unknown_delivery=unknown, error=exc)
         metrics = entry.setdefault('stage_seconds', {})
         metrics['fbbm'] = round(metrics.get('fbbm', 0) + time.monotonic() - started, 3)
         publication_state(path, manifest, request_id, entry)
@@ -1118,6 +1141,8 @@ def publish(batch_id, request_id):
 
 if __name__ == '__main__':
     load_env_file(project_env_file())
+    diag.configure()
+    diag.install_logging()
     if sys.argv[1] in {'fetch', 'render'}:
         from .stage_results import run_child
         args = [sys.argv[2]]

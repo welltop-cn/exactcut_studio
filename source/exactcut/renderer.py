@@ -23,6 +23,7 @@ from .runtime import environment, protect_path
 from .hook_options import HookOptions, approved_emphasis, hook_duration
 from .hook_presentation import presentation, sample_timeline_frames, approved_preview
 from .util import file_sha256, json_sha256, read_json, write_json_atomic
+from . import diagnostics as diag
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -162,13 +163,21 @@ def source_fingerprints(project_dir: Path, timeline: list[dict], source_cache=No
     return list(sources.values())
 
 
+@diag.traced('render')
 def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str, Any]], output: Path,
                    config: dict[str, Any], *, source_cache=None, progress=None) -> dict[str, Any]:
     def step(name, **details):
+        diag.event('render.step', request_id=request.request_id, drama_id=project_dir.name, stage=name, **details)
         if progress:
             progress(name, **details)
     step('storage_check')
     render = config["render"]
+    diag.event('render.plan', request_id=request.request_id, drama_id=project_dir.name,
+               hook_characters=len(request.hook_text), config_sha256=json_sha256(config),
+               segments=len(safe_timeline), fps=render['fps'], width=render['width'], height=render['height'])
+    for index, item in enumerate(safe_timeline):
+        diag.event('render.segment_plan', request_id=request.request_id, segment=index+1,
+                   **{k: item.get(k) for k in ('type', 'episode', 'start_ms', 'end_ms', 'duration_ms')})
     protect_path(project_dir)
     protect_path(output)
     from .storage import prepare_render
@@ -208,7 +217,9 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
         started = time.monotonic()
         with (cache/f'{key}.lock').open('a') as lock:
             step('base_cache_check')
+            lock_started = time.monotonic()
             fcntl.flock(lock, fcntl.LOCK_EX)
+            diag.event('render.cache_lock_acquired', cache_key=key, wait_ms=round((time.monotonic()-lock_started)*1000))
             reused = False
             if base.exists() and meta_path.exists():
                 try:
@@ -233,6 +244,9 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                         _render_card_unit(str(item['text']),duration,unit,render,work)
                     actual = duration_ms(unit)
                     tolerance = max(50,round(2000/float(render['fps'])))
+                    diag.event('render.segment_qc', request_id=request.request_id, segment=index+1,
+                               expected_ms=duration, actual_ms=actual, tolerance_ms=tolerance,
+                               passed=abs(actual-duration)<=tolerance)
                     if abs(actual-duration)>tolerance:
                         raise ValidationError(f'片段 {index+1} 时长不符：预期 {duration}ms，实际 {actual}ms；未进入拼接')
                     unit_checks.append({'segment':index+1,'expected_ms':duration,'actual_ms':actual})
@@ -257,6 +271,7 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                         'edit_boundaries_ms':boundaries_ms,'unit_checks':unit_checks}
                 write_json_atomic(meta_path,meta)
             timings['base_cut'] = round(time.monotonic()-started,3)
+            diag.event('render.cache_result', cache_key=key, reused=reused, expected_ms=meta['expected_duration_ms'])
             os.utime(base,None)  # LRU usage, updated while its lifetime lock is held.
             # Pin validated bytes in this request's work before cleanup can evict the cache.
             # Reuse the joined path so a fresh cut needs no additional temporary-video peak.

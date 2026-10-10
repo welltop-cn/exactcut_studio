@@ -6,6 +6,7 @@ from .concurrency import ai_settings
 from .runtime import data_root, protect_path
 from .stage_results import ResourceDeferred
 from .util import load_config, read_json, write_json_atomic
+from . import diagnostics as diag
 
 
 def acquire():
@@ -23,6 +24,7 @@ def acquire():
         try:
             fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
+            diag.event('ai.deferred', reason='rate_lock_busy')
             raise ResourceDeferred(time.time() + 1, 'AI 服务资源繁忙，请稍后重试') from None
         now = time.time()
         previous = read_json(target) if target.exists() else {'tokens': capacity, 'updated_at': now}
@@ -36,4 +38,5 @@ def acquire():
         write_json_atomic(target, {'version': 1, 'tokens': max(0, tokens - 1) if allowed else tokens,
                                    'updated_at': clock})
         if not allowed:
+            diag.event('ai.deferred', reason='rate_budget', not_before=clock + (1-tokens)/rate)
             raise ResourceDeferred(clock + (1 - tokens) / rate, 'AI 请求预算已用完，请稍后重试')

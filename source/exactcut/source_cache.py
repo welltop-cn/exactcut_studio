@@ -12,12 +12,15 @@ import signal
 import subprocess
 import sys
 import time
+import threading
+from collections import deque
 from contextlib import contextmanager
 from pathlib import Path
 
 from .runtime import data_root, source_root
 from .storage import GIB, require_space, policy
 from .util import file_sha256, now_iso, write_json_atomic
+from . import diagnostics as diag
 
 EVICT_BELOW = 20 * GIB
 EPISODE_BUDGET = 2 * GIB
@@ -58,6 +61,7 @@ def episode_lock(drama_id: str, episode: str, *, blocking=True):
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
             except BlockingIOError:
+                diag.event('source.lock_wait', drama_id=drama_id, episode=episode)
                 from .stage_results import ResourceDeferred
                 raise ResourceDeferred(time.time() + 1, f'正片正在使用：{episode}，稍后重试') from None
             try:
@@ -171,6 +175,10 @@ def _run_fetch(argv: list[str], drama_id: str, episode: str, dest: Path, on_prog
     success = False
     process = None
     previous = signal.getsignal(signal.SIGTERM)
+    started = time.monotonic()
+    tail = deque(maxlen=8)
+    reader = None
+    diag.event('source.fetch_started', drama_id=drama_id, episode=episode)
 
     def on_term(signum, frame):
         raise SystemExit(128 + signum)
@@ -178,9 +186,19 @@ def _run_fetch(argv: list[str], drama_id: str, episode: str, dest: Path, on_prog
     signal.signal(signal.SIGTERM, on_term)
     try:
         require_material_fetch()
-        process = subprocess.Popen(argv + [drama_id, episode, str(part)])
+        process = subprocess.Popen(argv + [drama_id, episode, str(part)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+        def drain():
+            while True:
+                chunk = process.stdout.readline(2048)
+                if not chunk: break
+                tail.append(chunk.decode('utf-8', errors='replace'))
+        reader = threading.Thread(target=drain, daemon=True)
+        reader.start()
         code = _wait_fetch(process, part, episode, on_progress)
+        reader.join(timeout=1)
         if code != 0:
+            diag.event('source.fetch_failed', level='error', drama_id=drama_id, episode=episode,
+                       exit_code=code, provider_error=''.join(tail)[-1800:])
             raise RuntimeError(f'物料命令失败：{episode}')
         from .material_download import validate_downloaded_video
         validate_downloaded_video(part)
@@ -191,6 +209,12 @@ def _run_fetch(argv: list[str], drama_id: str, episode: str, dest: Path, on_prog
             'sha256': digest, 'bytes': size, 'fetched_at': now_iso(), 'complete': True,
         })
         success = True
+        diag.event('source.fetch_completed', drama_id=drama_id, episode=episode, bytes=size,
+                   duration_ms=round((time.monotonic()-started)*1000), sha256=digest)
+    except BaseException as exc:
+        diag.event('source.fetch_aborted', level='error', drama_id=drama_id, episode=episode, error=exc,
+                   duration_ms=round((time.monotonic()-started)*1000))
+        raise
     finally:
         signal.signal(signal.SIGTERM, previous)
         if process is not None and process.poll() is None:
@@ -202,6 +226,10 @@ def _run_fetch(argv: list[str], drama_id: str, episode: str, dest: Path, on_prog
                 process.wait(timeout=2)
         if not success:
             part.unlink(missing_ok=True)
+        if reader:
+            reader.join(timeout=1)
+        if process is not None and process.stdout is not None and (reader is None or not reader.is_alive()):
+            process.stdout.close()
 
 
 def _incoming_download(part: Path):
@@ -257,8 +285,13 @@ def _wait_fetch(process, part: Path, episode: str, on_progress=None) -> int:
                 on_progress(episode, received, total)
         else:
             idle += delta
+        diag.throttled('source.progress', str(part), interval=30, episode=episode,
+                       drama_id=part.parent.name, received_bytes=received, total_bytes=total,
+                       elapsed_seconds=round(elapsed, 1), idle_seconds=round(idle, 1))
         if elapsed >= FETCH_TOTAL_TIMEOUT or idle >= FETCH_IDLE_TIMEOUT:
             reason = '下载总时长超限' if elapsed >= FETCH_TOTAL_TIMEOUT else '下载长时间无文件进展'
+            diag.event('source.timeout', level='error', episode=episode, drama_id=part.parent.name,
+                       reason=reason, received_bytes=received, total_bytes=total, idle_seconds=idle, elapsed_seconds=elapsed)
             raise TimeoutError(reason + '，已停止本次下载，可重试')
         time.sleep(2 if FETCH_IDLE_TIMEOUT >= 2 else 0.05)
     return process.returncode
@@ -267,6 +300,7 @@ def _wait_fetch(process, part: Path, episode: str, on_progress=None) -> int:
 def _ensure_one(drama_id: str, episode: str, on_progress=None) -> tuple[Path, bool]:
     dest = source_root() / drama_id / f'{episode}.mp4'
     if _usable(dest):
+        diag.event('source.cache_hit', drama_id=drama_id, episode=episode)
         return dest, True
     with episode_lock(drama_id, episode, blocking=False):
         # Another downloader may have published between the first check and locking.
@@ -275,6 +309,7 @@ def _ensure_one(drama_id: str, episode: str, on_progress=None) -> tuple[Path, bo
         _reserve_for_fetch()
         argv = _fetch_argv()
         if argv is None:
+            diag.event('source.unavailable', level='error', drama_id=drama_id, episode=episode, reason='fetch_command_missing')
             raise RuntimeError(f'缺少剪辑必需正片：{episode}')
         _run_fetch(argv, drama_id, episode, dest, on_progress)
         if not _usable(dest):

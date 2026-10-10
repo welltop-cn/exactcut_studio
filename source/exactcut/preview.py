@@ -4,8 +4,10 @@ import os
 import time
 from .media import run_checked, ffprobe
 from .util import file_sha256
+from . import diagnostics as diag
 
 
+@diag.traced('preview.generate')
 def make_preview(master: Path, output: Path, master_sha256: str) -> dict:
     if file_sha256(master) != master_sha256:
         raise ValueError('正式成片版本已变化，未生成预览')
@@ -23,6 +25,8 @@ def make_preview(master: Path, output: Path, master_sha256: str) -> dict:
         if file_sha256(master)!=master_sha256:
             raise ValueError('正式成片版本已变化，未保存预览')
         os.replace(temporary,output)
+        diag.event('preview.ready', bytes=output.stat().st_size, master_bytes=master.stat().st_size,
+                   duration_ms=round(actual*1000), master_sha256=master_sha256)
         return {'master_sha256':master_sha256,'sha256':file_sha256(output),
                 'bytes':output.stat().st_size,'master_bytes':master.stat().st_size,
                 'duration_ms':round(actual*1000),'elapsed_seconds':round(time.monotonic()-started,3)}

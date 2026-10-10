@@ -8,6 +8,7 @@ import threading
 from pathlib import Path
 from .util import read_json, write_json_atomic, now_iso
 from .runtime import instance_marker
+from . import diagnostics as diag
 
 LOCK = threading.RLock()
 ACTIVE = {'queued', 'downloading', 'indexing', 'producing', 'publishing'}
@@ -24,6 +25,9 @@ def write(path, control, message=None):
         control.setdefault('events', []).append({'at': control['updated_at'], 'message': message})
         control['events'] = control['events'][-50:]
     write_json_atomic(path / 'control.json', control)
+    if message:
+        diag.event('batch.control_changed', batch_id=path.name, paused=control.get('paused'),
+                   archived=control.get('archived'), reason=message)
 
 
 class PsProcessTable:
@@ -134,6 +138,8 @@ def signal_identity(identity, sig, table=None):
         return False
     try:
         os.killpg(identity.get('pgid') or identity['pid'], sig)
+        diag.event('process.signalled', child_pid=identity['pid'], signal=int(sig),
+                   request_id=identity.get('request_id'), lane=identity.get('lane'))
         return True
     except ProcessLookupError:
         return False
@@ -201,6 +207,7 @@ def resident_identity(job, process=None):
 
 
 def change(path, action):
+    diag.event('batch.control_requested', batch_id=path.name, action=action)
     with LOCK:
         control = read(path)
         state = read_json(path / 'runtime.json')

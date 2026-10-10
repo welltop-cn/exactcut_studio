@@ -3,11 +3,13 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
 from .errors import ValidationError
 from .runtime import source_root
+from . import diagnostics as diag
 
 
 def bounded_ffmpeg(command: list[str]) -> list[str]:
@@ -24,10 +26,18 @@ def bounded_ffmpeg(command: list[str]) -> list[str]:
 
 def run_checked(command: list[str], *, capture: bool = True, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
     command = bounded_ffmpeg(command)
+    started = time.monotonic()
+    tool = Path(command[0]).name
+    diag.event('media.started', tool=tool, timeout_seconds=timeout)
     try:
         result = subprocess.run(command, text=True, capture_output=capture, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
+        diag.event('media.timeout', level='error', tool=tool, timeout_seconds=timeout,
+                   duration_ms=round((time.monotonic()-started)*1000))
         raise RuntimeError('媒体处理超时，已停止，可查看日志后重试') from exc
+    diag.event('media.completed', level='info' if result.returncode == 0 else 'error', tool=tool,
+               exit_code=result.returncode, duration_ms=round((time.monotonic()-started)*1000),
+               stderr_tail=(result.stderr or '')[-1800:] if result.returncode else None)
     if result.returncode:
         detail = (result.stderr or result.stdout or "").strip()[-4000:]
         raise RuntimeError(f"Command failed ({result.returncode}): {' '.join(command[:5])}\n{detail}")

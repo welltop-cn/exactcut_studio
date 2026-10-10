@@ -172,5 +172,8 @@ def run(batch_id, job_id):
 
 if __name__ == '__main__':
     load_env_file(project_env_file())
+    from . import diagnostics as diag
+    diag.configure()
+    diag.install_logging()
     from .stage_results import run_child
     raise SystemExit(run_child(run, sys.argv[1], sys.argv[2]))

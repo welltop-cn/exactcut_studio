@@ -18,6 +18,7 @@ from .errors import PublishError
 from .runtime import require_publish
 from .naming import validate_material_filename
 from .util import env, file_sha256, now_iso
+from . import diagnostics as diag
 
 
 GUARDED_DELIVERY = ContextVar('guarded_delivery', default=False)
@@ -66,11 +67,13 @@ FEISHU_FIELD_DEFS = [
 
 
 def _response_json(response: requests.Response, action: str) -> dict[str, Any]:
+    diag.event('feishu.http', operation=action, status=response.status_code)
     try:
         payload = response.json()
     except ValueError as exc:
         raise PublishError(f"{action} 返回非JSON：HTTP {response.status_code}") from exc
     if not response.ok or payload.get("code", 0) != 0:
+        diag.event('feishu.rejected', level='warning', operation=action, status=response.status_code, code=payload.get('code'))
         raise PublishError(f"{action}失败：{json.dumps(payload, ensure_ascii=False)}")
     return payload
 
@@ -110,6 +113,7 @@ class OssPublisher:
         scheme = "https" if self.endpoint.startswith("https://") else "http"
         return f"{scheme}://{self.bucket_name}.{host}/{encoded}"
 
+    @diag.traced('oss.upload')
     def upload(self, video: Path, *, dry_run: bool = False) -> dict[str, Any]:
         key, parsed = self.key_for(video)
         digest = file_sha256(video)
@@ -137,6 +141,7 @@ class OssPublisher:
                 remote_hash = meta.headers.get("x-oss-meta-sha256") or meta.headers.get("X-Oss-Meta-Sha256")
                 if remote_hash != digest:
                     raise PublishError(f"OSS上传后校验失败，待核实：{key}")
+        diag.event('oss.verified', reused=existed, sha256=digest, bytes=video.stat().st_size, dry_run=dry_run)
         return {
             **parsed, "oss_key": key, "oss_url": self.public_url(key), "oss_existed": existed,
             "sha256": digest, "size": video.stat().st_size, "dry_run": dry_run,
@@ -165,6 +170,7 @@ class FeishuClient:
         base = f"{FEISHU_API}/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/records"
         return f"{base}/{suffix}" if suffix else base
 
+    @diag.traced('feishu.fields')
     def fields(self) -> dict[str, dict[str, Any]]:
         response = requests.get(
             f"{FEISHU_API}/bitable/v1/apps/{self.app_token}/tables/{self.table_id}/fields",
@@ -210,6 +216,7 @@ class FeishuClient:
             created.append(name)
         return {"dry_run": dry_run, "created": created, "updated": updated, "skipped_existing": skipped}
 
+    @diag.traced('feishu.search')
     def search_by_url(self, oss_url: str) -> dict[str, Any] | None:
         body = {"filter": {"conjunction": "and", "conditions": [{"field_name": "OSS_URL", "operator": "is", "value": [oss_url]}]}, "page_size": 20}
         response = requests.post(f"{self._url()}/search", headers=self.headers, json=body, timeout=30)
@@ -218,6 +225,7 @@ class FeishuClient:
             raise PublishError("OSS_URL 对应多条飞书记录，待核实")
         return items[0] if items else None
 
+    @diag.traced('feishu.create_or_reuse')
     def create_or_reuse(self, fields: dict[str, Any]) -> dict[str, Any]:
         existing = self.search_by_url(fields["OSS_URL"]["link"])
         if existing:
@@ -232,10 +240,12 @@ class FeishuClient:
         record = _response_json(response, "创建飞书记录").get("data", {}).get("record") or {}
         return {"record_id": record.get("record_id") or record.get("id"), "action": "created", "fields": filtered}
 
+    @diag.traced('feishu.get_record')
     def get_record(self, record_id: str) -> dict[str, Any]:
         response = requests.get(self._url(record_id), headers=self.headers, timeout=30)
         return _response_json(response, "读取飞书记录").get("data", {}).get("record") or {}
 
+    @diag.traced('feishu.update')
     def update(self, record_id: str, fields: dict[str, Any]) -> None:
         schema = self.fields()
         filtered = {key: value for key, value in fields.items() if key in schema and not schema[key].get("is_primary")}
@@ -252,6 +262,7 @@ class CfAdsClient:
         self.timeout = int(env("HTTP_TIMEOUT_SECONDS", required=False, default="30") or 30)
         self.token = ""
 
+    @diag.traced('fbbm.request')
     def request(self, method: str, path: str, **kwargs: Any) -> dict[str, Any]:
         guarded = GUARDED_DELIVERY.get()
         # Only the documented read endpoints may replay an auth rejection.
@@ -267,20 +278,24 @@ class CfAdsClient:
             if self.token:
                 headers = {**headers, "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
             response = requests.request(method, f"{self.base}{path}", headers=headers, timeout=self.timeout, **kwargs)
+            diag.event('fbbm.http', method=method, route=path.partition('?')[0], status=response.status_code, attempt=attempt+1)
             try:
                 payload = response.json()
             except ValueError as exc:
                 raise PublishError(f"CF-Ads返回非JSON：HTTP {response.status_code}") from exc
             if payload.get("code") in (100006, 100009) and attempt == 0 and (not guarded or safe_read):
+                diag.event('fbbm.reauthenticate', code=payload.get('code'), attempt=attempt+1)
                 self.token = ""
                 self.login()
                 continue
             if payload.get("code") not in (200, 200005, 200008) and not guarded and attempt < attempts - 1:
+                diag.event('fbbm.retry', code=payload.get('code'), attempt=attempt+1, delay_seconds=2**attempt)
                 time.sleep(2**attempt)
                 continue
             return payload
         return payload
 
+    @diag.traced('fbbm.login')
     def login(self) -> None:
         response = requests.post(
             f"{self.base}/api/v1/auth/login", json={"username": self.username, "password": self.password}, timeout=self.timeout
@@ -320,6 +335,7 @@ def feishu_url(url: str, text: str | None = None) -> dict[str, str]:
     return {"link": url, "text": text or url}
 
 
+@diag.traced('publication.enqueue')
 def publish_to_queue(video: Path, manifest: Any, request: Any, *, dry_run: bool = False) -> dict[str, Any]:
     upload = OssPublisher().upload(video, dry_run=dry_run)
     if dry_run:
@@ -364,6 +380,7 @@ def verify_sync_fields(feishu, record_id, expected):
             raise PublishError(f"飞书同步写入后字段核验失败，待核实：{name}")
 
 
+@diag.traced('publication.sync')
 def sync_record_once(record_id: str) -> dict[str, Any]:
     feishu = FeishuClient()
     cf = CfAdsClient()
