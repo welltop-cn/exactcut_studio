@@ -51,7 +51,7 @@ const assert=require('node:assert/strict');
 const box={}; const $=()=>box;
 const esc=s=>String(s).replaceAll('<','&lt;').replaceAll('>','&gt;');
 const r={events:Array.from({length:60},(_,i)=>({at:new Date(1700000000000+i*1000).toISOString(),message:'step-'+i+'<x>'})).reverse()};
-""" + "const current=null;\n" + source[source.index("function materialLabel("):source.index("function productionProgress(")] + "\n" + line + """
+""" + "const current=null;\n" + source[source.index("function materialLabel("):source.index("function productionProgress(")] + "\n" + "box.innerHTML=eventMarkup(r.events.sort((a,b)=>a.at.localeCompare(b.at)));" + """
 assert.equal((box.innerHTML.match(/class="event"/g)||[]).length,60);
 assert.ok(box.innerHTML.indexOf('step-0&lt;')<box.innerHTML.indexOf('step-59&lt;'));
 assert.ok(!box.innerHTML.includes('<x>'));
@@ -93,7 +93,7 @@ assert.ok(!paused.includes('<progress'));
 const done=productionProgress({request_id:'r4',status:'fbbm_queued',preview:'/preview',timing:{queue_seconds:60,total_seconds:200,complete:true}},{});
 assert.ok(done.includes('制作完成'));
 assert.ok(done.includes('制作排队 60 秒'));
-assert.ok(done.includes('准备至预览总用时 200 秒'));
+assert.ok(done.includes('总耗时 200 秒，其中制作排队 60 秒'));
 assert.ok(!done.includes('等待 FBBM'));
 assert.ok(!done.includes('stage-track'));
 assert.ok(!done.includes('成片已就绪，可前往预览'));
@@ -158,6 +158,30 @@ nodes[0].open=false;renderRequestProgress([{status:'failed'}],{});assert.equal(n
 nodes[0].open=false;renderRequestProgress([{status:'failed'}],{});assert.equal(nodes[0].open,false);
 current.id='other';renderRequestProgress([{status:'processing'}],{});assert.equal(nodes[0].open,false);
 assert.ok(materialEventDetails({request_id:'r1',status:'failed'},{events:[]}).includes(' open>'));
+'''
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_readable_history_separates_operations_and_technical_steps():
+    source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
+    helpers = source[source.index('function materialLabel('):source.index('function productionProgress(')]
+    script = r'''
+const assert=require('node:assert/strict');
+const current={id:'b',draft:{rows:[{request_id:'R1',seq:1}]},assets:[]};
+const esc=s=>String(s??'').replaceAll('<','&lt;');
+''' + helpers + r'''
+const messages=['内容已确认，等待下载与制作','准备正片：EP1','R1：开始制作','R1：检查可用空间','R1：AI 理解重点词','R1：剪辑片段','R1：排版与合成 Hook','R1：已完成，待预览','已请求暂停，保留当前进度'];
+const events=messages.map((message,i)=>({message,at:new Date(1700000000000+i*1000).toISOString()}));
+assert.equal(operationEvents(events).length,2);
+const html=materialEventDetails({request_id:'R1',hook_emphasis:{source:'user_none',highlights:[]}}, {events});
+const main=html.split('<details class="technical-events"')[0];
+assert.ok(main.includes('查看制作过程'));assert.ok(main.includes('添加字幕'));
+assert.ok(main.includes('AI 重点：未启用'));assert.ok(!main.includes('素材1：'));
+assert.ok(!main.includes('检查可用空间'));assert.ok(!main.includes('AI 理解重点词'));
+assert.ok(html.includes('技术详情'));assert.ok(html.includes('检查可用空间'));
+assert.equal(emphasisSummary({source:'ai_semantic',highlights:[],cache_reused:true}),'AI 重点：复用已有分析，无需强调');
+assert.equal(emphasisSummary({source:'ai_semantic',highlights:[]}), 'AI 重点：分析完成，无需强调');
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
