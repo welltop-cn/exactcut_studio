@@ -180,3 +180,29 @@ assert.equal(current.revision,4,action);assert.equal(rendered,0,action);assert.e
 }
 })().catch(e=>{console.error(e);process.exitCode=1});
 """)
+
+
+def test_existing_previews_remain_counted_while_one_candidate_is_rendering():
+    render = SOURCE[SOURCE.index('function renderRuntime()'):SOURCE.index('const previewRequests=')]
+    execution = next(line for line in SOURCE.splitlines() if line.startswith('function executionAsset('))
+    run("""
+const elements={},$=id=>elements[id]??={textContent:'',innerHTML:'',hidden:false};
+const document={querySelector:()=>$('reviewTab')};
+const renderSourcePrefetch=()=>{},renderRequestProgress=()=>{},renderAssets=()=>{},controls=()=>{},setErrorHtml=()=>{};
+const statusLabel=s=>s,badgeClass=()=>'',materialMessage=s=>s||'',esc=s=>s,observationText=()=>'',eventMarkup=()=>'',operationEvents=()=>[];
+let current={media_managed:true,filename:'网页填写',feedback_count:0,runtime:{status:'producing',download_complete:true,events:[]},assets:[
+{request_id:'r1',preview:'/preview/r1',status:'qc_passed',candidate:{status:'processing',stage:'base_cut'}},
+{request_id:'r2',preview:'/preview/r2',status:'qc_passed'}]};
+""" + execution + '\n' + render + """
+renderRuntime();
+assert.equal($('reviewTab').textContent,'成片预览 (2)');
+assert.equal($('reviewCount').textContent,'2 条可预览 · 0 条反馈');
+assert.equal($('previewReadyTitle').textContent,'2 条成片可在线播放');
+assert.equal($('previewReady').hidden,false);
+assert.equal($('progressCount').textContent,'1/2 条制作完成 · 1 条制作中');
+assert.ok($('steps').innerHTML.includes('class="step active">03<b>制作与预览'));
+current.assets=[current.assets[0]];renderRuntime();
+assert.equal($('previewReady').hidden,false);
+assert.equal($('reviewTab').textContent,'成片预览 (1)');
+assert.equal($('progressCount').textContent,'0/1 条制作完成 · 1 条制作中');
+""")
