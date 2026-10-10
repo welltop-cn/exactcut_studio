@@ -40,23 +40,46 @@ function preparePreviewLoads(){
 function setTab(name){activeTab=name;for(const key of ['editor','progress','review'])$(key+'Tab').hidden=key!==name;document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));preparePreviewLoads();}
 function renderBatches(items){batchCache=items;const key=JSON.stringify([items,selectedId,archivedView]);if(key===batchRenderKey)return;batchRenderKey=key;$('currentBatches').textContent='当前项目 ('+items.filter(b=>!b.archived).length+')';$('archivedBatches').textContent='已归档 ('+items.filter(b=>b.archived).length+')';$('currentBatches').classList.toggle('active',!archivedView);$('archivedBatches').classList.toggle('active',archivedView);items=items.filter(b=>!!b.archived===archivedView);$('batchList').innerHTML=items.length?items.map(b=>`<div class="batch-card"><button class="batch ${selectedId===b.id?'selected':''}" data-batch="${esc(b.id)}"><strong>${esc(b.drama_id?b.drama_id+' · ':'')}${esc(b.drama_title||b.display_name||'未命名项目')}</strong><small>${b.owner&&currentUser?.role==='admin'?esc(b.owner)+' · ':''}${esc(b.count)} 条素材 · ${esc(new Date(b.created_at).toLocaleDateString())}</small><span class="badge ${badgeClass(b.status)}">${esc(statusLabel(b.status))}</span></button><div class="batch-actions">${b.archived?`<button class="secondary" data-batch-action="unarchive" data-id="${esc(b.id)}" aria-label="复原项目">复原</button><button class="secondary danger" data-batch-action="delete" data-id="${esc(b.id)}" aria-label="永久删除项目">删除</button>`:`<button class="secondary" data-batch-action="archive" data-id="${esc(b.id)}" aria-label="归档项目">归档</button>`}</div></div>`).join(''):`<p class="hint">${archivedView?'暂无已归档项目。':'点击“＋新建项目”开始填写。'}</p>`}
 let openingBatchId=null,openingBatchRequest=0;
+const batchDetails=new Map(),batchWarmRequests=new Map();
+function rememberBatch(item){
+ batchDetails.delete(item.id);batchDetails.set(item.id,JSON.parse(JSON.stringify(item)));
+ while(batchDetails.size>8)batchDetails.delete(batchDetails.keys().next().value);
+}
+function warmBatch(id){
+ if(!id||id===selectedId||batchDetails.has(id)||batchWarmRequests.size)return;
+ const promise=api('/api/batches/'+id);
+ batchWarmRequests.set(id,promise);
+ promise.then(item=>{if(selectedId!==id)rememberBatch(item)},()=>{}).finally(()=>batchWarmRequests.delete(id));
+}
+function displayBatch(item){
+ archivedView=!!item.runtime.archived;current=item;dirty=false;assetKeys='';hookPreviews.clear();validationDismissed=false;
+ localStorage.setItem('exactcut.batch',item.id);history.replaceState(null,'','#'+item.id);
+ showPage('workspace');renderEditor();renderRuntime();setTab(item.runtime.status==='draft'?'editor':item.assets.some(a=>a.preview)?'review':'progress');
+}
 async function openBatch(id,{refreshList=false}={}){
  if(dirty&&!window.confirm('当前修改尚未保存，是否离开？'))return;
+ if(current?.id===selectedId&&!dirty&&current.runtime)rememberBatch(current);
  const request=++openingBatchRequest;
  openingBatchId=id;selectedId=id;renderBatches(batchCache);
  clearTimeout(prefetchTimer);
  if(previewObserver)previewObserver.disconnect();
  for(const video of $('assets').querySelectorAll('video')){video.pause();video.removeAttribute('src');for(const source of video.querySelectorAll('source'))source.removeAttribute('src');video.load()}
- showPage('empty');$('emptyWorkspaceTitle').textContent='正在加载项目…';$('emptyWorkspaceHint').textContent='正在读取所选项目的最新内容。';$('retryWorkspace').hidden=true;
+ const cached=batchDetails.get(id);
+ if(cached){displayBatch(JSON.parse(JSON.stringify(cached)));$('liveMessage').textContent='正在同步最新进度…'}
+ else{showPage('empty');$('emptyWorkspaceTitle').textContent='正在加载项目…';$('emptyWorkspaceHint').textContent='正在读取所选项目的最新内容。';$('retryWorkspace').hidden=true}
  api('/api/workspace',{batch_id:id}).catch(()=>{});
  try{
-  const item=await api('/api/batches/'+id);
+  const item=await (batchWarmRequests.get(id)||api('/api/batches/'+id));
   if(request!==openingBatchRequest)return;
-  archivedView=!!item.runtime.archived;current=item;dirty=false;assetKeys='';hookPreviews.clear();validationDismissed=false;
-  localStorage.setItem('exactcut.batch',id);history.replaceState(null,'','#'+id);
-  showPage('workspace');renderEditor();renderRuntime();setTab(item.runtime.status==='draft'?'editor':item.assets.some(a=>a.preview)?'review':'progress');
+  if(cached&&(item.revision<current.revision||Date.parse(item.runtime.updated_at)<Date.parse(current.runtime.updated_at))){renderRuntime();return}
+  rememberBatch(item);
+  if(cached){
+   if(dirty){current.runtime=item.runtime;current.assets=item.assets;current.feedback_count=item.feedback_count;current.feedback=item.feedback}
+   else{current=item;archivedView=!!item.runtime.archived;renderEditor()}
+   renderRuntime();
+  }else displayBatch(item);
   if(refreshList)refreshBatches().catch(()=>{});scheduleSourcePrefetch();
- }catch(e){if(request!==openingBatchRequest)return;showEmptyWorkspace(true);throw e}
+ }catch(e){if(request!==openingBatchRequest)return;batchDetails.delete(id);if(!cached||!dirty)showEmptyWorkspace(true);throw e}
  finally{if(request===openingBatchRequest)openingBatchId=null}
 }
 function isoDate(value){const text=String(value||'').replace(/\D/g,'');return /^\d{8}$/.test(text)?`${text.slice(0,4)}-${text.slice(4,6)}-${text.slice(6)}`:''}
@@ -188,6 +211,7 @@ $('assets').addEventListener('click',e=>{const publish=e.target.closest('[data-p
 $('previewButton').onclick=()=>operation($('previewButton'),async()=>{current=await api(`/api/batches/${current.id}/preview`,{});renderRuntime();toast('轻量预览已加入队列；正式成片保留')});
 $('newBatch').onclick=()=>{if(dirty&&!window.confirm('当前修改尚未保存，是否离开？'))return;operation($('newBatch'),async()=>{dirty=false;const result=await api('/api/batches/blank',{});await openBatch(result.id,{refreshList:true});toast('项目已创建，请填写 Hook 和剪辑时间。')})};
 $('batchList').onclick=e=>{const action=e.target.closest('[data-batch-action]');if(action){sidebarAction(action);return}const b=e.target.closest('[data-batch]');if(b)openBatch(b.dataset.batch).catch(e=>toast(e.message,true))};
+for(const event of ['pointerover','focusin'])$('batchList').addEventListener(event,e=>warmBatch(e.target.closest('[data-batch]')?.dataset.batch));
 document.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>setTab(button.dataset.tab));$('feedbackNav').onclick=()=>feedbackPage().catch(e=>toast(e.message,true));
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
 function showEmptyWorkspace(error=false){showPage('empty');$('emptyWorkspaceTitle').textContent=error?'暂时无法打开项目':'暂无项目';$('emptyWorkspaceHint').textContent=error?'请重试，已有项目和填写内容会保留。':'点击左侧“＋新建项目”开始填写。';$('retryWorkspace').hidden=!error}
@@ -212,6 +236,7 @@ for(const [id,action,message] of [['pauseButton','pause','已暂停，进度已�
 }
 
 function clearDeletedSelection(id){
+ batchDetails.delete(id);
  if(selectedId===id){selectedId=null;current=null;dirty=false;assetKeys='';history.replaceState(null,'',location.pathname);showEmptyWorkspace()}
  if(localStorage.getItem('exactcut.batch')===id)localStorage.removeItem('exactcut.batch');
 }
@@ -222,6 +247,7 @@ async function sidebarAction(button){
  if(action==='delete'&&!window.confirm(`永久删除 ${item.drama_id} · ${item.drama_title||item.filename}？\n\n本项目的制作内容、成片及记录将永久删除，无法复原。共用原片和已上传到 FBBM 的素材不受影响。`))return;
  await operation(button,async()=>{
   const result=await api(`/api/batches/${id}/${action}`,action==='delete'?{confirmation:id}:{});
+  batchDetails.delete(id);
   if(action==='delete')clearDeletedSelection(id);
   else if(selectedId===id){current=result;renderRuntime()}
   await refreshBatches();toast(action==='delete'?'项目已永久删除':action==='archive'?'已归档，可在已归档列表复原':'项目已复原到当前项目');

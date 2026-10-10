@@ -49,6 +49,53 @@ const item=marker=>({id:'a',marker,runtime:{status:'draft'},assets:[]});
     assert result.returncode == 0, result.stderr
 
 
+def test_visited_project_displays_before_network_and_keeps_edits_during_refresh():
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    script = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict');
+const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const nodes={},pending=[],rendered=[];
+const ctx=vm.createContext({dirty:false,selectedId:null,current:null,batchCache:[],archivedView:false,
+ assetKeys:'',hookPreviews:new Map(),validationDismissed:false,prefetchTimer:0,previewObserver:null,
+ clearTimeout(){},$:id=>nodes[id]||(nodes[id]={querySelectorAll:()=>[]}),window:{confirm:()=>true},
+ api:(path,data)=>data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({path,resolve,reject})),
+ renderBatches(){},showPage(name){nodes.page=name},renderEditor(){rendered.push(ctx.current.id)},
+ renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
+ localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
+});
+vm.runInContext(source.slice(source.indexOf('let openingBatchId='),source.indexOf('function isoDate(')),ctx);
+const item=(id,revision=1)=>({id,revision,draft:{text:'saved'},runtime:{status:'draft'},assets:[]});
+(async()=>{
+ let opening=vm.runInContext("openBatch('a')",ctx);pending[0].resolve(item('a'));await opening;
+ opening=vm.runInContext("openBatch('b')",ctx);pending[1].resolve(item('b'));await opening;
+ opening=vm.runInContext("openBatch('a')",ctx);
+ assert.equal(nodes.page,'workspace','visited project must display without waiting for network');
+ assert.equal(ctx.current.id,'a');assert.equal(rendered.at(-1),'a');
+ ctx.current.draft.text='unsaved edit';ctx.dirty=true;
+ pending[2].resolve(item('a',2));await opening;
+ assert.equal(ctx.current.draft.text,'unsaved edit');assert.equal(ctx.current.revision,1);
+ assert.equal(ctx.dirty,true,'revalidation must not discard edits or bypass revision conflicts');
+ ctx.dirty=false;
+ await vm.runInContext("warmBatch('c')",ctx); // Starts in background; does not await network.
+ assert.equal(pending.length,4);
+ opening=vm.runInContext("openBatch('c')",ctx);
+ assert.equal(pending.length,4,'click must reuse the hover request');
+ pending[3].resolve(item('c'));await opening;
+ assert.equal(ctx.current.id,'c');
+ opening=vm.runInContext("openBatch('a')",ctx);
+ ctx.current=item('a',3);ctx.current.draft.text='saved while refreshing';
+ pending[4].resolve(item('a',2));await opening;
+ assert.equal(ctx.current.revision,3);assert.equal(ctx.current.draft.text,'saved while refreshing');
+ opening=vm.runInContext("openBatch('c')",ctx);pending[5].reject(Error('deleted'));await assert.rejects(opening);
+ assert.equal(nodes.page,'error','failed revalidation must hide inaccessible cached data');
+ vm.runInContext("for(let i=0;i<12;i++)rememberBatch({id:'cache-'+i})",ctx);
+ assert.equal(vm.runInContext('batchDetails.size',ctx),8,'cache memory must be bounded');
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+    result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_poll_does_not_update_a_project_during_or_after_a_new_switch():
     source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
     script = r'''
