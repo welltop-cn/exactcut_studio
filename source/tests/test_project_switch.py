@@ -121,3 +121,26 @@ vm.runInContext(source.slice(source.indexOf('async function poll('),source.index
 '''
     result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_slow_admin_sidebar_does_not_delay_selected_project_refresh():
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    script = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict');
+const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+let finishList,renders=0;
+const old={id:'a',revision:1,runtime:{updated_at:'2026-10-10T00:00:00Z'}};
+const ctx=vm.createContext({polling:false,selectedId:'a',current:old,
+ openingBatchId:null,openingBatchRequest:1,busy:new Set(),dirty:false,
+ refreshBatches:()=>new Promise(r=>finishList=r),refreshQueue:async()=>{},prefetchSources:async()=>{},
+ api:async()=>({...old,runtime:{updated_at:'2026-10-10T00:00:01Z'}}),$:()=>({}),
+ renderRuntime(){renders++},renderEditor(){},refreshTiming(){},hookPreviews:new Map()});
+vm.runInContext(source.slice(source.indexOf('async function poll('),source.indexOf('function renderSourcePrefetch(')),ctx);
+(async()=>{
+ const pending=vm.runInContext('poll()',ctx);await new Promise(setImmediate);
+ assert.equal(renders,1,'selected project must update while admin sidebar is still pending');
+ finishList();await pending;
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+    result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
