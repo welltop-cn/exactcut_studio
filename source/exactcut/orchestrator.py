@@ -199,8 +199,8 @@ def execute_batch(
             stage_started = time.monotonic()
             qc = inspect_output(staged, int(render_plan["expected_duration_ms"]), config)
             diag.event('render.qc', level='info' if qc['allowed'] else 'error', request_id=request.request_id,
-                       expected_ms=qc['expected_duration_ms'], actual_ms=qc['actual_duration_ms'],
-                       allowed=qc['allowed'], errors=qc['errors'])
+                       expected_ms=qc.get('expected_duration_ms'), actual_ms=qc.get('actual_duration_ms'),
+                       allowed=qc['allowed'], errors=qc.get('errors'))
             record['stage_seconds']['qc'] = round(time.monotonic()-stage_started,3)
             write_json_atomic(request_audit / "render_qc.json", qc)
             if not qc["allowed"]:

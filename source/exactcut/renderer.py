@@ -167,16 +167,16 @@ def source_fingerprints(project_dir: Path, timeline: list[dict], source_cache=No
 def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str, Any]], output: Path,
                    config: dict[str, Any], *, source_cache=None, progress=None) -> dict[str, Any]:
     def step(name, **details):
-        diag.event('render.step', request_id=request.request_id, drama_id=project_dir.name, stage=name, **details)
+        diag.event('render.step', request_id=getattr(request, 'request_id', None), drama_id=project_dir.name, stage=name, **details)
         if progress:
             progress(name, **details)
     step('storage_check')
     render = config["render"]
-    diag.event('render.plan', request_id=request.request_id, drama_id=project_dir.name,
+    diag.event('render.plan', request_id=getattr(request, 'request_id', None), drama_id=project_dir.name,
                hook_characters=len(request.hook_text), config_sha256=json_sha256(config),
                segments=len(safe_timeline), fps=render['fps'], width=render['width'], height=render['height'])
     for index, item in enumerate(safe_timeline):
-        diag.event('render.segment_plan', request_id=request.request_id, segment=index+1,
+        diag.event('render.segment_plan', request_id=getattr(request, 'request_id', None), segment=index+1,
                    **{k: item.get(k) for k in ('type', 'episode', 'start_ms', 'end_ms', 'duration_ms')})
     protect_path(project_dir)
     protect_path(output)
@@ -244,7 +244,7 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                         _render_card_unit(str(item['text']),duration,unit,render,work)
                     actual = duration_ms(unit)
                     tolerance = max(50,round(2000/float(render['fps'])))
-                    diag.event('render.segment_qc', request_id=request.request_id, segment=index+1,
+                    diag.event('render.segment_qc', request_id=getattr(request, 'request_id', None), segment=index+1,
                                expected_ms=duration, actual_ms=actual, tolerance_ms=tolerance,
                                passed=abs(actual-duration)<=tolerance)
                     if abs(actual-duration)>tolerance:

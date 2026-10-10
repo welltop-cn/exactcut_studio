@@ -1551,11 +1551,11 @@ def main():
     if env_file.is_file() or os.environ.get('EXACTCUT_ENV_FILE'):
         load_env_file(env_file)
     limits = concurrency.settings()
+    logging.warning('Effective concurrency settings: %s', json.dumps(limits, sort_keys=True))
     base_path = web_base_path()
     claim_data_root()
     diag.configure()
     diag.install_logging()
-    logging.warning('Effective concurrency settings: %s', json.dumps(limits, sort_keys=True))
     worker_enabled = os.environ.get('EXACTCUT_WORKER_ENABLED', '1') == '1'
     JOBS.mkdir(parents=True, exist_ok=True)
     os.chmod(STATE, 0o700)
