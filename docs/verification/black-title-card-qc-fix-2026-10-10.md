@@ -18,3 +18,14 @@
 - `git diff --check` 通过。
 
 字形检测不是OCR或画面语义审查，不代表完整内容准确性审核；本次范围为避免合法黑底字卡误判，同时保留异常黑帧/空白字卡阻断。
+
+## 发布与线上复验
+
+- 代码提交 `f03d80026a091857ca244589f9640da1aacefc8a`，版本 `us-east-20261010-qc-title-card`，固定镜像 `sha256:b1d9bdafc60fc3e63840d0f205308361cdf648fc1831b3ca91c2363ea5ca3ac2`。
+- Linux发布镜像全量：**820 passed, 2 skipped in 170.11s**；两项Docker CLI环境检查已在本机822全量中通过。隔离镜像启动、登录、保存、字体预览、worker健康均正常。
+- 2026-10-10 10:27 UTC，发布管理器check-switch允许（无活动/阻塞任务），publish返回ok，上一版本 `us-east-20261010-typography-diagnostics` 保留。
+- 将原四个失败项目通过repair复制，原文案、Hook、黑底字卡和时间线不变，共八条，线上并发制作 **8/8 qc_passed**，约30.3秒。均值仍为1.9249～1.9858，字形覆盖率全部1.0，实际/预期时长18或19秒全部一致。未更换为彩色视频规避问题。
+- 在服务器隔离验收容器中实际编码1秒纯黑视频，普通QC返回 `first frame is black`，按字卡检查同时返回 `title card text is missing or unreadable`；均正确拒绝。
+- 新验收项目已归档，原失败记录保留，临时验收容器已删除。生产healthz=ok、worker_alive=true、maintenance=false，队列排空；未触发外部上传/发布。
+- 服务器私有复验材料：`/srv/exactcut/preparation/online-cases-20261010/qc-fix-retest.json` 与 `/srv/exactcut/preparation/qc-fix-retest.log`。历史源码发布档案未覆盖。
+- 验收期间发现入口nginx已启用HTTPS并使用域名证书，当前正式域名 `autocut.creativefitting.ai`；直接IP会跳转HTTPS但IP不在证书SAN中，此配置不属于本次修复，不修改nginx。
