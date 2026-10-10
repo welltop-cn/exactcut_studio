@@ -15,7 +15,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 from .errors import ValidationError
 from .fonts import font_path, load_font
-from .media import resolve_episode_video, run_checked, duration_ms
+from .media import resolve_episode_video, run_checked, duration_ms, ffprobe
 from .source_cache import hold_shared_for, shared_for
 from .hook_visual import resolve_hook_visual, render_personalized_hook_png
 from .hook_emphasis import resolve_emphasis, manual_emphasis, plain_hook
@@ -86,6 +86,49 @@ def _render_card_unit(text: str, duration_ms: int, output: Path, render: dict[st
 
 
 def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any], expected_ms: int) -> None:
+    # Units have already been normalized and independently checked. Copy their
+    # video packets; reconstruct audio at frame boundaries to avoid accumulating
+    # AAC padding or container-duration rounding at each join.
+    from fractions import Fraction
+    videos = [next(s for s in ffprobe(item)['streams'] if s['codec_type'] == 'video') for item in inputs]
+    fields = ('codec_name', 'profile', 'level', 'width', 'height', 'pix_fmt',
+              'time_base', 'r_frame_rate', 'sample_aspect_ratio')
+    signature = tuple(videos[0].get(key) for key in fields)
+    if (videos[0].get('codec_name') != 'h264'
+            or Fraction(videos[0]['r_frame_rate']) != Fraction(str(render['fps']))
+            or any(int(video.get('has_b_frames', 0)) > 2 for video in videos)
+            or any(tuple(video.get(key) for key in fields) != signature for video in videos)
+            or any(not str(video.get('nb_frames', '')).isdigit() for video in videos)):
+        return _concat_units_encoded(inputs, output, render, expected_ms)
+    lengths = [int(video['nb_frames']) / Fraction(video['r_frame_rate']) for video in videos]
+    with tempfile.TemporaryDirectory(prefix='join-', dir=output.parent) as directory:
+        listing = Path(directory) / 'video.ffconcat'
+        lines = ['ffconcat version 1.0']
+        for index, (item, length) in enumerate(zip(inputs, lengths)):
+            video_only = Path(directory) / f'{index}.mp4'
+            run_checked(['ffmpeg', '-y', '-v', 'error', '-i', str(item),
+                         '-map', '0:v:0', '-c:v', 'copy', '-an', str(video_only)])
+            item = video_only
+            quoted = str(item.resolve()).replace("'", "'\\''")
+            lines += [f"file '{quoted}'", f'duration {float(length):.9f}']
+        listing.write_text('\n'.join(lines) + '\n')
+        command = ['ffmpeg', '-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', str(listing)]
+        chains = []
+        for index, (item, length) in enumerate(zip(inputs, lengths), 1):
+            command += ['-i', str(item)]
+            chains.append(f'[{index}:a]aresample={render["audio_rate"]},apad,'
+                          f'atrim=duration={float(length):.9f},asetpts=PTS-STARTPTS[a{index}]')
+        chains.append(''.join(f'[a{i}]' for i in range(1, len(inputs)+1)) +
+                      f'concat=n={len(inputs)}:v=0:a=1[a]')
+        command += ['-filter_complex', ';'.join(chains), '-map', '0:v:0', '-map', '[a]',
+                    # Preserve presentation order while making decoding timestamps continuous
+                    # across independent GOPs (including one-frame cuts).
+                    '-c:v', 'copy', '-bsf:v', f'setts=pts=PTS:dts=(N-2)/({render["fps"]}*TB)', '-c:a', render['audio_codec'], '-ar', str(render['audio_rate']),
+                    '-ac', str(render['audio_channels']), '-movflags', '+faststart', str(output)]
+        run_checked(command)
+
+
+def _concat_units_encoded(inputs: list[Path], output: Path, render: dict[str, Any], expected_ms: int) -> None:
     command = ["ffmpeg", "-y", "-v", "error"]
     for item in inputs:
         command += ["-i", str(item)]
@@ -209,7 +252,7 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
     timings['ai_emphasis'] = round(time.monotonic()-started, 3)
     # Hook-only edits and renaming reuse the checked cut; source bytes and encoder settings are part of the key.
     base_render = {k:v for k,v in render.items() if not k.startswith('hook_')}
-    identity = {'version':2,'timeline':safe_timeline,'sources':sources,
+    identity = {'version':3,'timeline':safe_timeline,'sources':sources,
                 'render':base_render}
     key = json_sha256(identity)
     cache = project_dir/'cache/render-base'

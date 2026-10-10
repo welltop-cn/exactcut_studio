@@ -1028,6 +1028,14 @@ class Handler(BaseHTTPRequestHandler):
         """Called under the existing mutation lock; persist onboarding per account."""
         path = ROOT / '.web-state/workspaces' / (self.user['username'] + '.json')
         state = read_json(path) if path.exists() else {}
+        if 'batch_id' in data:
+            bid = data['batch_id']
+            if not isinstance(bid, str) or not self.can_access(bid) or not (workflow.folder(bid) / 'draft.json').exists():
+                raise ValueError('项目不存在或无权访问')
+            state['last_batch_id'] = bid
+            state['initialized'] = True
+            write_json_atomic(path, state)
+            return {'batch_id': bid}
         batches = workflow.summaries()
         accessible = {b['id']: b for b in batches if self.can_access(b['id'])}
         owned = [b for b in batches if accounts.owner(workflow.folder(b['id'])) == self.user['username']]
