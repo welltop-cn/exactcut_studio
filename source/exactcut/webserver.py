@@ -2,6 +2,8 @@
 from __future__ import annotations
 import base64
 import hmac
+import hashlib
+import gzip
 import json
 import logging
 import os
@@ -13,7 +15,7 @@ import threading
 import tempfile
 import time
 import uuid
-from urllib.parse import unquote
+from urllib.parse import unquote, parse_qs
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -904,6 +906,7 @@ class Handler(BaseHTTPRequestHandler):
         return getattr(getattr(self, 'server', None), 'base_path', '') + path
 
     def normalize_path(self):
+        self.asset_version = parse_qs(self.path.partition('?')[2]).get('v', [''])[0]
         self.path = self.path.partition('?')[0]
         prefix = getattr(self.server, 'base_path', '')
         if prefix and self.path.startswith(prefix + '/'):
@@ -913,6 +916,10 @@ class Handler(BaseHTTPRequestHandler):
         body = (CODE_ROOT / 'exactcut/web' / name).read_bytes()
         if name == 'index.html':
             body = body.replace(b'<script src="app.js">', b'<script src="diagnostics.js"></script><script src="app.js">')
+        if name == 'index.html':
+            for script in ('app.js', 'helper.js', 'diagnostics.js'):
+                version = hashlib.sha256((CODE_ROOT / 'exactcut/web' / script).read_bytes()).hexdigest()[:20]
+                body = body.replace(f'src="{script}"'.encode(), f'src="{script}?v={version}"'.encode())
         base = f'<base href="{self.public_url("/")}">'.encode()
         return body.replace(b'<meta', base + b'<meta', 1)
 
@@ -920,7 +927,17 @@ class Handler(BaseHTTPRequestHandler):
         # Do not log credentials, query strings or request bodies.
         pass
 
-    def respond(self, code, body, kind='application/json; charset=utf-8'):
+    def script(self, name):
+        body = (CODE_ROOT / 'exactcut/web' / name).read_bytes()
+        version = hashlib.sha256(body).hexdigest()[:20]
+        cache = 'private, max-age=31536000, immutable' if self.asset_version == version else 'no-store'
+        # Compress only static code: never mix account data or secrets into compression.
+        accepted = self.headers.get('Accept-Encoding', '').lower().split(',')
+        compressed = any(re.fullmatch(r'\s*gzip\s*(?:;\s*q=(?:1(?:\.0*)?|0\.0*[1-9]\d*))?\s*', item) for item in accepted)
+        return self.respond(200, gzip.compress(body, mtime=0) if compressed else body,
+                            'text/javascript; charset=utf-8', cache=cache, encoding='gzip' if compressed else None, vary=True)
+
+    def respond(self, code, body, kind='application/json; charset=utf-8', *, cache='no-store', encoding=None, vary=False):
         if code >= 400:
             diag.event('http.rejected', level='warning', status=code, route=getattr(self, 'diagnostic_route', None),
                        actor=(getattr(self, 'user', None) or {}).get('username'),
@@ -934,7 +951,11 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(code)
         self.send_header('Content-Type', kind)
         self.send_header('Content-Length', str(len(body)))
-        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Cache-Control', cache)
+        if encoding:
+            self.send_header('Content-Encoding', encoding)
+        if vary:
+            self.send_header('Vary', 'Accept-Encoding')
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Referrer-Policy', 'no-referrer')
@@ -1058,11 +1079,11 @@ class Handler(BaseHTTPRequestHandler):
                 self.cookie(accounts.login(self.server.auth_db, self.user))
             return self.respond(200, self.web_page('index.html'), 'text/html; charset=utf-8')
         if self.path == '/helper.js':
-            return self.respond(200, (CODE_ROOT / 'exactcut/web/helper.js').read_bytes(), 'text/javascript; charset=utf-8')
+            return self.script('helper.js')
         if self.path == '/app.js':
-            return self.respond(200, (CODE_ROOT / 'exactcut/web/app.js').read_bytes(), 'text/javascript; charset=utf-8')
+            return self.script('app.js')
         if self.path == '/diagnostics.js':
-            return self.respond(200, (CODE_ROOT / 'exactcut/web/diagnostics.js').read_bytes(), 'text/javascript; charset=utf-8')
+            return self.script('diagnostics.js')
         if self.path == '/api/batches':
             with LOCK:
                 return self.respond(200, {'batches': [{**b, 'owner': accounts.owner(workflow.BATCHES / b['id'])} for b in workflow.summaries() if self.can_access(b['id'])]})

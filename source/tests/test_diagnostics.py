@@ -150,7 +150,7 @@ def test_browser_events_require_auth_and_accept_only_metadata(diag, app):
     assert request(app, 'POST', '/home/api/client-events', {'event': 'page_error', 'source': 'https://host?token=private'}, headers)[0] == 400
     assert any(r['event'] == 'browser.event' and r['browser']['line'] == 42 for r in records(root))
     status, _, body = request(app, 'GET', '/home/', headers=headers)
-    assert status == 200 and body.index(b'src="diagnostics.js"') < body.index(b'src="app.js"')
+    assert status == 200 and body.index(b'src="diagnostics.js?v=') < body.index(b'src="app.js?v=')
 
 
 def test_query_filters_by_batch_and_errors(diag):

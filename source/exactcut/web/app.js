@@ -9,7 +9,7 @@ const stageNames={source_check:'校验原片',storage_check:'检查可用空间'
 const activeStatuses=['queued','downloading','indexing','producing','publishing'];
 let archivedView=false,batchCache=[],batchRenderKey='';
 let currentUser=null;
-let current=null,dirty=false,selectedId=null,activeTab='editor',assetKeys='',polling=false,toastTimer;
+let current=null,dirty=false,selectedId=null,activeTab='editor',assetKeys='',polling=true,toastTimer;
 let prefetching=false,prefetchTimer;
 const busy=new Set();
 const hookPreviews=new Map();
@@ -29,7 +29,7 @@ function controls(){if(!current)return;const r=current.runtime,editable=r.status
 function showPage(name){$('emptyWorkspace').hidden=name!=='empty';$('workspace').hidden=name!=='workspace';$('feedbackPage').hidden=name!=='feedback';}
 function setTab(name){activeTab=name;for(const key of ['editor','progress','review'])$(key+'Tab').hidden=key!==name;document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===name));}
 function renderBatches(items){batchCache=items;const key=JSON.stringify([items,selectedId,archivedView]);if(key===batchRenderKey)return;batchRenderKey=key;$('currentBatches').textContent='当前项目 ('+items.filter(b=>!b.archived).length+')';$('archivedBatches').textContent='已归档 ('+items.filter(b=>b.archived).length+')';$('currentBatches').classList.toggle('active',!archivedView);$('archivedBatches').classList.toggle('active',archivedView);items=items.filter(b=>!!b.archived===archivedView);$('batchList').innerHTML=items.length?items.map(b=>`<div class="batch-card"><button class="batch ${selectedId===b.id?'selected':''}" data-batch="${esc(b.id)}"><strong>${esc(b.drama_id?b.drama_id+' · ':'')}${esc(b.drama_title||b.display_name||'未命名项目')}</strong><small>${b.owner&&currentUser?.role==='admin'?esc(b.owner)+' · ':''}${esc(b.count)} 条素材 · ${esc(new Date(b.created_at).toLocaleDateString())}</small><span class="badge ${badgeClass(b.status)}">${esc(statusLabel(b.status))}</span></button><div class="batch-actions">${b.archived?`<button class="secondary" data-batch-action="unarchive" data-id="${esc(b.id)}" aria-label="复原项目">复原</button><button class="secondary danger" data-batch-action="delete" data-id="${esc(b.id)}" aria-label="永久删除项目">删除</button>`:`<button class="secondary" data-batch-action="archive" data-id="${esc(b.id)}" aria-label="归档项目">归档</button>`}</div></div>`).join(''):`<p class="hint">${archivedView?'暂无已归档项目。':'点击“＋新建项目”开始填写。'}</p>`}
-async function openBatch(id){if(dirty&&!window.confirm('当前修改尚未保存，是否离开？'))return;const item=await api('/api/batches/'+id);await api('/api/workspace',{batch_id:id});selectedId=id;archivedView=!!item.runtime.archived;current=item;dirty=false;assetKeys='';hookPreviews.clear();validationDismissed=false;localStorage.setItem('exactcut.batch',id);history.replaceState(null,'','#'+id);showPage('workspace');renderEditor();renderRuntime();setTab(item.runtime.status==='draft'?'editor':item.assets.some(a=>a.preview)?'review':'progress');await refreshBatches();scheduleSourcePrefetch()}
+async function openBatch(id,{refreshList=true}={}){if(dirty&&!window.confirm('当前修改尚未保存，是否离开？'))return;const item=await api('/api/batches/'+id);await api('/api/workspace',{batch_id:id});selectedId=id;archivedView=!!item.runtime.archived;current=item;dirty=false;assetKeys='';hookPreviews.clear();validationDismissed=false;localStorage.setItem('exactcut.batch',id);history.replaceState(null,'','#'+id);showPage('workspace');renderEditor();renderRuntime();setTab(item.runtime.status==='draft'?'editor':item.assets.some(a=>a.preview)?'review':'progress');if(refreshList)await refreshBatches();else renderBatches(batchCache);scheduleSourcePrefetch()}
 function isoDate(value){const text=String(value||'').replace(/\D/g,'');return /^\d{8}$/.test(text)?`${text.slice(0,4)}-${text.slice(4,6)}-${text.slice(6)}`:''}
 function inputField(label,key,value,attrs=''){const date=attrs.includes('type="date"');return `<div class="field"><label for="meta-${key}">${esc(label)}</label><input id="meta-${key}" ${attrs} value="${esc(date?isoDate(value):value)}" data-meta="${key}"></div>`}
 function padPart(value,width){const text=String(value??'').replace(/\D/g,'');return (text||'').padStart(width,'0')}
@@ -139,12 +139,13 @@ $('batchList').onclick=e=>{const action=e.target.closest('[data-batch-action]');
 document.querySelectorAll('[data-tab]').forEach(button=>button.onclick=()=>setTab(button.dataset.tab));$('feedbackNav').onclick=()=>feedbackPage().catch(e=>toast(e.message,true));
 window.addEventListener('beforeunload',e=>{if(dirty){e.preventDefault();e.returnValue=''}});
 function showEmptyWorkspace(error=false){showPage('empty');$('emptyWorkspaceTitle').textContent=error?'暂时无法打开项目':'暂无项目';$('emptyWorkspaceHint').textContent=error?'请重试，已有项目和填写内容会保留。':'点击左侧“＋新建项目”开始填写。';$('retryWorkspace').hidden=!error}
-async function restoreWorkspace(){
- const workspace=await api('/api/workspace',{}),batches=await refreshBatches(),linked=location.hash.slice(1);
+async function restoreWorkspace(workspace){
+ workspace=workspace||await api('/api/workspace',{});
+ const batches=await refreshBatches(),linked=location.hash.slice(1);
  const id=linked&&batches.some(b=>b.id===linked)?linked:workspace.batch_id;
- if(id)await openBatch(id);else showEmptyWorkspace();
+ if(id)await openBatch(id,{refreshList:false});else showEmptyWorkspace();
 }
-(async()=>{try{currentUser=await api('/api/me');$('accountName').textContent=currentUser.name+' · '+(currentUser.role==='admin'?'管理员':'制作人');$('accountsNav').hidden=currentUser.role!=='admin';$('storageNav').hidden=currentUser.role!=='admin';$('usageNav').hidden=currentUser.role!=='admin';await restoreWorkspace();await poll()}catch(e){showEmptyWorkspace(true);toast(e.message,true)}})();setInterval(poll,3000);
+(async()=>{try{const initial=await Promise.all([api('/api/me'),api('/api/workspace',{})]);currentUser=initial[0];$('accountName').textContent=currentUser.name+' · '+(currentUser.role==='admin'?'管理员':'制作人');$('accountsNav').hidden=currentUser.role!=='admin';$('storageNav').hidden=currentUser.role!=='admin';$('usageNav').hidden=currentUser.role!=='admin';await restoreWorkspace(initial[1]);$('connection').textContent='● 已连接 · 状态自动同步'}catch(e){showEmptyWorkspace(true);toast(e.message,true)}finally{polling=false}})();setInterval(poll,3000);
 $('retryWorkspace').onclick=()=>operation($('retryWorkspace'),async()=>{await restoreWorkspace();await poll()});
 
 $('currentBatches').onclick=()=>{archivedView=false;renderBatches(batchCache)};
