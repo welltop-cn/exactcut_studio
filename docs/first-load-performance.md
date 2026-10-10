@@ -19,3 +19,19 @@
 新增真实 HTTP 验证压缩往返、缓存范围、未认证访问、过期版本和禁用 gzip；Node 执行真实初始化代码，验证并行身份/工作区请求、依赖顺序、单次列表、链接恢复及轮询锁释放。已有工作区测试覆盖默认项目、用户隔离、记忆选择和无效链接回退。完整回归在不含开发数据的隔离副本运行。
 
 隔离副本完整 `pytest tests -q` 已通过：824 项，退出码 0。日志 `/tmp/exactcut-first-load-clean-tests.log`；`node --check source/exactcut/web/app.js` 与 `git diff --check` 通过。
+
+## 服务器发布验收
+
+2026-10-10 11:11 UTC，通过 linux-ops 发布 `us-east-20261010-firstload`，代码提交 `b05fcf9448b8e713d016d40d035547602da6e846`，前一版本 `us-east-20261010-qc-title-card`。Linux 完整测试 822 passed / 2 skipped，171.83 秒；服务器发布健康检查通过，发布后 maintenance=false、worker_alive=true、无活动任务或阶段阻塞。
+
+真实 HTTPS 验收通过：登录/退出、已有会话、页面和账户/项目 API、三个脚本版本哈希、gzip 解压一致性、private immutable 缓存、旧版本 URL no-store、未登录访问拒绝。服务端验收脚本 `/tmp/verify-firstload.py`，测试日志 `/srv/exactcut/releases/us-east-20261010-firstload/tests.log`。
+
+同一 Chrome 独立后台标签、同一已有项目的导航样本：
+
+| 指标 | 发布前 | 发布后首次加载 | 缓存命中后 |
+|---|---:|---:|---:|
+| 主脚本下载耗时 | 1.55s | 0.79s | 0（本地缓存） |
+| 主脚本加载完成时刻 | 2.21s | 1.25s | 0.34s |
+| 工作区选中项保存请求完成 | 4.49s | 3.16s | 2.43s |
+
+三个脚本缓存命中后 transferSize 均为0；用户信息与工作区初始化同时发起，初始化仅拉一次列表，后续定时状态同步正常。原项目恢复成功、页面无错误提示。后台标签无有效 paint 记录，不把 DOMContentLoaded 或工作区请求完成时刻当作 FCP；网络样本存在波动，不承诺固定加载秒数。测试标签已关闭，用户原有标签保留。
