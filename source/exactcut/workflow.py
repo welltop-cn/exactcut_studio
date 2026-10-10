@@ -68,7 +68,7 @@ def store_publication(path, request_id, entry):
         return all_entries
 
 
-def runtime(path):
+def runtime(path, *, jobs=None):
     data = read_json(path / 'runtime.json')
     batch_executor = bool(data.get('executor_running'))
     records = result_records(path)
@@ -90,11 +90,11 @@ def runtime(path):
         if not executing:
             for field in ('execution_ended_at', 'heartbeat_at', 'last_progress_at'):
                 if field in latest: data[field] = latest[field]
-    data.update(production_summary(path, {**data, 'executor_running': batch_executor}, records))
+    data.update(production_summary(path, {**data, 'executor_running': batch_executor}, records, jobs=jobs))
     return data
 
 
-def production_summary(path, data, records=None):
+def production_summary(path, data, records=None, *, jobs=None):
     """One rule for persisted summaries and reads; count only confirmed requests."""
     if not data.get('request_parallel') or not (path / 'confirmed.json').exists():
         return {}
@@ -117,8 +117,9 @@ def production_summary(path, data, records=None):
         render_executors.update(ids)  # Legacy whole-batch executor.
     pending.update(render_executors)
     queued = set()
-    for file in (ROOT / '.web-state/jobs').glob('*.json'):
-        job = read_json(file)
+    if jobs is None:
+        jobs = (read_json(file) for file in (ROOT / '.web-state/jobs').glob('*.json'))
+    for job in jobs:
         if (job.get('batch_id') == path.name and job.get('phase') == 'render'
                 and job.get('status') in {'queued', 'running', 'waiting_resource'}):
             rid = job.get('request_id')
@@ -496,15 +497,23 @@ def detail(batch_id):
     return data
 
 
-def summaries():
+def summaries(can_access=None, *, compact=False):
     if not BATCHES.exists():
         return []
     result = []
+    jobs = [read_json(file) for file in (ROOT / '.web-state/jobs').glob('*.json')] if compact else None
     for p in BATCHES.glob('*/draft.json'):
+        if can_access is not None and not can_access(p.parent.name):
+            continue
         item = read_json(p)
         result.append({'id': item['id'], 'filename': item['filename'], 'display_name': item.get('display_name', ''), 'created_at': item['created_at'],
                        'drama_id': item['draft'].get('drama_id'), 'drama_title': item['draft'].get('drama_title'),
-                       'count': len(item['draft'].get('rows', [])), **batch_control.present(p.parent, runtime(p.parent))})
+                       'count': len(item['draft'].get('rows', [])), **batch_control.present(p.parent, runtime(p.parent, jobs=jobs))})
+    if compact:
+        # Sidebar contract: histories and execution details belong to the selected project.
+        fields = ('id', 'filename', 'display_name', 'created_at', 'drama_id', 'drama_title', 'count', 'status', 'archived')
+        return sorted(({key: item.get(key) for key in fields} for item in result),
+                      key=lambda item: item['created_at'], reverse=True)
     from .error_guidance import redact
     for item in result:
         item['message'] = redact(item.get('message'))

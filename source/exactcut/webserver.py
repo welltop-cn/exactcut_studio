@@ -1102,7 +1102,7 @@ class Handler(BaseHTTPRequestHandler):
             state['initialized'] = True
             write_json_atomic(path, state)
             return {'batch_id': bid}
-        batches = workflow.summaries()
+        batches = workflow.summaries(self.can_access, compact=True)
         accessible = {b['id']: b for b in batches if self.can_access(b['id'])}
         owned = [b for b in batches if accounts.owner(workflow.folder(b['id'])) == self.user['username']]
         if 'batch_id' in data and (not isinstance(data['batch_id'], str) or data['batch_id'] not in accessible):
@@ -1164,9 +1164,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.script('app.js')
         if self.path == '/diagnostics.js':
             return self.script('diagnostics.js')
-        if self.path == '/api/batches':
+        if self.path in {'/api/batches', '/api/batches/sidebar'}:
             with LOCK:
-                return self.respond(200, {'batches': [{**b, 'owner': accounts.owner(workflow.BATCHES / b['id'])} for b in workflow.summaries() if self.can_access(b['id'])]})
+                batches = workflow.summaries(self.can_access, compact=self.path.endswith('/sidebar'))
+                result = {'batches': [{**b, 'owner': accounts.owner(workflow.BATCHES / b['id'])} for b in batches]}
+            return self.respond(200, result)
         if self.path == '/api/feedback':
             return self.respond(200, workflow.feedback_summary(self.can_access))
         match = re.fullmatch(r'/api/batches/([0-9a-f]{32})(?:/(.*))?', self.path)
@@ -1178,7 +1180,8 @@ class Handler(BaseHTTPRequestHandler):
                 path = workflow.folder(batch_id)
                 if not suffix:
                     with LOCK:
-                        return self.respond(200, batch_response(batch_id))
+                        result = batch_response(batch_id)
+                    return self.respond(200, result)
                 if suffix.startswith('video/'):
                     output, _ = workflow.preview_file(batch_id, unquote(suffix[6:]))
                     return self.stream_video(output)
