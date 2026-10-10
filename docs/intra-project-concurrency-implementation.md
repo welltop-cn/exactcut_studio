@@ -65,7 +65,9 @@ PY
 
 干净 clone 验证：`git clone --no-hardlinks <本开发仓库> <新的临时目录>/repository`，detach 到已提交 HEAD，在 clone 的 source/ 下执行上面命令（额外设置 PYTHONPATH 为 clone/source，核对 exactcut.__file__ 位于该 clone）；运行前后 `git status --porcelain` 都应为空。禁止复制开发工作区三个前端的未提交改动进入 clone。
 
-## Linux 容器：未执行
+## Linux 容器：由编排者在 build 阶段执行
+
+本机未执行 Linux 容器回归。按本轮 Grok 复审安排，由编排者在服务器 build 阶段执行同一套容器完整 pytest，使用生产 Python 3.11，并补录下方证据字段；本会话不连接服务器、不部署。下方保留隔离容器操作单供验收参考。
 
 本机 `/usr/local/bin/docker info --format '{{.ServerVersion}}'` 失败：`unix:///Users/matao/.docker/run/docker.sock` 不存在；未发现 colima/podman/container。未连接任何服务器补测，不能将 macOS 绿灯当成 Linux 证据。待本地 Docker daemon 可用后，以下命令仅在临时 clean clone 执行，容器无网络、无凭据、无生产挂载：
 
@@ -135,3 +137,33 @@ TDD 证据：
 干净 clone 全量：执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-clean-review.py`，**757 passed，104.33s，退出码 0**。验证提交 `c244be64f4d4b4864639f285b937ac508232ac91`，source tree `a891fd9c1d0f68675802f3477af88dfb1ccca4d7`；本地 `git clone --no-hardlinks` 后 detach 到该提交，核对导入来自 clone/source，运行前后 git status 均为空。命令内部使用本文全量命令所述的固定 Python、凭据清理、新临时数据根及 `-m pytest -o addopts= -q`。本次补录为纯文档提交，source tree 保持与已测版本一致。
 
 回退：优先将 `per_project=1`，并排空已启动 render；不恢复旧数据。旧错误文案可由新代码读取及后续正常状态写入纠正。本轮不直接修写现有 `.web-state`，不部署；实现及测试交复审。
+
+## Grok 复审 P1：超过项目上限的暂停 render 恢复（2026-10-10，测试先行）
+
+核对代码确认：`batch_control.reconcile` 原本将所有驻留 render（包括 T）计入项目恢复名额，使用 `> per_project` 拒绝且恢复成功不递增；旧无 request_id 的 render 又绕过此条件。降低 per_project 或残留暂停任务超额时，会全部停住。
+
+先在 `test_intra_project_scheduler.py` 补 6 个确定性用例，以 FakeProcessTable 和模拟 killpg 驱动真实 reconcile/持久 control 文件，不发真实信号、不依赖 sleep/时间推进。RED 命令：
+
+```sh
+# cwd: source/
+/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
+  tests/test_intra_project_scheduler.py -k reconcile
+```
+
+RED：**5 failed，2 passed，30 deselected，0.52s**。上限2/3个T实际拉起0（期望2）；上限1/2个T实际拉起0（期望1）。已有“2 render + 1 upload 全部继续”通过；旧整批优先的一个兼容用例也通过。其余失败覆盖已有S占位、素材/旧整批FIFO恢复及SIGCONT前退出。
+
+最小实现只改恢复计数：项目 render 名额仅统计非T且身份有效的非僵尸进程；恢复前 `>= per_project` 跳过；SIGCONT成功后才递增。无 request_id 的旧 render 使用同一上限，并保留整批围栏。全局 lane/resident 仍包括T，容量与身份校验、暂停/归档、owner轮转保持既有行为；无 schema 变更。
+
+GREEN 定向命令：
+
+```sh
+/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
+  tests/test_intra_project_scheduler.py tests/test_batch_control.py tests/test_concurrency.py \
+  tests/test_round1_integration.py tests/test_step3_resources.py
+```
+
+结果：**133 passed，13.43s，退出码0**。覆盖一次恰好恢复2/1、满额重复tick不继续、一个退出后恢复最后一个、活render占位、SIGCONT失败不占位、旧无ID与素材任务共享上限/围栏；原2render+1upload回归保持通过。
+
+环境及隔离沿用本文全量操作单：指定 Python 3.12.12 / macOS 15.8.1 arm64，每轮独立临时数据根，清除凭据，模拟外部操作。不部署，不改本机业务记录，三个前端和其他用户改动不暂存。完整本机及已提交版本的干净clone结果随后补录。
+
+本机完整 pytest：在 `source/` 执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`，**763 passed，104.45s，退出码0**；`git diff --check` 通过。

@@ -290,7 +290,9 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
                 identity = (child['pid'], child['process_token'])
                 if identity not in resident_identities:
                     counts[lane(child)] += 1
-                    if lane(child) == 'render':
+                    # Stopped roots retain lane/resident capacity, but do not
+                    # occupy a project's execution slot until SIGCONT succeeds.
+                    if lane(child) == 'render' and state != 'T':
                         project_renders[path.name] = project_renders.get(path.name, 0) + 1
                     resident_identities.add(identity)
                 if state != 'T':
@@ -307,12 +309,14 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
             candidate = scope(child, path.name)
             if scope_blocked(candidate, active_batches) or counts[resource] > limits[resource]:
                 continue
-            if resource == 'render' and child.get('request_id') and project_renders.get(path.name, 0) > limits['per_project']:
+            if resource == 'render' and project_renders.get(path.name, 0) >= limits['per_project']:
                 continue
             total = limits['max_active_children'] if limits['enabled'] else 1
             if sum(counts.values()) > total:
                 continue
             if signal_identity(child, signal.SIGCONT, table):
+                if resource == 'render':
+                    project_renders[path.name] = project_renders.get(path.name, 0) + 1
                 active_batches.add(candidate)
                 control = read(path)
                 control['suspended'] = [item for item in control.get('suspended', [])

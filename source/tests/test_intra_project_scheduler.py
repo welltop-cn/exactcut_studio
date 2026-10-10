@@ -120,6 +120,76 @@ def test_reconcile_request_resumes_share_batch_cap_only_for_render(runner, monke
     assert {call.args[0] for call in kill.call_args_list} == {100, 101, 102}
 
 
+def stopped_render_batch(monkeypatch, request_ids, per_project):
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {
+        'concurrency': {'render': 4, 'per_project': per_project}})
+    path = batch_path()
+    children = []
+    for index, rid in enumerate(request_ids, 100):
+        token = uuid.uuid4().hex
+        child = dict(pid=index, pgid=index, process_token=token, request_id=rid,
+                     lane='render', instance=instance_marker())
+        children.append(child)
+        control.PROCESSES.rows[index] = dict(pgid=index, state='T',
+            arguments=['python', '-X', 'exactcut_process_token=' + token])
+    write_json_atomic(path / 'control.json', {'paused': False, 'children': children, 'suspended': children})
+    def signal_group(pid, sig):
+        assert sig == signal.SIGCONT
+        control.PROCESSES.rows[pid]['state'] = 'S'
+    kill = Mock(side_effect=signal_group)
+    monkeypatch.setattr(control.os, 'killpg', kill)
+    return path, children, kill
+
+
+@pytest.mark.parametrize('limit,count', [(2, 3), (1, 2)])
+def test_reconcile_excess_stopped_renders_resume_up_to_project_limit(runner, monkeypatch, limit, count):
+    path, children, kill = stopped_render_batch(monkeypatch, [f'R{i}' for i in range(count)], limit)
+    assert control.reconcile(w.BATCHES)
+    assert kill.call_count == limit
+    resumed = {call.args[0] for call in kill.call_args_list}
+    remaining = {child['pid'] for child in control.read(path)['suspended']}
+    assert remaining == {child['pid'] for child in children} - resumed
+    # No repeated SIGCONT or extra admission while all project slots are used.
+    control.reconcile(w.BATCHES)
+    assert kill.call_count == limit
+    # One real exit frees exactly one slot on the next reconcile.
+    control.PROCESSES.rows.pop(min(resumed))
+    control.reconcile(w.BATCHES)
+    assert kill.call_count == limit + 1
+    assert kill.call_args.args[0] in remaining
+    assert not control.read(path)['suspended']
+
+
+def test_reconcile_counts_running_render_before_resuming_siblings(runner, monkeypatch):
+    path, children, kill = stopped_render_batch(monkeypatch, ['R1', 'R2', 'R3'], 2)
+    control.PROCESSES.rows[100]['state'] = 'S'
+    control.reconcile(w.BATCHES)
+    assert kill.call_count == 1
+    assert kill.call_args.args[0] in {101, 102}
+
+
+@pytest.mark.parametrize('request_ids', [[None, 'R1'], ['R1', None]])
+def test_reconcile_legacy_render_shares_limit_and_keeps_batch_fence(runner, monkeypatch, request_ids):
+    path, children, kill = stopped_render_batch(monkeypatch, request_ids, 1)
+    control.reconcile(w.BATCHES)
+    kill.assert_called_once_with(100, signal.SIGCONT)
+    assert [child['pid'] for child in control.read(path)['suspended']] == [101]
+
+
+def test_reconcile_failed_continue_does_not_consume_project_slot(runner, monkeypatch):
+    path, children, kill = stopped_render_batch(monkeypatch, ['R1', 'R2', 'R3'], 2)
+    signal_group = kill.side_effect
+    def first_exits(pid, sig):
+        if pid == 100:
+            control.PROCESSES.rows.pop(pid)
+            raise ProcessLookupError('fixture exit before SIGCONT')
+        signal_group(pid, sig)
+    kill.side_effect = first_exits
+    control.reconcile(w.BATCHES)
+    assert {pid for pid, row in control.PROCESSES.rows.items() if row['state'] == 'S'} == {101, 102}
+    assert [child['pid'] for child in control.read(path)['suspended']] == [100]
+
+
 def multiple_batch(chain, count, drama='101460', owner='alice'):
     batch = chain.batch(drama, owner)
     path = w.folder(batch['id'])
