@@ -779,3 +779,16 @@ def test_managed_copy_rejects_changed_content_addressed_ending(workspace):
     m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
     (path / 'endings' / image).write_bytes(b'changed')
     with pytest.raises(ValueError, match='校验'): w.clone_batch(path.name)
+
+
+def test_managed_detail_preserves_project_and_candidate_execution_history(workspace):
+    m, path, state = enrolled()
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    worker, child, event, job = candidate_job(path, state)
+    rid = event['asset_id']
+    w.update(child, 'producing', rid + '：开始制作')
+    detail = m.detail(path)
+    messages = [e['message'] for e in detail['runtime']['events']]
+    assert any('项目已创建' in message for message in messages)
+    assert rid + '：开始制作' in messages
+    assert any('内容已确认' in message for message in messages)

@@ -50,6 +50,24 @@ def snapshot(draft):
     return drama, episodes, SimpleNamespace(requests=requests)
 
 
+def ensure_editable(path):
+    from . import material_versions as m, batch_control
+    if m.managed(path):
+        m._editable(m.read(path), execution=True)
+    else:
+        batch_control.ensure_editable(path)
+        if workflow.runtime(path)['status'] != 'draft' or (path / 'confirmed.json').exists():
+            raise ValueError('仅草稿可提前准备正片')
+
+
+def editable(path):
+    try:
+        ensure_editable(path)
+        return True
+    except ValueError:
+        return False
+
+
 def result_path(path, job_id):
     if not re.fullmatch(r'[a-f0-9]{32}', job_id or ''):
         raise ValueError('无效正片任务 ID')
@@ -141,7 +159,7 @@ def run(batch_id, job_id):
     failed = False
     for episode in job['episodes']:
         desired = read_json(path / 'source-prefetch.json')
-        if (workflow.runtime(path)['status'] != 'draft' or desired['drama_id'] != job['project']
+        if (not editable(path) or desired['drama_id'] != job['project']
                 or episode not in desired['episodes']):
             result['episodes'][episode] = {'status': 'skipped'}
             store()

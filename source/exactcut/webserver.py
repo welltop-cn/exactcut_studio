@@ -220,9 +220,7 @@ def prefetch_sources(batch_id, data, actor):
     from .runtime import require_material_fetch
     require_material_fetch()
     path = workflow.folder(batch_id)
-    batch_control.ensure_editable(path)
-    if workflow.runtime(path)['status'] != 'draft' or (path / 'confirmed.json').exists():
-        raise ValueError('仅草稿可提前准备正片')
+    source_prefetch.ensure_editable(path)
     if data.get('cancel') is True:
         write_json_atomic(path / 'source-prefetch.json', {'drama_id': '', 'episodes': []})
         return {'drama_id': '', 'episodes': [], 'timing_explanation': []}
@@ -1101,6 +1099,8 @@ class Handler(BaseHTTPRequestHandler):
             path = workflow.folder(item['id'])
             accounts.assign(path, self.user)
             workflow.archive_draft(path)
+            if workflow.material_versions.enabled():
+                workflow.material_versions.enroll(path)
         fresh = workflow.detail(result['id'])
         if 'imported_batches' in result:
             fresh['imported_batches'] = result['imported_batches']
@@ -1127,6 +1127,8 @@ class Handler(BaseHTTPRequestHandler):
             if not owned:
                 created = workflow.create_blank(display_name='默认项目')
                 accounts.assign(workflow.folder(created['id']), self.user)
+                if workflow.material_versions.enabled():
+                    workflow.material_versions.enroll(workflow.folder(created['id']))
                 state['last_batch_id'] = created['id']
                 accessible[created['id']] = created
             state['initialized'] = True
@@ -1334,6 +1336,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         self.normalize_path()
         match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/([^/]+)', self.path)
+        if match and match[2] == 'hook-preview' and not workflow.material_versions.internal(workflow.BATCHES / match[1]):
+            return self.hook_preview(match[1])
         if match:
             path = workflow.BATCHES / match[1]
             if workflow.material_versions.managed(path) or workflow.material_versions.internal(path) or (workflow.material_versions.enabled() and match[2] in {'enroll', 'clone', 'start'}):
@@ -1394,7 +1398,9 @@ class Handler(BaseHTTPRequestHandler):
                 if data.get('purpose') != 'repair': raise ValueError('未知复制操作')
             elif action == 'ending-image':
                 return self.respond(200, m.save_ending_image(path, data.get('request_id'), data.get('content')))
-            elif action == 'enroll': pass
+            elif action == 'sources':
+                return self.respond(200, prefetch_sources(batch_id, data, self.user['username']))
+            elif action == 'enroll': m.enroll(path)
             elif action == 'feedback': return self.respond(201, workflow.add_feedback(batch_id, data))
             else: raise ValueError('纳管项目不支持此旧写入操作')
             if getattr(self.server, 'auth_db', None):
@@ -1511,7 +1517,7 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.can_access(batch_id):
                     return self.respond(404,{'error':'项目不存在或无权访问'})
                 snapshot = workflow.detail(batch_id)
-                if snapshot['runtime']['status'] != 'draft' or snapshot['runtime'].get('archived'):
+                if (not snapshot.get('media_managed') and snapshot['runtime']['status'] != 'draft') or snapshot['runtime'].get('archived'):
                     raise ValueError('请复制为新草稿后调整 Hook')
                 if data.get('revision') != snapshot['revision']:
                     return self.respond(409,{'error':'草稿已变化，请重新保存再预览'})
@@ -1547,7 +1553,7 @@ class Handler(BaseHTTPRequestHandler):
                         response = (404, {'error':'项目不存在或无权访问'})
                     else:
                         latest = workflow.detail(batch_id)
-                        if latest['runtime']['status']!='draft' or latest['runtime'].get('archived') or latest['revision']!=snapshot['revision'] or json_sha256(latest['draft'])!=fingerprint:
+                        if (not latest.get('media_managed') and latest['runtime']['status']!='draft') or latest['runtime'].get('archived') or latest['revision']!=snapshot['revision'] or json_sha256(latest['draft'])!=fingerprint:
                             response = (409, {'error':'预览期间草稿已变化，结果未采用，请重新预览'})
                         else:
                             for directory in ('hook-emphasis','hook-placement'):
@@ -1641,6 +1647,9 @@ class Handler(BaseHTTPRequestHandler):
                 result = workflow.create_blank(self.user.get('name') or '')
                 with LOCK:
                     accounts.assign(workflow.folder(result['id']), self.user)
+                    if workflow.material_versions.enabled():
+                        workflow.material_versions.enroll(workflow.folder(result['id']))
+                        result = workflow.detail(result['id'])
                     return self.respond(201, result)
             if self.path == '/api/batches/import':
                 result = workflow.import_excel(data)

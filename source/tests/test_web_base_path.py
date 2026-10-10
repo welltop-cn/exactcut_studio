@@ -123,6 +123,10 @@ for(const prefix of ['', '/home', '/tools/cut']){
  for(const path of ['/api/batches/abc/video/a.mp4','/api/batches/abc/preview/a.mp4','/api/batches/abc/ending-image/R1?v=1'])
   assert.equal(vm.runInContext('appUrl('+JSON.stringify(path)+')',context),'http://example.test'+prefix+path);
  assert.equal(vm.runInContext("appUrl('data:image/png;base64,eA==')",context),'data:image/png;base64,eA==');
+ const delays=[];context.setTimeout=(fn,ms)=>{delays.push(ms);return 1};context.clearTimeout=()=>{};
+ vm.runInContext("current={id:'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',media_managed:true,revision:1}",context);
+ await vm.runInContext("api('/api/batches/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/hook-preview',{index:0})",context);
+ assert.equal(delays.at(-1),210000,'managed Hook preview must retain the AI timeout');
  context.fetch=async()=>({status:401});
  await assert.rejects(vm.runInContext("api('/api/me')",context));
  assert.equal(redirects[0],'http://example.test'+prefix+'/login');

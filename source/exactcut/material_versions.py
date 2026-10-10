@@ -244,6 +244,10 @@ def _mutation(path, data, action, operation):
         operation(state)
         state['revision'] += 1
         state['updated_at'] = now_iso()
+        message = {'confirm': '内容已确认，等待制作', 'pause': '已请求暂停',
+                   'resume': '已请求继续', 'archive': '已归档', 'unarchive': '已取消归档'}.get(action)
+        if message:
+            state.setdefault('events', []).append({'at': state['updated_at'], 'message': message})
         # The operation receipt is immutable; live project detail is deliberately
         # current on replay. Never store another full version/history snapshot.
         receipt = {'revision': state['revision'], 'action': action,
@@ -527,10 +531,17 @@ def detail(path):
     status = 'producing' if 'processing' in candidates else 'queued' if 'queued' in candidates else 'partial' if 'failed' in candidates else 'review' if any(a.get('preview') for a in assets) else 'draft'
     if _blocked(state): status = 'publishing'
     control = state['control']
+    events = list(state.get('events', []))
+    history_paths = {path, *(w.BATCHES / v['child_id'] for v in state['versions'].values() if v.get('child_id'))}
+    for history_path in history_paths:
+        file = history_path / 'runtime.json'
+        if file.exists():
+            events.extend(read_json(file).get('events', []))
+    events.sort(key=lambda event: event['at'])
     runtime = {'status': 'paused' if control['paused'] and status in w.ACTIVE else status,
                'underlying_status': status, 'paused': control['paused'], 'archived': control['archived'] or bool(state['deleted_at']),
                'message': '当前成片保留；可在本项目编辑并制作新版本', 'updated_at': state['updated_at'],
-               'events': [], 'request_parallel': True, 'executor_running': 'processing' in candidates,
+               'events': events, 'request_parallel': True, 'executor_running': 'processing' in candidates,
                'observation': {}, 'error_info': None,
                'download_complete': bool(downloads) and all(downloads)}
     feedback = sorted([read_json(f) for f in w.FEEDBACK.glob(path.name + '-*.json')], key=lambda e: e['created_at'], reverse=True)
