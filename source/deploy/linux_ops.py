@@ -108,6 +108,10 @@ def initialize(root, profile, *, instance, backend_port, public_port, cpus, memo
 
 
 class Docker:
+    def media_protocol(self, image):
+        item = json.loads(output('docker', 'image', 'inspect', image))[0]
+        return (item.get('Config', {}).get('Labels') or {}).get('io.exactcut.media-protocol') == '1'
+
     def stage_protocol(self, image):
         item = json.loads(output('docker', 'image', 'inspect', image))[0]
         return (item.get('Config', {}).get('Labels') or {}).get('io.exactcut.stage-protocol') == '1'
@@ -132,6 +136,7 @@ class Docker:
                    *arguments, env=env, capture_output=True, text=True)
 
     def apply(self, root, release, settings):
+        require_media_compatibility(root, release, self)
         self.compose(root, release, settings, 'up', '-d', '--no-build', '--pull', 'never', 'web')
 
     def stop(self, root, release, settings):
@@ -143,6 +148,7 @@ class Docker:
     def verify_delivery(self, root, release, settings, batch_id, request_id, sha256):
         # Use the sealed NEW image without its web/worker entrypoint or ports.
         # Credentials/config/data mounts come from the verified release compose.
+        require_media_compatibility(root, release, self)
         self.compose(root, release, settings, 'run', '--rm', '--no-deps', '-T',
                      '--entrypoint', 'python', '-e', 'EXACTCUT_WORKER_ENABLED=0',
                      '-e', 'EXACTCUT_ALLOW_AI=0', '-e', 'EXACTCUT_ALLOW_MATERIAL_FETCH=0',
@@ -224,6 +230,23 @@ def require_stage_compatibility(root, release, engine):
         raise RuntimeError('目标镜像不支持阶段任务协议；未完成阶段或待核实交付阻止切换')
 
 
+def media_state_records(root):
+    """Presence, including incomplete/corrupt enrollment, forbids legacy writers."""
+    state = root / 'data/.web-state'
+    registry = state / 'media-registry'
+    records = [*registry.glob('*.json'), *(state / 'batches').glob('*/media-state.json')]
+    if registry.is_symlink():
+        records.append(registry)
+    return sorted(str(path.relative_to(root)) for path in records)
+
+
+def require_media_compatibility(root, release, engine):
+    records = media_state_records(root)
+    inspect = getattr(engine, 'media_protocol', None)
+    if records and (inspect is None or inspect(release['image']) is not True):
+        raise RuntimeError('已有素材版本数据；目标镜像不支持素材版本协议，禁止旧程序写入或回退')
+
+
 def require_phase_drained(root):
     if phase_blockers(root):
         raise RuntimeError('阶段任务或待核实交付未排空，禁止发布切换')
@@ -237,6 +260,8 @@ def check_switch(root, version, *, engine=None):
     try:
         target = verify(root, version, engine)
         validate_resources(read(root / 'config/deployment.json'))
+        result['media_state_records'] = media_state_records(root)
+        require_media_compatibility(root, target, engine)
         result['target_stage_protocol'] = supports_stages(engine, target)
         result['phase_blockers'] = phase_blockers(root)
         result['active_tasks'] = active_records(root)
@@ -290,6 +315,7 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
         validate_resources(settings)
         target = verify(root, version, engine)
         require_stage_compatibility(root, target, engine)
+        require_media_compatibility(root, target, engine)
         require_phase_drained(root)
         current = read(root / 'current.json')
         if current.get('version') == version:
@@ -307,9 +333,11 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
             raise RuntimeError('生产密钥配置必须存在且权限为0600')
         with write_barrier(root, timeout) as gate:
             require_stage_compatibility(root, target, engine)
+            require_media_compatibility(root, target, engine)
             require_phase_drained(root)
             await_idle(root, timeout)
             require_stage_compatibility(root, target, engine)
+            require_media_compatibility(root, target, engine)
             require_phase_drained(root)
             attempted = False
             receipt = {'at': datetime.now(timezone.utc).isoformat(), 'from': current.get('version'), 'to': version}
@@ -320,6 +348,7 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                     engine.stop(root, old, settings)
                     await_idle(root, 0)
                 require_stage_compatibility(root, target, engine)
+                require_media_compatibility(root, target, engine)
                 require_phase_drained(root)
                 engine.apply(root, target, settings)
                 check = engine.health(settings, version, health_timeout)
@@ -338,6 +367,7 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                             # just stopped, never a new downgrade target. Do not
                             # strand both services if uncertainty appeared meanwhile.
                             if phase_blockers(root): gate['maintenance'] = True
+                            require_media_compatibility(root, old, engine)
                             engine.apply(root, old, settings)
                             engine.health(settings, old['version'], health_timeout)
                         else:
@@ -350,11 +380,24 @@ def transition(root, version, *, engine=None, timeout=300, health_timeout=60):
                                 'restored': old['version'] if old and not recovery_error else None,
                                 'recovery_error_type': recovery_error, 'maintenance_retained': gate['maintenance']})
                 if recovery_error:
-                    raise RuntimeError('版本切换失败且恢复失败；维护标记保留，请执行recover') from exc
+                    raise RuntimeError('版本切换失败且恢复失败；维护标记保留，请核对当前数据协议并恢复兼容版本') from exc
                 if gate['maintenance']:
                     raise RuntimeError('版本切换失败，已恢复旧容器；维护标记保留。显式核实阶段交付并排空后执行 '
                                        f'{root}/bin/linux-ops --root {root} recover') from exc
                 raise RuntimeError('版本切换失败，已恢复上一状态；业务数据未还原') from exc
+
+
+@contextmanager
+def maintenance_request_lock(root):
+    state = root / 'data/.web-state'
+    if not (state / 'maintenance.json').exists():
+        raise RuntimeError('必须先处于维护态，禁止在线核实')
+    with (state / 'mutation.lock').open('a') as stream:
+        try:
+            fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError as exc:
+            raise RuntimeError('进行中的请求未结束，停止维护操作') from exc
+        yield
 
 
 def verify_delivery_in_maintenance(root, version, batch_id, request_id, sha256, *, engine=None):
@@ -370,23 +413,82 @@ def verify_delivery_in_maintenance(root, version, batch_id, request_id, sha256, 
         validate_resources(settings)
         target = verify(root, version, engine)
         if not supports_stages(engine, target): raise RuntimeError('核实镜像必须支持阶段任务协议')
+        require_media_compatibility(root, target, engine)
         current = verify(root, read(root / 'current.json').get('version'), engine)
         await_idle(root, 0)
         # No HTTP API is needed. Stop the exact current release before mounting
         # its durable data in the one-off verified image; restore it on ALL exits.
+        stopped = False
         try:
-            engine.stop(root, current, settings)
-            await_idle(root, 0)
+            # Drain in-flight HTTP writes before stopping web, then release the
+            # barrier: the verifier child takes mutation.lock itself.
+            with maintenance_request_lock(root):
+                await_idle(root, 0)
+                stopped = True
+                engine.stop(root, current, settings)
+                await_idle(root, 0)
+                require_media_compatibility(root, target, engine)
             result = engine.verify_delivery(root, target, settings, batch_id, request_id, sha256)
         finally:
-            engine.apply(root, current, settings)
-            engine.health(settings, current['version'], 60)
+            if stopped:
+                require_media_compatibility(root, current, engine)
+                engine.apply(root, current, settings)
+                engine.health(settings, current['version'], 60)
         result = {**result, 'maintenance': True, 'remaining_phase_blockers': phase_blockers(root)}
         write(root / 'history' / f'{time.time_ns()}-verify-delivery.json',
               {'at': datetime.now(timezone.utc).isoformat(), 'action': 'verify-delivery',
                'executor_release': version, 'restored': current['version'],
                'batch_id': batch_id, 'request_id': request_id, **result})
         return result
+
+
+def recover(root, *, version=None, engine=None, health_timeout=60):
+    """Recover retained maintenance using a sealed data-compatible image."""
+    engine = engine or Docker()
+    with operation_lock(root):
+        current = read(root / 'current.json')
+        gate = root / 'data/.web-state/maintenance.json'
+        if version is not None and not gate.exists():
+            raise RuntimeError('指定恢复版本必须处于维护态；正常切换请使用publish')
+        target = verify(root, version or current.get('version'), engine)
+        settings = read(root / 'config/deployment.json')
+        validate_resources(settings)
+        require_stage_compatibility(root, target, engine)
+        require_media_compatibility(root, target, engine)
+        if version is not None:
+            await_idle(root, 0)
+        state = root / 'data/.web-state'
+        with (state / 'mutation.lock').open('a') as stream:
+            try:
+                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError('进行中的请求未结束，停止恢复') from exc
+            require_media_compatibility(root, target, engine)
+            if version is not None:
+                await_idle(root, 0)
+            try:
+                if version is not None and current.get('version') != target['version']:
+                    old = verify(root, current['version'], engine) if current.get('version') else None
+                    if old:
+                        engine.stop(root, old, settings)
+                engine.apply(root, target, settings)
+                result = engine.health(settings, target['version'], health_timeout)
+            except Exception:
+                if version is not None:
+                    # No attempt to start the data-incompatible previous image.
+                    try:
+                        engine.stop(root, target, settings)
+                    except Exception:
+                        pass
+                raise
+            if version is not None:
+                write(root / 'current.json', {'version': target['version'],
+                      'previous': current.get('version'), 'commit': target['commit'], 'image': target['image']})
+                write(root / 'history' / f'{time.time_ns()}-recover.json',
+                      {'action': 'recover', 'from': current.get('version'), 'to': target['version'],
+                       'status': 'ok', 'health': result, 'at': datetime.now(timezone.utc).isoformat()})
+            gate.unlink(missing_ok=True)
+            return result
 
 
 def build(root, repo, version):
@@ -530,7 +632,7 @@ def main():
     sub.add_parser('status')
     sub.add_parser('check-switch').add_argument('version')
     sub.add_parser('nginx')
-    sub.add_parser('recover')
+    sub.add_parser('recover').add_argument('--version', help='维护态下恢复到指定的兼容已封存版本')
     check = sub.add_parser('verify-delivery')
     for field in ('version', 'batch_id', 'request_id', 'sha256'): check.add_argument(field)
     args = parser.parse_args()
@@ -555,16 +657,7 @@ def main():
     elif args.command == 'verify-delivery':
         result = verify_delivery_in_maintenance(root, args.version, args.batch_id, args.request_id, args.sha256)
     elif args.command == 'recover':
-        with operation_lock(root):
-            current = read(root / 'current.json')
-            engine = Docker()
-            release = verify(root, current.get('version'), engine)
-            settings = read(root / 'config/deployment.json')
-            validate_resources(settings)
-            require_stage_compatibility(root, release, engine)
-            engine.apply(root, release, settings)
-            result = engine.health(settings, release['version'], 60)
-            (root / 'data/.web-state/maintenance.json').unlink(missing_ok=True)
+        result = recover(root, version=args.version)
     elif args.command == 'nginx':
         base_path = read(root / 'config/runtime.json').get('web', {}).get('base_path', '')
         print(nginx_config(read(root / 'config/deployment.json'), base_path), end='')

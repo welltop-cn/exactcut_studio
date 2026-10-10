@@ -18,6 +18,7 @@ RUN chmod 755 /entrypoint.sh
 ARG EXACTCUT_COMMIT=unversioned
 LABEL org.opencontainers.image.revision=$EXACTCUT_COMMIT
 LABEL io.exactcut.stage-protocol="1"
+LABEL io.exactcut.media-protocol="1"
 
 ENV PYTHONPATH=/app/source \
     PYTHONUNBUFFERED=1 \
