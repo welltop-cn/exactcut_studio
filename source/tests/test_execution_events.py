@@ -51,7 +51,7 @@ const assert=require('node:assert/strict');
 const box={}; const $=()=>box;
 const esc=s=>String(s).replaceAll('<','&lt;').replaceAll('>','&gt;');
 const r={events:Array.from({length:60},(_,i)=>({at:new Date(1700000000000+i*1000).toISOString(),message:'step-'+i+'<x>'})).reverse()};
-""" + line + """
+""" + "const current=null;\n" + "\n".join(l for l in source.splitlines() if l.startswith(("function materialLabel(", "function materialMessage("))) + "\n" + line + """
 assert.equal((box.innerHTML.match(/class="event"/g)||[]).length,60);
 assert.ok(box.innerHTML.indexOf('step-0&lt;')<box.innerHTML.indexOf('step-59&lt;'));
 assert.ok(!box.innerHTML.includes('<x>'));
@@ -75,7 +75,7 @@ const esc=s=>String(s??'').replaceAll('<','&lt;');
 const durationLabel=s=>s+' 秒';
 const stageNames={base_cut:'剪辑片段',hook_overlay:'字幕合成'};
 const observationText=o=>o.step+' · '+o.stage_seconds+' 秒';
-''' + helper + r'''
+''' + "const current=null;\n" + "\n".join(l for l in source.splitlines() if l.startswith(("function materialLabel(", "function materialMessage("))) + "\n" + helper + r'''
 const running=productionProgress({request_id:'r1',title:'<素材>',status:'processing',stage:'base_cut',observation:{step:'剪辑片段',stage_seconds:80,details:{total:5,completed:2}}},{});
 assert.ok(running.includes('value="2" max="5"'));
 assert.ok(running.includes('2/5'));
@@ -98,3 +98,21 @@ assert.ok(!done.includes('等待 FBBM'));
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_material_labels_replace_only_known_whole_ids():
+    source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
+    helpers = '\n'.join(line for line in source.splitlines() if line.startswith(('function materialLabel(', 'function materialMessage(')))
+    script = """
+const assert=require('node:assert/strict');
+const current={draft:{rows:[{request_id:'R1',seq:3},{request_id:'R1b',seq:4},{request_id:'R.2',seq:5}]},assets:[]};
+""" + helpers + """
+assert.equal(materialMessage('R1：开始；R1b：结束；R.2：失败'),'素材3：开始；素材4：结束；素材5：失败');
+assert.equal(materialMessage('R1extra other_R1 R12 unknown'),'R1extra other_R1 R12 unknown');
+assert.equal(materialLabel('unknown'),'unknown');
+"""
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    feedback = next(line for line in source.splitlines() if line.startswith('async function feedbackPage('))
+    assert 'materialMessage(e.message)' not in feedback
+    assert 'white-space:pre-wrap' in feedback

@@ -165,6 +165,7 @@ const ctx=vm.createContext({current:{filename:'网页填写',assets:[],feedback_
  download_current_episode:'EP2',download_current_received:1048576,download_current_total:4194304}},
  $:el,document:{querySelector:el},renderSourcePrefetch:()=>{},renderAssets:()=>{},preparePreviewLoads:()=>{},controls:()=>{},
  statusLabel:s=>s,badgeClass:()=>'',esc:s=>String(s??''),setErrorHtml:()=>{},observationText:()=>''});
+vm.runInContext(src.slice(src.indexOf('function materialLabel('),src.indexOf('function productionProgress(')),ctx);
 vm.runInContext(src.slice(a,b),ctx);vm.runInContext('renderRuntime()',ctx);
 assert(el('stageOverview').innerHTML.includes('EP2（2/2）'));
 assert(el('stageOverview').innerHTML.includes('25%'));
