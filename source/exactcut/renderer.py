@@ -258,22 +258,26 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                 write_json_atomic(meta_path,meta)
             timings['base_cut'] = round(time.monotonic()-started,3)
             os.utime(base,None)  # LRU usage, updated while its lifetime lock is held.
-            frames = []
-            coverage=None
-            if options is not None and request.hook_text.strip() and preview_decision is None:
-                step('frame_sampling')
-                started = time.monotonic()
-                visible=hook_duration(request.hook_text,options,meta['expected_duration_ms'])
-                frames,coverage=sample_timeline_frames(project_dir,safe_timeline,work,visible,
-                                                       width=render['width'],height=render['height'])
-                timings['frame_sampling'] = round(time.monotonic()-started,3)
+            # Pin validated bytes in this request's work before cleanup can evict the cache.
+            # Reuse the joined path so a fresh cut needs no additional temporary-video peak.
+            request_base = work/'joined.mp4'
+            shutil.copy2(base,request_base)
+        frames = []
+        coverage=None
+        if options is not None and request.hook_text.strip() and preview_decision is None:
+            step('frame_sampling')
             started = time.monotonic()
-            step('hook_overlay', base_cache_reused=reused)
-            hook_visual = _apply_hook(base,request.hook_text,output,render,work,emphasis=emphasis,
-                                     options=options,frames=frames,cache_dir=project_dir/'cache/hook-placement',
-                                     preview_decision=preview_decision)
-            timings['hook_overlay'] = round(time.monotonic()-started,3)
-            if hook_visual and coverage:hook_visual['sampling']=coverage
+            visible=hook_duration(request.hook_text,options,meta['expected_duration_ms'])
+            frames,coverage=sample_timeline_frames(project_dir,safe_timeline,work,visible,
+                                                   width=render['width'],height=render['height'])
+            timings['frame_sampling'] = round(time.monotonic()-started,3)
+        started = time.monotonic()
+        step('hook_overlay', base_cache_reused=reused)
+        hook_visual = _apply_hook(request_base,request.hook_text,output,render,work,emphasis=emphasis,
+                                 options=options,frames=frames,cache_dir=project_dir/'cache/hook-placement',
+                                 preview_decision=preview_decision)
+        timings['hook_overlay'] = round(time.monotonic()-started,3)
+        if hook_visual and coverage:hook_visual['sampling']=coverage
     from .storage import cleanup, data_root
     if project_dir.is_relative_to(data_root()):cleanup(data_root())
     return {'expected_duration_ms':meta['expected_duration_ms'],'edit_boundaries_ms':meta['edit_boundaries_ms'],

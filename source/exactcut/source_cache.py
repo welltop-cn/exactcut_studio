@@ -45,7 +45,7 @@ def reused_episodes() -> list[str]:
 
 
 @contextmanager
-def episode_lock(drama_id: str, episode: str):
+def episode_lock(drama_id: str, episode: str, *, blocking=True):
     check_drama(drama_id)
     check_episode(episode)
     path = source_root() / drama_id / f'{episode}.lock'
@@ -55,7 +55,11 @@ def episode_lock(drama_id: str, episode: str):
     token = _EXCLUSIVE.set(held | {(drama_id, episode)})
     try:
         with path.open('a+') as handle:
-            fcntl.flock(handle, fcntl.LOCK_EX)
+            try:
+                fcntl.flock(handle, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
+            except BlockingIOError:
+                from .stage_results import ResourceDeferred
+                raise ResourceDeferred(time.time() + 1, f'正片正在使用：{episode}，稍后重试') from None
             try:
                 yield
             finally:
@@ -111,12 +115,12 @@ def shared_for(path: Path):
 
 
 def _usable(path: Path) -> bool:
-    if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0:
-        return False
-    from .material_download import validate_downloaded_video
     try:
+        if not path.is_file() or path.is_symlink() or path.stat().st_size <= 0:
+            return False
+        from .material_download import validate_downloaded_video
         validate_downloaded_video(path)
-    except RuntimeError:
+    except (FileNotFoundError, RuntimeError):
         return False
     return True
 
@@ -261,8 +265,11 @@ def _wait_fetch(process, part: Path, episode: str, on_progress=None) -> int:
 
 
 def _ensure_one(drama_id: str, episode: str, on_progress=None) -> tuple[Path, bool]:
-    with episode_lock(drama_id, episode):
-        dest = source_root() / drama_id / f'{episode}.mp4'
+    dest = source_root() / drama_id / f'{episode}.mp4'
+    if _usable(dest):
+        return dest, True
+    with episode_lock(drama_id, episode, blocking=False):
+        # Another downloader may have published between the first check and locking.
         if _usable(dest):
             return dest, True
         _reserve_for_fetch()
