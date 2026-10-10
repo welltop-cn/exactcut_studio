@@ -338,6 +338,7 @@ assert.equal(vm.runInContext('mergedTiming(local,server).segments[0].error',timi
  const calls=[],timers=[];let finish;
  const ctx=vm.createContext({current:{id:'batch-a',draft:{drama_id:'101573',rows:[]},runtime:{status:'draft'}},
  currentUser:{features:{material_fetch:true}},dirty:true,prefetching:false,prefetchTimer:null,
+ openingBatchId:null,selectedId:'batch-a',
  api:async(path,data)=>{calls.push([path,data]);return new Promise(resolve=>finish=resolve)},
  refreshTiming:()=>{},renderSourcePrefetch:()=>{},setTimeout:f=>{timers.push(f);return timers.length},clearTimeout:()=>{}});
  vm.runInContext(src.slice(a,b),ctx);
@@ -354,6 +355,8 @@ assert.equal(vm.runInContext('mergedTiming(local,server).segments[0].error',timi
  ctx.api=async(path,data)=>{assert.equal(data.cancel,true);return {drama_id:'',episodes:[],timing_explanation:[]}};
  await vm.runInContext('prefetchSources()',ctx);
  assert.equal(ctx.current.timing_explanation.length,0);assert(refreshed>0);
+ ctx.openingBatchId='batch-b';ctx.api=()=>{throw Error('must not prefetch the previous project while switching')};
+ await vm.runInContext('prefetchSources()',ctx);
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
     result = subprocess.run([node, '-e', script], input=json.dumps(source), text=True, capture_output=True)
