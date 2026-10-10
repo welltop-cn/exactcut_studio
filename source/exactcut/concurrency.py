@@ -26,7 +26,7 @@ def settings():
         # serial behaviour with safe defaults.
         capacities = {name: 1 for name in LANES}
         return {**capacities, 'max_active_children': 1, 'enabled': True,
-                'hook_previews': 1, 'ai': ai_settings({})}
+                'per_project': 1, 'hook_previews': 1, 'ai': ai_settings({})}
     if not isinstance(section, dict):
         raise ValueError('concurrency 必须为对象')
     enabled = section.get('enabled', True)
@@ -47,8 +47,21 @@ def settings():
     previews = section.get('hook_previews', 1)
     if isinstance(previews, bool) or not isinstance(previews, int) or previews < 1:
         raise ValueError('concurrency.hook_previews 必须为正整数')
+    per_project = section.get('per_project', 1)
+    if isinstance(per_project, bool) or not isinstance(per_project, int) or per_project < 1:
+        raise ValueError('concurrency.per_project 必须为正整数')
     return {**capacities, 'max_active_children': total, 'enabled': enabled,
-            'hook_previews': previews, 'ai': ai_settings(section)}
+            'per_project': per_project, 'hook_previews': previews, 'ai': ai_settings(section)}
+
+
+def scope(job, batch_id=None):
+    return (batch_id if batch_id is not None else job.get('batch_id'), job.get('request_id'))
+
+
+def scope_blocked(candidate, residents):
+    batch, request = candidate
+    return any(other_batch == batch and (request is None or other_request is None or request == other_request)
+               for other_batch, other_request in residents)
 
 
 def lane(job):

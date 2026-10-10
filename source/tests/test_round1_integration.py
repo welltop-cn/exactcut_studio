@@ -44,15 +44,17 @@ def chain(workspace, monkeypatch):
         return files
     monkeypatch.setattr('exactcut.source_cache.ensure', fetch)
     monkeypatch.setattr('exactcut.source_cache.reused_episodes', lambda: [])
-    def render(project, manifest, config, *, output_dir, progress):
+    def render(project, manifest, config, *, output_dir, progress, request_ids=None):
         render_calls.append((manifest.drama_id, output_dir))
         results = {'requests': {}}
         for request in manifest.requests:
+            if request_ids is not None and request.request_id not in request_ids: continue
             file = output_dir / 'videos' / request.output_filename
             file.parent.mkdir(parents=True, exist_ok=True)
             file.write_bytes(('render:' + str(output_dir)).encode())
             results['requests'][request.request_id] = {'status': 'qc_passed', 'output': str(file), 'output_sha256': file_sha256(file)}
-        write_json_atomic(output_dir / 'results.json', results)
+        from exactcut import result_store
+        for rid, record in results['requests'].items(): result_store.patch(output_dir, rid, **record)
         return results
     monkeypatch.setattr('exactcut.orchestrator.execute_batch', render)
     def upload(video, manifest, request):
@@ -111,14 +113,15 @@ def chain(workspace, monkeypatch):
         def tick(self):
             web.worker_tick(self.pending, self.owned)
             return list(self.owned.values())
-        def one(self, phase, batch=None):
+        def one(self, phase, batch=None, rid=None):
             matches = [(job, process, log) for job, process, log in self.owned.values()
-                       if job['phase'] == phase and (batch is None or job['batch_id'] == batch['id'])]
+                       if job['phase'] == phase and (batch is None or job['batch_id'] == batch['id'])
+                       and (rid is None or job.get('request_id') == rid)]
             assert len(matches) == 1, [(j['phase'], j['batch_id']) for j, _, _ in self.owned.values()]
             return matches[0]
-        def finish(self, phase, batch=None):
-            job, process, _ = self.one(phase, batch)
-            args = [job['batch_id']] + ([job['request_id']] if phase in {'upload', 'poll'} else [])
+        def finish(self, phase, batch=None, rid=None):
+            job, process, _ = self.one(phase, batch, rid)
+            args = [job['batch_id']] + ([job['request_id']] if job.get('request_id') and phase in {'render', 'upload', 'poll'} else [])
             code = getattr(w, phase)(*args)
             assert code == 0
             stage_results.complete(job, web.JOBS, w.BATCHES, w.ROOT, code)
@@ -202,7 +205,7 @@ def test_waiting_fbbm_allows_other_batch_to_render_at_global_capacity_one(chain)
     assert len(chain.owned) == 1
     chain.finish('fetch', b)
     assert len(chain.owned) == 1 and chain.one('render', b)
-    chain.tick(); assert len(chain.owned) == 1 and not chain.one('render', b)[0].get('request_id')
+    chain.tick(); assert len(chain.owned) == 1 and chain.one('render', b)[0].get('request_id')
     assert len(chain.poll_calls) == 1
     chain.finish('render', b)
     assert w.runtime(w.folder(b['id']))['status'] == 'review'

@@ -14,7 +14,8 @@
   "concurrency": {
     "enabled": true,
     "fetch": 2,
-    "render": 3,
+    "render": 4,
+    "per_project": 2,
     "upload": 2,
     "poll": 4,
     "hook_previews": 1,

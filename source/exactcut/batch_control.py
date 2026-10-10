@@ -261,7 +261,7 @@ def present(path, state):
 
 def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None):
     """Resume stopped executors only within their lane and batch limits."""
-    from .concurrency import lane, settings, owner_round_robin
+    from .concurrency import lane, settings, owner_round_robin, scope, scope_blocked
     from .accounts import owner
     table = PROCESSES if table is None else table
     limits = settings()
@@ -269,6 +269,7 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
     with LOCK:
         counts = {key: (external_active or {}).get(key, 0) for key in ('fetch', 'render', 'upload', 'poll')}
         active_batches = set()
+        project_renders = {}
         waiting = []
         resident_identities = set()
         for path in sorted(batch_root.glob('*')):
@@ -289,9 +290,11 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
                 identity = (child['pid'], child['process_token'])
                 if identity not in resident_identities:
                     counts[lane(child)] += 1
+                    if lane(child) == 'render':
+                        project_renders[path.name] = project_renders.get(path.name, 0) + 1
                     resident_identities.add(identity)
                 if state != 'T':
-                    active_batches.add(path)
+                    active_batches.add(scope(child, path.name))
                 elif not control.get('paused') and not control.get('archived'):
                     waiting.append((path, child))
             if stale:
@@ -301,13 +304,16 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
                 write(path, control)
         for batch_owner, (path, child) in owner_round_robin(waiting, lambda entry: owner(entry[0]), cursor_file):
             resource = lane(child)
-            if path in active_batches or counts[resource] > limits[resource]:
+            candidate = scope(child, path.name)
+            if scope_blocked(candidate, active_batches) or counts[resource] > limits[resource]:
+                continue
+            if resource == 'render' and child.get('request_id') and project_renders.get(path.name, 0) > limits['per_project']:
                 continue
             total = limits['max_active_children'] if limits['enabled'] else 1
             if sum(counts.values()) > total:
                 continue
             if signal_identity(child, signal.SIGCONT, table):
-                active_batches.add(path)
+                active_batches.add(candidate)
                 control = read(path)
                 control['suspended'] = [item for item in control.get('suspended', [])
                                         if item.get('process_token') != child['process_token']]
