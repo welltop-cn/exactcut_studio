@@ -167,3 +167,7 @@ GREEN 定向命令：
 环境及隔离沿用本文全量操作单：指定 Python 3.12.12 / macOS 15.8.1 arm64，每轮独立临时数据根，清除凭据，模拟外部操作。不部署，不改本机业务记录，三个前端和其他用户改动不暂存。完整本机及已提交版本的干净clone结果随后补录。
 
 本机完整 pytest：在 `source/` 执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`，**763 passed，104.45s，退出码0**；`git diff --check` 通过。
+
+干净 clone 完整 pytest：执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-clean-review.py`，**763 passed，106.17s，退出码0**。验证提交 `62a7d1495a4c7ba92382010093cfda6cf318ef75`，source tree `f51ae8c79a6bb62df9f1598ee57b4f9d04c96ec9`；本地 `--no-hardlinks` clone、detached HEAD、独立临时数据根、凭据清理及 clone/source 导入检查均通过，运行前后 clone 的 git status 为空。最后补录为纯文档提交，source tree 与已测版本一致。
+
+本轮无已知未解决代码问题；Linux 容器全量/生产 Python 3.11 **由编排者在 build 阶段执行，本会话未执行**。只显式暂存本轮3个文件，不含三个前端文件或用户其他改动。未部署；完成后停止，等待复审/终验。
