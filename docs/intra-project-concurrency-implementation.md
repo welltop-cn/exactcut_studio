@@ -132,4 +132,6 @@ TDD 证据：
 
 本机全量：在 `source/` 执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`，**757 passed，106.66s，退出码 0**；每轮新临时数据根、清除凭据变量，外部客户端模拟。`git diff --check` 通过。
 
+干净 clone 全量：执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-clean-review.py`，**757 passed，104.33s，退出码 0**。验证提交 `c244be64f4d4b4864639f285b937ac508232ac91`，source tree `a891fd9c1d0f68675802f3477af88dfb1ccca4d7`；本地 `git clone --no-hardlinks` 后 detach 到该提交，核对导入来自 clone/source，运行前后 git status 均为空。命令内部使用本文全量命令所述的固定 Python、凭据清理、新临时数据根及 `-m pytest -o addopts= -q`。本次补录为纯文档提交，source tree 保持与已测版本一致。
+
 回退：优先将 `per_project=1`，并排空已启动 render；不恢复旧数据。旧错误文案可由新代码读取及后续正常状态写入纠正。本轮不直接修写现有 `.web-state`，不部署；实现及测试交复审。
