@@ -112,8 +112,11 @@ def test_receipt_hot_path_does_not_hash_or_query_oss(tmp_path, monkeypatch):
     assert preview_oss.signed_preview(video,'a'*32,'R1',bucket=bucket,receipt=receipt)['expires_in']==900
 
 
-def test_upload_reads_snapshot_not_replaced_source(tmp_path):
+def test_upload_reads_snapshot_not_replaced_source(tmp_path, monkeypatch):
     video=tmp_path/'preview.mp4';video.write_bytes(b'first');bucket=Bucket()
+    # Reproduce filesystems whose timestamp resolution hides rapid same-size writes.
+    identity = preview_oss._identity(video)
+    monkeypatch.setattr(preview_oss, '_identity', lambda _path: identity)
     put=bucket.put_object_from_file
     def replace(key,filename,headers):
         assert filename != str(video)

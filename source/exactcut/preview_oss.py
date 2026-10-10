@@ -143,7 +143,11 @@ def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, rec
                     except Exception as exc:
                         if getattr(exc, 'code', None) != 'FileAlreadyExists':
                             raise
-                if _identity(video) != before:
+                # Some Linux filesystems coalesce timestamps for rapid writes.
+                # A same-size in-place change may therefore retain stat identity.
+                # Cold uploads verify bytes too; immutable published files retain
+                # the receipt-only hot path.
+                if _identity(video) != before or file_sha256(video) != digest:
                     raise ValueError('成片正在更新，请稍后重试')
                 meta = bucket.head_object(key)
                 remote_hash = meta.headers.get('x-oss-meta-sha256') or meta.headers.get('X-Oss-Meta-Sha256')
