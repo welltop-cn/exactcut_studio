@@ -98,3 +98,9 @@ docker run --rm --network none --entrypoint python \
 最终开发工作区全量：**743 passed，104.71s，退出码 0**（2026-10-10）；`git diff --check` 通过。干净 clone 验证在全部实现提交后执行。
 
 整体独立复核通过，无阻断遗漏；四个本轮新增测试文件 **67 passed，7.88s**。实现分组提交：锁收紧 `562a769`、素材结果/进度 `c67dbf5`、随后素材调度/生产容量组；所有提交仅显式暂存本任务文件。
+
+干净 clone 完整 pytest：**743 passed，105.67s，退出码 0**。验证提交 `fa027742488646b785e51dac5198d28a5a6c7818`，source tree `82eb1fd954f9381a1dcfafa4df8efc044013c946`；实际导入来自 clone/source/exactcut。本地 `git clone --no-hardlinks`、detached HEAD、新临时数据根、清除凭据变量；clone 运行前后 git status 均为空。最后补录此证据为纯文档提交，source tree 与已测版本完全相同。
+
+调度组提交 `fa02774`。开发工作区最终只保留用户原有两个文档及三个前端文件的改动，本轮提交列表不包含这些文件；`git diff --check` 通过。没有部署、没有真实 OSS/飞书/FBBM 请求。
+
+未决项：Linux 容器完整回归因本机 daemon 不可用仍**未执行**；实际生产线程数/性能与业务验收仍**未执行**，待 Grok 复审和编排者后续验收。本轮无已知未解决代码审查阻断项。现停止实施，等待复审。
