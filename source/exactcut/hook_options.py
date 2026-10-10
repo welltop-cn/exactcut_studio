@@ -4,7 +4,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, model_validator
 from .errors import ValidationError
 from .hook_emphasis import plain_hook, manual_emphasis, resolve_emphasis
-from .runtime import environment
+from .runtime import environment, feature_flags
 
 
 class HookRange(BaseModel):
@@ -49,7 +49,7 @@ def approved_emphasis(text: str, options: HookOptions, cache_dir: Path) -> dict:
     marked = manual_emphasis(text)
     if marked:
         return marked
-    if environment() == 'production':
+    if environment() == 'production' or (environment() == 'development' and feature_flags()['ai']):
         return resolve_emphasis(text, cache_dir)
     return {'version':1,'source':'isolated_disabled','text':clean,'highlights':[],
             'reason':'隔离环境未调用 AI；可用手工选词测试排版','style':'default'}

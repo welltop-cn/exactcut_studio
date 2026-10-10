@@ -94,7 +94,9 @@ def require_material_fetch():
         raise RuntimeError(f'已禁用：需要 {flag}=1')
 
 def require_ai():
-    _require_flag('EXACTCUT_ALLOW_AI')
+    flag = 'EXACTCUT_ALLOW_AI'
+    if os.environ.get(flag) != '1' or environment() not in {'production', 'development'}:
+        raise RuntimeError(f'已禁用：需要 {flag}=1')
 
 def feature_flags():
     return {

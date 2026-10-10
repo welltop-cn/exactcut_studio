@@ -276,3 +276,35 @@ def test_incompatible_data_and_busy_queue_prevent_switch(ops,monkeypatch):
     with pytest.raises(RuntimeError,match='drained'):module.transition('new')
     calls.assert_not_called();assert plist.read_bytes()==original
     assert not (root/'.web-state/maintenance.json').exists()
+
+
+def test_development_ai_requires_explicit_flag_and_keeps_writes_blocked(monkeypatch):
+    monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'development')
+    monkeypatch.setenv('EXACTCUT_ALLOW_AI', '0')
+    with pytest.raises(RuntimeError):
+        runtime.require_ai()
+    monkeypatch.setenv('EXACTCUT_ALLOW_AI', '1')
+    runtime.require_ai()
+    monkeypatch.setenv('EXACTCUT_ALLOW_PUBLISH', '1')
+    monkeypatch.setenv('EXACTCUT_ALLOW_EXTERNAL_WRITES', '1')
+    with pytest.raises(RuntimeError):
+        runtime.require_publish()
+    with pytest.raises(RuntimeError):
+        runtime.require_external('upload')
+    for env in ('test', 'staging'):
+        monkeypatch.setenv('EXACTCUT_ENVIRONMENT', env)
+        with pytest.raises(RuntimeError):
+            runtime.require_ai()
+
+
+def test_explicit_development_ai_uses_real_emphasis_path(tmp_path, monkeypatch):
+    from exactcut import hook_options
+    monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'development')
+    monkeypatch.setenv('EXACTCUT_ALLOW_AI', '1')
+    live = Mock(return_value={'source': 'ai_semantic'})
+    monkeypatch.setattr(hook_options, 'resolve_emphasis', live)
+    result = hook_options.approved_emphasis('Concurrent test', hook_options.HookOptions(mode='ai'), tmp_path)
+    assert result['source'] == 'ai_semantic'
+    live.assert_called_once_with('Concurrent test', tmp_path)
+    monkeypatch.setenv('EXACTCUT_ALLOW_AI', '0')
+    assert hook_options.approved_emphasis('Concurrent test', hook_options.HookOptions(mode='ai'), tmp_path)['source'] == 'isolated_disabled'
