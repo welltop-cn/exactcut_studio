@@ -284,6 +284,7 @@ def _semantic(draft, row):
 
 
 def save_draft(path, data):
+    from . import workflow as w
     from .intake import compile_clips, compile_composition
     draft = copy.deepcopy(data.get('draft'))
     if not isinstance(draft, dict) or not isinstance(draft.get('rows'), list) or not all(isinstance(r, dict) for r in draft['rows']):
@@ -295,6 +296,9 @@ def save_draft(path, data):
     draft['creator2'] = 'agent'
     def apply(state):
         _editable(state)
+        # HTTP callers hold the same naming lock as legacy draft saves.
+        if w.allocate_sequences(draft, path.name):
+            state['document'].setdefault('warnings', []).append('素材命名冲突，已分配新序号；请确认最终文件名')
         ids = set()
         for row in draft['rows']:
             rid = row.get('request_id')

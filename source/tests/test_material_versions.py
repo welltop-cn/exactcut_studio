@@ -792,3 +792,16 @@ def test_managed_detail_preserves_project_and_candidate_execution_history(worksp
     assert any('项目已创建' in message for message in messages)
     assert rid + '：开始制作' in messages
     assert any('内容已确认' in message for message in messages)
+
+
+def test_managed_save_allocates_sequences_around_existing_completed_project(workspace):
+    original = imported()
+    complete_asset(original)
+    item = w.create_blank()
+    path = w.folder(item['id']); m = module(); state = m.enroll(path)
+    draft = copy.deepcopy(original['draft'])
+    draft['rows'][0]['request_id'] = state['draft']['rows'][0]['request_id']
+    saved = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    assert saved['draft']['rows'][0]['seq'] != original['draft']['rows'][0]['seq']
+    confirmed = m.confirm(path, {'revision': saved['revision'], 'mutation_id': token()})
+    assert confirmed['assets'][draft['rows'][0]['request_id']]['candidate_version']
