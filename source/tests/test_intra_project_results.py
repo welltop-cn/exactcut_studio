@@ -48,8 +48,8 @@ def test_execution_is_counted_per_request_and_progress_is_isolated(workspace):
 
 
 @pytest.mark.parametrize('states,publication,expected', [
-    (['failed', 'processing'], {}, 'partial'),
-    (['qc_passed', 'processing'], {}, 'review'),
+    (['failed', 'processing'], {}, 'producing'),
+    (['qc_passed', 'processing'], {}, 'producing'),
     (['qc_passed', 'qc_passed'], {'a': {'status': 'fbbm_queued'}}, 'publishing'),
     (['qc_passed', 'qc_passed'], {'a': {'status': 'fbbm_ready'}, 'b': {'status': 'fbbm_ready'}}, 'complete'),
 ])

@@ -104,3 +104,32 @@ docker run --rm --network none --entrypoint python \
 调度组提交 `fa02774`。开发工作区最终只保留用户原有两个文档及三个前端文件的改动，本轮提交列表不包含这些文件；`git diff --check` 通过。没有部署、没有真实 OSS/飞书/FBBM 请求。
 
 未决项：Linux 容器完整回归因本机 daemon 不可用仍**未执行**；实际生产线程数/性能与业务验收仍**未执行**，待 Grok 复审和编排者后续验收。本轮无已知未解决代码审查阻断项。现停止实施，等待复审。
+
+## 本机并发完成汇总修复（2026-10-10，测试先行）
+
+用户在本机 8792 发现批次 A `47fea566799947d9a84de77e72aaa449` 的 6 份结果全部 `qc_passed`，但持久文案为“制作结束，5 条可预览，0 条失败”。本轮只读核对 `source/.web-state` 确认上述不一致；B/C 当前均为 6 份通过、文案 6。没有修改业务数据，没有请求运行中应用或重启/部署服务。
+
+根因：每个 `_produce` 用自己的返回结果快照写整批计数；只读 runtime 的派生规则又会在只有部分素材完成时给出 review/partial，且不会修正持久文案。最后结束者持有过期快照，最终状态不会自动纠正。
+
+TDD 证据：
+
+- 先新增汇总回归，初始 **11 failed，0.91s**。用两个真实 `workflow.render` 调用、线程池和 Event 固定交错顺序：第一个写入分片并保留仅含自己的结果，第二个完成后再释放第一个；两种顺序均确定复现最终“1 条”而非“2 条”。不依赖 sleep、真实时间推进或外部客户端。
+- 再补持久 render job 与 6 素材计数回归，确认 **2 failed**；另补“旧批次残留 render phase + 活 upload”回归，确认失败后才修复原始/派生 executor 标记混用。新增文件最终共 **14 条**回归。
+- 最小实现：批次 `runtime.lock` 内重读全部确认素材分片（保留旧整批 results 兼容），统一 `production_summary` 供写入和读取使用。局部返回结果仅决定本 render 退出码；素材执行器退出及调度收割时重新持久化汇总。新增可选 `execution_phase` 区分 render/upload/poll，保持 schema 1。
+- 缺失、processing、waiting_resource 分片以及仍驻留/排队（含 not_before）的 render 都阻止完成；全部素材终态才置 `production_complete=True`，根据成功/失败与交付状态派生 review/partial/publishing/complete。失败素材也是制作终态。显式 failed/interrupted 且无待执行 render 时保留恢复错误，避免遮蔽故障。upload/poll 不阻挡已完成制作；未确认的残留分片不计数。
+- 按本轮用户要求，修正原计划第 4/8 节的中间态：仍有兄弟素材未完成时统一 producing/False，全部制作终态后才 review/partial。更新两处旧期望，并保留失败隔离、交付保险和恢复回归。
+
+定向验证（凭据清理、独立临时数据根，命令在 `source/`）：
+
+```sh
+/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
+  tests/test_batch_production_summary.py tests/test_intra_project_results.py \
+  tests/test_intra_project_scheduler.py tests/test_round1_integration.py \
+  tests/test_workflow.py tests/test_phase4_observations.py
+```
+
+结果：**128 passed，14.21s，退出码 0**。完整本机与干净 clone 证据在下方补录；可复现隔离脚本见本文“可复现的本机全量命令”。环境仍为 macOS 15.8.1 arm64 / Python 3.12.12。三个前端文件及用户其他未提交改动保持原样，不进入本轮提交。
+
+本机全量：在 `source/` 执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`，**757 passed，106.66s，退出码 0**；每轮新临时数据根、清除凭据变量，外部客户端模拟。`git diff --check` 通过。
+
+回退：优先将 `per_project=1`，并排空已启动 render；不恢复旧数据。旧错误文案可由新代码读取及后续正常状态写入纠正。本轮不直接修写现有 `.web-state`，不部署；实现及测试交复审。

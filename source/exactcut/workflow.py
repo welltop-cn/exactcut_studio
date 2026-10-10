@@ -83,20 +83,64 @@ def runtime(path):
         if not executing:
             for field in ('execution_ended_at', 'heartbeat_at', 'last_progress_at'):
                 if field in latest: data[field] = latest[field]
-    if data.get('request_parallel') and (path / 'confirmed.json').exists():
-        requests = read_json(path / 'confirmed.json')['requests']
-        publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
-        data['production_complete'] = bool(requests) and all(records.get(r['request_id'], {}).get('status') in SAFE for r in requests)
-        states = [publications.get(r['request_id'], {}).get('status') or records.get(r['request_id'], {}).get('status', 'pending') for r in requests]
-        if any(s in {'failed', 'publish_failed', 'unverified'} for s in states):
-            data.update(status='partial', message='部分素材失败或待核实，其余素材可继续')
-        elif states and all(s == 'fbbm_ready' for s in states):
-            data.update(status='complete', message='全部素材 FBBM 已就绪')
-        elif any(s in {'upload_queued', 'uploading', 'fbbm_queued'} for s in states):
-            data.update(status='publishing', message='素材正在交付，其余素材可继续制作或审片')
-        elif executing or any(s != 'pending' for s in states):
-            data.update(status='review', message='素材制作或审片中')
+    data.update(production_summary(path, {**data, 'executor_running': batch_executor}, records))
     return data
+
+
+def production_summary(path, data, records=None):
+    """One rule for persisted summaries and reads; count only confirmed requests."""
+    if not data.get('request_parallel') or not (path / 'confirmed.json').exists():
+        return {}
+    requests = read_json(path / 'confirmed.json')['requests']
+    ids = {request['request_id'] for request in requests}
+    records = result_records(path) if records is None else records
+    publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
+    terminal = SAFE | {'failed', 'publish_dry_run', 'unverified'}
+    pending = {rid for rid in ids if records.get(rid, {}).get('status') not in terminal}
+    render_executors = set()
+    for rid in ids:
+        record = records.get(rid, {})
+        if not record.get('executor_running'): continue
+        phase = record.get('execution_phase')
+        # Old records have no phase. An active result with no delivery entry is
+        # a render; old upload/poll records have the saved publication and stage.
+        if phase == 'render' or (phase is None and not publications.get(rid)):
+            render_executors.add(rid)
+    if data.get('executor_running') and data.get('execution_phase') == 'render':
+        render_executors.update(ids)  # Legacy whole-batch executor.
+    pending.update(render_executors)
+    queued = set()
+    for file in (ROOT / '.web-state/jobs').glob('*.json'):
+        job = read_json(file)
+        if (job.get('batch_id') == path.name and job.get('phase') == 'render'
+                and job.get('status') in {'queued', 'running', 'waiting_resource'}):
+            rid = job.get('request_id')
+            queued.update(ids if rid is None else ids & {rid})
+    # A QC-passed render may still be finishing its preview/evidence. Queued
+    # retries can also retain a terminal shard from the preceding attempt.
+    pending.update(queued)
+    passed = sum(records.get(rid, {}).get('status') in SAFE | {'publish_dry_run'} for rid in ids)
+    failed = sum(records.get(rid, {}).get('status') == 'failed' for rid in ids)
+    complete = bool(ids) and not pending
+    if not complete:
+        if data.get('status') in {'failed', 'interrupted'} and not render_executors and not queued:
+            return {'production_complete': False}  # Preserve explicit recovery failures.
+        return {'status': 'producing', 'production_complete': False,
+                'message': f'正在制作，{passed} 条可预览，{failed} 条失败，{len(pending)} 条待完成'}
+    states = [publications.get(rid, {}).get('status') or records.get(rid, {}).get('status') for rid in ids]
+    message = f'制作结束，{passed} 条可预览，{failed} 条失败'
+    if failed or any(state in {'publish_failed', 'unverified'} for state in states):
+        status = 'partial'
+        if any(state in {'publish_failed', 'unverified'} for state in states): message += '；部分交付失败或待核实'
+    elif all(state == 'fbbm_ready' for state in states):
+        status = 'complete'
+        message += '；全部素材 FBBM 已就绪'
+    elif any(state in {'upload_queued', 'uploading', 'fbbm_queued'} for state in states):
+        status = 'publishing'
+        message += '；素材正在交付'
+    else:
+        status = 'review'
+    return {'status': status, 'message': message, 'production_complete': True}
 
 
 def update(path, status=None, message=None, **fields):
@@ -114,6 +158,9 @@ def _update_locked(path, status=None, message=None, **fields):
         data.setdefault('events', []).append({'at': now_iso(), 'message': message})
         data['events'] = data['events'][-200:]
     data.update(fields, updated_at=now_iso())
+    # Re-read durable shards while holding runtime.lock. Never commit a render's
+    # private snapshot, and never let a later heartbeat/message regress the sum.
+    data.update(production_summary(path, data))
     write_json_atomic(path / 'runtime.json', data)
     return data
 
@@ -135,14 +182,14 @@ def checkpoint(path, stage, *, advanced=True, request_id=None, **details):
 
 
 @contextmanager
-def execution(path, request_id=None, interval=3):
+def execution(path, request_id=None, interval=3, *, phase=None):
     if request_id is not None:
         result_store.patch(path / 'production', request_id, execution_started_at=now_iso(),
-                           execution_ended_at=None, executor_running=True, heartbeat_at=now_iso(),
+                           execution_ended_at=None, executor_running=True, execution_phase=phase, heartbeat_at=now_iso(),
                            last_progress_at=now_iso(), stage=None, stage_started_at=None, progress_details={}, error=None)
     else:
         update(path, execution_started_at=now_iso(), execution_ended_at=None,
-           executor_running=True, heartbeat_at=now_iso(), last_progress_at=now_iso(),
+           executor_running=True, execution_phase=phase, heartbeat_at=now_iso(), last_progress_at=now_iso(),
            stage=None, stage_started_at=None, progress_details={}, error=None,
            active_request=request_id)
     stop = threading.Event()
@@ -165,6 +212,7 @@ def end_execution(path, request_id=None, **fields):
         update(path, executor_running=False, execution_ended_at=now_iso(), **fields)
     else:
         result_store.patch(path / 'production', request_id, executor_running=False, execution_ended_at=now_iso(), **fields)
+        update(path)  # Last render exit persists the full, current batch summary.
 
 
 @contextmanager
@@ -861,7 +909,7 @@ def download(path, manifest, project):
 
 
 def produce(batch_id):
-    with execution(folder(batch_id)):
+    with execution(folder(batch_id), phase='render'):
         return _produce(batch_id)
 
 
@@ -906,7 +954,10 @@ def _produce(batch_id, *, render_only=False, request_id=None):
         selected = {rid: record for rid, record in results['requests'].items()
                     if request_id is None or rid == request_id}
         failed = [r for r in selected.values() if r.get('status') == 'failed']
-        update(path, 'partial' if failed else 'review', f'制作结束，{len(results["requests"])-len(failed)} 条可预览，{len(failed)} 条失败', production_complete=not failed)
+        if request_id is None:
+            update(path, 'partial' if failed else 'review', f'制作结束，{len(results["requests"])-len(failed)} 条可预览，{len(failed)} 条失败', production_complete=not failed)
+        else:
+            update(path)  # The local results only determine this executor's exit code.
         return 2 if failed else 0
     except Exception as exc:
         from .stage_results import ResourceDeferred
@@ -933,7 +984,7 @@ def fetch(batch_id):
 
 
 def render(batch_id, request_id=None):
-    with execution(folder(batch_id), request_id):
+    with execution(folder(batch_id), request_id, phase='render'):
         return _produce(batch_id, render_only=True, request_id=request_id)
 
 
@@ -963,7 +1014,7 @@ def upload(batch_id, request_id):
     """Persist intent before remote writes; ambiguous writes are never replayed."""
     from .publish import publish_to_queue, guarded_delivery
     path = folder(batch_id)
-    with execution(path, request_id):
+    with execution(path, request_id, phase='upload'):
         manifest, request = request_for(path, request_id)
         entry = read_json(path / 'publications.json')[request_id]
         started = time.monotonic()
@@ -1007,7 +1058,7 @@ def poll(batch_id, request_id):
     """One guarded sync (which may ingest/resync/write), then release the lane."""
     from .publish import sync_record_once, verify_record_once, guarded_delivery
     path = folder(batch_id)
-    with execution(path, request_id):
+    with execution(path, request_id, phase='poll'):
         manifest, request = request_for(path, request_id)
         entry = read_json(path / 'publications.json')[request_id]
         started = time.monotonic()

@@ -172,7 +172,8 @@ def test_one_failed_render_keeps_siblings_running_and_finishes_remaining(chain, 
     result_store.patch(path / 'production', failed['request_id'], status='failed', error='fixture render failure')
     result_store.patch(path / 'production', sibling['request_id'], executor_running=True)
     finish_specific(chain, failed, 2)
-    assert w.runtime(path)['status'] == 'partial'
+    assert w.runtime(path)['status'] == 'producing'
+    assert not w.runtime(path)['production_complete']
     assert w.result_records(path)[sibling['request_id']]['executor_running'] is True
     assert len(chain.owned) == 2 and sibling['id'] in chain.owned
     for job, _, _ in list(chain.owned.values()): chain.finish('render', batch, job['request_id'])

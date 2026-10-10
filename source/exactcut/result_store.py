@@ -3,7 +3,7 @@ from contextlib import contextmanager
 import fcntl
 from .util import read_json, write_json_atomic
 
-EXECUTION_FIELDS = ('executor_running', 'heartbeat_at', 'execution_started_at', 'execution_ended_at')
+EXECUTION_FIELDS = ('executor_running', 'heartbeat_at', 'execution_started_at', 'execution_ended_at', 'execution_phase')
 
 
 def file_for(directory, request_id):
