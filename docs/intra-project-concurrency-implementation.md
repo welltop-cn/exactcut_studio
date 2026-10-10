@@ -171,3 +171,17 @@ GREEN 定向命令：
 干净 clone 完整 pytest：执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-clean-review.py`，**763 passed，106.17s，退出码0**。验证提交 `62a7d1495a4c7ba92382010093cfda6cf318ef75`，source tree `f51ae8c79a6bb62df9f1598ee57b4f9d04c96ec9`；本地 `--no-hardlinks` clone、detached HEAD、独立临时数据根、凭据清理及 clone/source 导入检查均通过，运行前后 clone 的 git status 为空。最后补录为纯文档提交，source tree 与已测版本一致。
 
 本轮无已知未解决代码问题；Linux 容器全量/生产 Python 3.11 **由编排者在 build 阶段执行，本会话未执行**。只显式暂存本轮3个文件，不含三个前端文件或用户其他改动。未部署；完成后停止，等待复审/终验。
+
+## 生产真实验收（2026-10-10，编排者执行）
+
+版本 `us-east-20261010-ipc`，commit `85664bf`，镜像 `sha256:4969ee33bd189e820ce6b0f6009be705fe1f973e0cead335924edff9afbb7321`；上一版本 `us-east-20261010-ceiling-derived2`。
+生效配置：`fetch=2, render=4, upload=2, poll=4, per_project=2, max_active_children=12`（总闸自动=各 lane 之和），healthz ok。
+构建内 Linux 容器回归：**756 passed / 7 skipped**（生产 Python 3.11），满足规范 §8 的 Linux 门槛。
+
+| 场景 | 操作 | 结果 |
+| --- | --- | --- |
+| 同项目并发（两项目） | 剧 `101460`，两个各 6 素材的项目同时制作 | 全程 **renderA=2 / renderB=2 / ffmpeg=4**，单项目不超 2、总计不超 4 |
+| 汇总文案 | 两项目各 6 素材 | 两者最终均为 `review` + **"制作结束，6 条可预览，0 条失败"**，与 **6/6 qc_passed** 一致；无提前判完成 |
+| 崩溃恢复 | 在 C 项目 2 个 render 运行时 `docker kill`，再 `linux-ops recover` | `fetch attempt=1` 保留；被打断的 `R001/R002` 以 **`attempt=2`** 重排；6/6 qc_passed、6 成片，**无重复** |
+
+遗留测试数据（生产，未上传）：剧 `101460` 的 `验收A`…`验收F`、`并发PA/PB/PC`；可按需删除。
