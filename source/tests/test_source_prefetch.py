@@ -170,13 +170,13 @@ vm.runInContext(src.slice(a,b),ctx);vm.runInContext('renderRuntime()',ctx);
 assert(el('stageOverview').innerHTML.includes('EP2（2/2）'));
 assert(el('stageOverview').innerHTML.includes('25%'));
 assert(el('stageOverview').innerHTML.includes('value="1048576" max="4194304"'));
-assert(el('progressHint').textContent.includes('25%'));
+assert.equal(el('progressHint').hidden,true);
 ctx.current.runtime.status='downloading';delete ctx.current.runtime.download_prefetch;
 ctx.current.runtime.download_current_received=3145728;vm.runInContext('renderRuntime()',ctx);
 assert(el('stageOverview').innerHTML.includes('75%'));
 ctx.current.runtime.download_complete=true;vm.runInContext('renderRuntime()',ctx);
 assert(el('stageOverview').innerHTML.includes('所需正片已就绪'));
-assert(el('stageOverview').innerHTML.includes('value="1" max="1"'));
+assert(!el('stageOverview').innerHTML.includes('<progress'));
 '''
     result = subprocess.run([node, '-e', script], input=json.dumps(source), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
