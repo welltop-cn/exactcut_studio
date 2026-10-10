@@ -174,7 +174,10 @@ assert.equal(el('progressHint').hidden,true);
 ctx.current.runtime.status='downloading';delete ctx.current.runtime.download_prefetch;
 ctx.current.runtime.download_current_received=3145728;vm.runInContext('renderRuntime()',ctx);
 assert(el('stageOverview').innerHTML.includes('75%'));
-ctx.current.runtime.download_complete=true;vm.runInContext('renderRuntime()',ctx);
+ctx.current.runtime.download_complete=true;
+ctx.current.runtime.observation={step:'获取正片',elapsed_seconds:6,stage_seconds:3};
+vm.runInContext('renderRuntime()',ctx);
+assert.equal(el('executionObservation').hidden,true,'completed download must not show stale observation');
 assert(el('stageOverview').innerHTML.includes('所需正片已就绪'));
 assert(!el('stageOverview').innerHTML.includes('<progress'));
 '''
