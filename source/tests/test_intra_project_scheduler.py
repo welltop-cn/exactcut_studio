@@ -29,17 +29,16 @@ def request_job(key, lane, path, rid):
     return job
 
 
-def test_per_project_defaults_to_one(monkeypatch):
+def test_settings_no_longer_expose_project_limit(monkeypatch):
     for config in ({}, {'concurrency': {'render': 4}}):
         monkeypatch.setattr(concurrency, 'load_config', lambda: config)
-        assert concurrency.settings()['per_project'] == 1
+        assert 'per_project' not in concurrency.settings()
 
 
 @pytest.mark.parametrize('value', [0, -1, True, False, 1.5, '2', None])
-def test_per_project_rejects_invalid_values(monkeypatch, value):
+def test_obsolete_project_setting_is_ignored(monkeypatch, value):
     monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'per_project': value}})
-    with pytest.raises(ValueError, match='per_project'):
-        concurrency.settings()
+    assert 'per_project' not in concurrency.settings()
 
 
 def test_same_batch_two_renders_and_other_lanes_admit(runner, monkeypatch):
@@ -52,7 +51,7 @@ def test_same_batch_two_renders_and_other_lanes_admit(runner, monkeypatch):
     owned = {}
     try:
         web.worker_tick([], owned)
-        assert set(owned) == {key * 32 for key in 'abef'}
+        assert set(owned) == {key * 32 for key in 'abcef'}
     finally:
         close_logs(owned)
 
@@ -142,30 +141,21 @@ def stopped_render_batch(monkeypatch, request_ids, per_project):
 
 
 @pytest.mark.parametrize('limit,count', [(2, 3), (1, 2)])
-def test_reconcile_excess_stopped_renders_resume_up_to_project_limit(runner, monkeypatch, limit, count):
+def test_reconcile_ignores_old_project_limit_within_global_capacity(runner, monkeypatch, limit, count):
     path, children, kill = stopped_render_batch(monkeypatch, [f'R{i}' for i in range(count)], limit)
     assert control.reconcile(w.BATCHES)
-    assert kill.call_count == limit
-    resumed = {call.args[0] for call in kill.call_args_list}
-    remaining = {child['pid'] for child in control.read(path)['suspended']}
-    assert remaining == {child['pid'] for child in children} - resumed
-    # No repeated SIGCONT or extra admission while all project slots are used.
-    control.reconcile(w.BATCHES)
-    assert kill.call_count == limit
-    # One real exit frees exactly one slot on the next reconcile.
-    control.PROCESSES.rows.pop(min(resumed))
-    control.reconcile(w.BATCHES)
-    assert kill.call_count == limit + 1
-    assert kill.call_args.args[0] in remaining
+    assert kill.call_count == count
     assert not control.read(path)['suspended']
+    control.reconcile(w.BATCHES)
+    assert kill.call_count == count
 
 
 def test_reconcile_counts_running_render_before_resuming_siblings(runner, monkeypatch):
     path, children, kill = stopped_render_batch(monkeypatch, ['R1', 'R2', 'R3'], 2)
     control.PROCESSES.rows[100]['state'] = 'S'
     control.reconcile(w.BATCHES)
-    assert kill.call_count == 1
-    assert kill.call_args.args[0] in {101, 102}
+    assert kill.call_count == 2
+    assert {call.args[0] for call in kill.call_args_list} == {101, 102}
 
 
 @pytest.mark.parametrize('request_ids', [[None, 'R1'], ['R1', None]])
@@ -200,13 +190,13 @@ def multiple_batch(chain, count, drama='101460', owner='alice'):
     return w.detail(batch['id'])
 
 
-def test_six_requests_keep_exactly_two_render_residents(chain):
+def test_six_requests_fill_global_render_capacity(chain):
     chain.limits.update(render=4, per_project=2)
     batch = multiple_batch(chain, 6)
     chain.enqueue(batch); chain.tick(); chain.finish('fetch', batch)
     for remaining in range(6, 0, -1):
         residents = [j for j, _, _ in chain.owned.values() if j['phase'] == 'render']
-        assert len(residents) == min(2, remaining)
+        assert len(residents) == min(4, remaining)
         chain.finish('render', batch, residents[0]['request_id'])
     assert len(chain.render_calls) == 6
     assert w.runtime(w.folder(batch['id']))['status'] == 'review'
@@ -233,7 +223,7 @@ def finish_specific(chain, job, code):
 
 def test_one_failed_render_keeps_siblings_running_and_finishes_remaining(chain, monkeypatch):
     from exactcut import result_store
-    chain.limits.update(render=4, per_project=2)
+    chain.limits.update(render=2, per_project=2)
     batch = multiple_batch(chain, 3)
     path = w.folder(batch['id'])
     chain.enqueue(batch); chain.tick(); chain.finish('fetch', batch)
@@ -256,7 +246,7 @@ def test_one_failed_render_keeps_siblings_running_and_finishes_remaining(chain, 
 
 def test_crash_one_request_requeues_it_without_clearing_sibling(chain):
     from exactcut import result_store
-    chain.limits.update(render=4, per_project=2)
+    chain.limits.update(render=2, per_project=2)
     batch = multiple_batch(chain, 3)
     path = w.folder(batch['id'])
     chain.enqueue(batch); chain.tick(); chain.finish('fetch', batch)
@@ -276,7 +266,7 @@ def test_crash_one_request_requeues_it_without_clearing_sibling(chain):
 
 
 def test_same_batch_render_upload_poll_execute_independently(chain):
-    chain.limits.update(render=4, per_project=2, max_active_children=8)
+    chain.limits.update(render=2, per_project=2, max_active_children=8)
     batch = multiple_batch(chain, 4)
     chain.enqueue(batch); chain.tick(); chain.finish('fetch', batch)
     initial = [j for j, _, _ in chain.owned.values()]
@@ -353,8 +343,8 @@ def test_verify_delivery_gate_blocks_target_or_legacy_but_allows_sibling(api, wo
     assert code == expected, body
 
 
-def test_stopped_render_residents_hold_project_slots_and_upload_keeps_capacity(runner, monkeypatch):
-    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 4, 'per_project': 2, 'upload': 2}})
+def test_stopped_render_residents_hold_global_slots_and_upload_keeps_capacity(runner, monkeypatch):
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 2, 'per_project': 1, 'upload': 2}})
     monkeypatch.setattr(web.storage, 'scheduler_job_budget', lambda *args: {})
     path = batch_path()
     children = []
@@ -390,3 +380,17 @@ def test_parallel_approval_ignores_shared_render_message(api, workspace, monkeyp
     code, body = post(api, '/api/batches/' + batch['id'] + '/publish',
                       {'request_id': request['request_id'], 'sha256': record['output_sha256']})
     assert code == 202, body
+
+
+def test_one_project_fills_global_render_limit_despite_legacy_project_setting(runner, monkeypatch):
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 3, 'per_project': 1}})
+    monkeypatch.setattr(web.storage, 'scheduler_job_budget', lambda *args: {})
+    path = batch_path()
+    for index, key in enumerate('abcd'):
+        request_job(key, 'render', path, f'R{index}')
+    owned = {}
+    try:
+        web.worker_tick([], owned)
+        assert set(owned) == {key * 32 for key in 'abc'}
+    finally:
+        close_logs(owned)

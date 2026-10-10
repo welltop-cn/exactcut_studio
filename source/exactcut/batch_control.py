@@ -23,7 +23,6 @@ def write(path, control, message=None):
     control['updated_at'] = now_iso()
     if message:
         control.setdefault('events', []).append({'at': control['updated_at'], 'message': message})
-        control['events'] = control['events'][-50:]
     write_json_atomic(path / 'control.json', control)
     if message:
         diag.event('batch.control_changed', batch_id=path.name, paused=control.get('paused'),
@@ -261,7 +260,7 @@ def present(path, state):
         data['message'] = '等待继续执行；前面的运行任务完成或暂停后自动恢复。'
     if data['archived']:
         data['message'] = '已归档。' + data.get('message', '')
-    data['events'] = sorted([*state.get('events', []), *control.get('events', [])], key=lambda e: e['at'])[-200:]
+    data['events'] = sorted([*state.get('events', []), *control.get('events', [])], key=lambda e: e['at'])
     data['updated_at'] = max(state.get('updated_at', ''), control.get('updated_at', ''))
     return data
 
@@ -276,7 +275,6 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
     with LOCK:
         counts = {key: (external_active or {}).get(key, 0) for key in ('fetch', 'render', 'upload', 'poll')}
         active_batches = set()
-        project_renders = {}
         waiting = []
         resident_identities = set()
         for path in sorted(batch_root.glob('*')):
@@ -297,10 +295,6 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
                 identity = (child['pid'], child['process_token'])
                 if identity not in resident_identities:
                     counts[lane(child)] += 1
-                    # Stopped roots retain lane/resident capacity, but do not
-                    # occupy a project's execution slot until SIGCONT succeeds.
-                    if lane(child) == 'render' and state != 'T':
-                        project_renders[path.name] = project_renders.get(path.name, 0) + 1
                     resident_identities.add(identity)
                 if state != 'T':
                     active_batches.add(scope(child, path.name))
@@ -316,14 +310,10 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
             candidate = scope(child, path.name)
             if scope_blocked(candidate, active_batches) or counts[resource] > limits[resource]:
                 continue
-            if resource == 'render' and project_renders.get(path.name, 0) >= limits['per_project']:
-                continue
             total = limits['max_active_children'] if limits['enabled'] else 1
             if sum(counts.values()) > total:
                 continue
             if signal_identity(child, signal.SIGCONT, table):
-                if resource == 'render':
-                    project_renders[path.name] = project_renders.get(path.name, 0) + 1
                 active_batches.add(candidate)
                 control = read(path)
                 control['suspended'] = [item for item in control.get('suspended', [])

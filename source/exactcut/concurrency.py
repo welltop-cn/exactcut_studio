@@ -26,7 +26,7 @@ def settings():
         # serial behaviour with safe defaults.
         capacities = {name: 1 for name in LANES}
         return {**capacities, 'max_active_children': 1, 'enabled': True,
-                'per_project': 1, 'hook_previews': 1, 'ai': ai_settings({})}
+                'hook_previews': 1, 'ai': ai_settings({})}
     if not isinstance(section, dict):
         raise ValueError('concurrency 必须为对象')
     enabled = section.get('enabled', True)
@@ -47,11 +47,8 @@ def settings():
     previews = section.get('hook_previews', 1)
     if isinstance(previews, bool) or not isinstance(previews, int) or previews < 1:
         raise ValueError('concurrency.hook_previews 必须为正整数')
-    per_project = section.get('per_project', 1)
-    if isinstance(per_project, bool) or not isinstance(per_project, int) or per_project < 1:
-        raise ValueError('concurrency.per_project 必须为正整数')
     return {**capacities, 'max_active_children': total, 'enabled': enabled,
-            'per_project': per_project, 'hook_previews': previews, 'ai': ai_settings(section)}
+            'hook_previews': previews, 'ai': ai_settings(section)}
 
 
 def scope(job, batch_id=None):

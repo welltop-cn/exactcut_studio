@@ -115,6 +115,54 @@ def queue_size():
     return count
 
 
+def queue_snapshot(user):
+    """Download/render load is public to members; task metadata is owner-scoped.
+
+    Tasks are ordered by submission time for display, not promised FIFO admission.
+    Only explicit fields below cross the API boundary; never return raw job records.
+    """
+    limits = concurrency.settings()
+    pools = {lane: {'running': 0, 'queued': 0, 'paused': 0,
+                    'limit': min(limits[lane], limits['max_active_children']) if limits['enabled'] else 1}
+             for lane in ('fetch', 'render')}
+    tasks = []
+    now = time.time()
+    for job in sorted(stored_jobs(), key=lambda item: item.get('created', 0)):
+        lane = concurrency.lane(job)
+        if lane not in pools or job.get('status') not in {'queued', 'running'}:
+            continue
+        if job.get('instance') and not batch_control.belongs(job):
+            continue
+        bid = job.get('batch_id')
+        path = workflow.BATCHES / bid if isinstance(bid, str) and re.fullmatch(r'[0-9a-f]{32}', bid) else None
+        if bid and (path is None or not (path / 'draft.json').is_file()):
+            continue
+        control = batch_control.read(path) if path else {}
+        paused = control.get('paused') or control.get('archived')
+        status = 'paused' if paused else job['status']
+        pools[lane][status] += 1
+        if user['role'] != 'admin' and (path is None or not accounts.allowed(path, user)):
+            continue
+        draft = read_json(path / 'draft.json') if path else {}
+        name = draft.get('display_name') or draft.get('draft', {}).get('drama_title') or '未命名项目'
+        reason = ('已归档，保留进度' if control.get('archived') else '已暂停，保留进度') if paused else (
+            '等待资源重试' if job.get('not_before', 0) > now else '等待调度，按用户轮转分配空位') if status == 'queued' else ''
+        task = {'id': job['id'], 'batch_id': bid, 'request_id': job.get('request_id'),
+                'project_name': name, 'lane': lane, 'status': status,
+                'created': job.get('created'), 'started': job.get('started'), 'wait_reason': reason}
+        if status == 'running' and job.get('started') is not None:
+            task['elapsed_seconds'] = max(0, int(now - job['started']))
+        if path:
+            from .progress import observation
+            record = workflow.result_records(path).get(job.get('request_id'), {}) if job.get('request_id') else read_json(path / 'runtime.json')
+            task['observation'] = observation(record, paused=bool(paused))
+        if user['role'] == 'admin':
+            task['owner'] = accounts.owner(path) if path else job.get('actor', 'admin')
+        tasks.append(task)
+    return {'pools': pools, 'tasks': tasks, 'scope': 'all' if user['role'] == 'admin' else 'own',
+            'updated_at': now}
+
+
 def batch_response(batch_id, job=None):
     result = workflow.detail(batch_id)
     jobs = [item for item in stored_jobs() if item.get('batch_id') == batch_id]
@@ -743,7 +791,6 @@ def worker_tick(pending, owned):
                 known.add(durable['id'])
         limits = concurrency.settings()
         counts, tokens, batches, legacy_projects = resource_usage(owned)
-        project_renders = project_render_usage(owned)
         diag.throttled('scheduler.snapshot', 'worker', pending=len(pending), running=len(owned),
                        pools=counts, limits=limits, resident_count=len(tokens),
                        oldest_wait_seconds=round(max((time.time()-e[0].get('created', time.time()) for e in pending), default=0)))
@@ -774,9 +821,6 @@ def worker_tick(pending, owned):
                 control = batch_control.read(workflow.folder(batch))
                 if control.get('paused') or control.get('archived') or concurrency.scope_blocked(concurrency.scope(job), batches):
                     log_wait(job, 'paused' if control.get('paused') else 'archived' if control.get('archived') else 'dependency_active')
-                    continue
-                if resource == 'render' and project_renders.get(batch, 0) >= limits['per_project']:
-                    log_wait(job, 'project_render_limit')
                     continue
             try:
                 fingerprint = stage_results.scheduler_fingerprint(job, workflow.BATCHES, workflow.ROOT, jobs=JOBS)
@@ -832,7 +876,6 @@ def worker_tick(pending, owned):
                 tokens.add(batch_control.resident_identity(job, process))
                 if batch:
                     batches.add(concurrency.scope(job))
-                    if resource == 'render': project_renders[batch] = project_renders.get(batch, 0) + 1
                 elif job.get('project'):
                     legacy_projects.add(job['project'])
                 write_json_atomic(JOBS.parent / 'scheduler.json', {'owner': owner})
@@ -1067,6 +1110,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200 if healthy else 503, {'status': 'ok' if healthy else 'degraded', 'release': release_id(), 'environment': environment(), 'maintenance': maintenance_file().exists(), 'worker_alive': runner.is_alive() if runner else None, 'worker_heartbeat_age_seconds': round(heartbeat_age, 1) if runner else None})
         if not self.authorized():
             return
+        if self.path == '/api/queue':
+            try:
+                return self.respond(200, queue_snapshot(self.user))
+            except (OSError, ValueError, TypeError, KeyError):
+                return self.respond(503, {'error': '任务队列暂时不可用，请稍后重试'})
         if self.path == '/api/me':
             return self.respond(200, {**self.user, 'features': feature_flags()})
         if self.path == '/api/users':

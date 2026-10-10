@@ -159,16 +159,18 @@ def update(path, status=None, message=None, **fields):
 def _update_locked(path, status=None, message=None, **fields):
     data = read_json(path / 'runtime.json')
     previous_status = data.get('status')
+    was_complete = data.get('production_complete', False)
     if status:
         data['status'] = status
     if message:
         data['message'] = message
         data.setdefault('events', []).append({'at': now_iso(), 'message': message})
-        data['events'] = data['events'][-200:]
     data.update(fields, updated_at=now_iso())
     # Re-read durable shards while holding runtime.lock. Never commit a render's
     # private snapshot, and never let a later heartbeat/message regress the sum.
     data.update(production_summary(path, data))
+    if data.get('production_complete') and not was_complete and data.get('message') != message:
+        data.setdefault('events', []).append({'at': now_iso(), 'message': data['message']})
     write_json_atomic(path / 'runtime.json', data)
     if data.get('status') != previous_status:
         diag.event('batch.state', batch_id=path.name, previous_status=previous_status, status=data.get('status'),
@@ -185,6 +187,20 @@ def checkpoint(path, stage, *, advanced=True, request_id=None, **details):
         if record.get('stage') != stage: fields['stage_started_at'] = now_iso()
         if advanced: fields['last_progress_at'] = now_iso()
         result_store.patch(path / 'production', request_id, **fields)
+        if stage in {'upload', 'fbbm'}:
+            return
+        from .progress import STAGES
+        prefix = f'{request_id}：'
+        message = prefix + STAGES.get(stage, stage)
+        # The renderer has already persisted its stage before this callback.
+        # Deduplicate against the timeline under the same lock as event writes.
+        with (path / 'runtime.lock').open('a') as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            events = read_json(path / 'runtime.json').get('events', [])
+            previous = next((e['message'] for e in reversed(events)
+                             if e.get('message', '').startswith(prefix)), None)
+            if previous != message:
+                _update_locked(path, message=message)
         return
     fields = {'stage': stage, 'progress_details': details}
     if runtime(path).get('stage') != stage:
@@ -205,6 +221,8 @@ def execution(path, request_id=None, interval=3, *, phase=None):
            executor_running=True, execution_phase=phase, heartbeat_at=now_iso(), last_progress_at=now_iso(),
            stage=None, stage_started_at=None, progress_details={}, error=None,
            active_request=request_id)
+    if request_id is not None and phase == 'render':
+        update(path, message=f'{request_id}：开始制作')
     stop = threading.Event()
     def pulse():
         while not stop.wait(interval):
@@ -304,7 +322,7 @@ def create_blank(author='', *, display_name=''):
                                             'created_at': now_iso(), 'revision': 1,
                                             'draft': draft, 'warnings': []})
     write_json_atomic(path / 'runtime.json', {'status': 'draft', 'message': '请填写剧集、日期和剪辑时间',
-                                              'updated_at': now_iso(), 'events': []})
+                                              'updated_at': now_iso(), 'events': [{'at': now_iso(), 'message': '项目已创建，等待确认内容'}]})
     return detail(batch_id)
 
 
@@ -379,7 +397,7 @@ def import_excel(data):
             write_json_atomic(group_path / 'draft.json', {'id': group_id, 'filename': name, 'created_at': now_iso(),
                                                          'revision': 1, 'draft': draft, 'warnings': warnings})
             write_json_atomic(group_path / 'runtime.json', {'status': 'draft', 'message': 'Excel 已整理，请检查并修改标准化内容',
-                                                           'updated_at': now_iso(), 'events': []})
+                                                           'updated_at': now_iso(), 'events': [{'at': now_iso(), 'message': '项目已创建，等待确认内容'}]})
             archive_draft(group_path)
             imported.append({'id': group_id, 'drama_id': draft['drama_id'], 'count': len(draft['rows'])})
     response = detail(batch_id)
@@ -593,7 +611,7 @@ def _clone_batch(batch_id, *, purpose='copy'):
     allocate_sequences(data['draft'], batch_id, all_new=True)
     data['warnings'] = ['由原项目创建新草稿，原任务、日志与成片保留；素材序号已重新分配，请确认文件名与内容']
     write_json_atomic(path / 'draft.json', data)
-    write_json_atomic(path / 'runtime.json', {'status': 'draft', 'message': '新草稿待确认', 'events': [], 'updated_at': now_iso()})
+    write_json_atomic(path / 'runtime.json', {'status': 'draft', 'message': '新草稿待确认', 'events': [{'at': now_iso(), 'message': '项目已创建，等待确认内容'}], 'updated_at': now_iso()})
     archive_draft(path)
     return detail(batch_id)
 
@@ -977,7 +995,9 @@ def _produce(batch_id, *, render_only=False, request_id=None):
         if isinstance(exc, ResourceDeferred): raise
         diag.event('production.failed', level='error', batch_id=batch_id, request_id=request_id, error=exc)
         if request_id is None: update(path, 'failed', str(exc), error=type(exc).__name__)
-        else: result_store.patch(path / 'production', request_id, status='failed', error=str(exc), error_type=type(exc).__name__)
+        else:
+            result_store.patch(path / 'production', request_id, status='failed', error=str(exc), error_type=type(exc).__name__)
+            update(path, message=f'{request_id}：制作失败：{exc}')
         return 2
 
 
