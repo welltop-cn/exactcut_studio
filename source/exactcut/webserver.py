@@ -1134,6 +1134,7 @@ class Handler(BaseHTTPRequestHandler):
         if not self.authorized():
             return
         if self.path == '/api/queue':
+            if not self.is_admin(): return
             try:
                 return self.respond(200, queue_snapshot(self.user))
             except (OSError, ValueError, TypeError, KeyError):

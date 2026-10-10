@@ -72,3 +72,27 @@ def test_asset_timing_includes_preparation_and_freezes_after_preview():
         'queue_seconds': 60, 'total_seconds': 150, 'complete': False}
     assert web.asset_timing('r2', jobs, now=200)['total_seconds'] == 100
     assert web.asset_timing('r1', [], now=200) == {}
+
+
+def test_queue_endpoint_rejects_non_admin(monkeypatch):
+    import threading
+    from http.client import HTTPConnection
+    from http.server import ThreadingHTTPServer
+
+    def authorized(handler):
+        handler.user = {'username': 'alice', 'role': 'user'}
+        return True
+
+    monkeypatch.setattr(web.Handler, 'authorized', authorized)
+    monkeypatch.setattr(web, 'queue_snapshot', lambda user: {'tasks': []})
+    server = ThreadingHTTPServer(('127.0.0.1', 0), web.Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        conn = HTTPConnection(*server.server_address)
+        conn.request('GET', '/api/queue')
+        response = conn.getresponse()
+        assert response.status == 403
+        assert json.loads(response.read())['error'] == '此操作仅限管理员'
+    finally:
+        server.shutdown()
+        server.server_close()
