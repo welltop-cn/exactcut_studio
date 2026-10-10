@@ -145,3 +145,71 @@ def test_other_prefix_is_not_redirected_or_compatible(app):
         status, response_headers, _ = request(app, 'GET', '/retired-prefix' + suffix, headers=headers)
         assert status == 404
         assert 'Location' not in response_headers
+
+
+def test_preview_url_authorizes_before_upload_and_does_not_stream(app, tmp_path, monkeypatch):
+    from exactcut import preview_oss
+    headers = login(app)
+    _, _, body = request(app, 'POST', '/home/api/batches/blank', {}, headers)
+    batch_id = json.loads(body)['id']
+    video = tmp_path / 'preview.mp4'; video.write_bytes(b'fixture')
+    called = []
+    monkeypatch.setattr(workflow, 'preview_file', lambda *a, **kw: (video, {}))
+    monkeypatch.setattr(preview_oss, 'enabled', lambda: True)
+    monkeypatch.setattr(preview_oss, 'signed_preview', lambda *a, **kw: called.append(a) or {'url':'https://oss.invalid/private?signature=fixture','expires_in':900})
+    path = f'/home/api/batches/{batch_id}/preview-url/R1'
+    assert request(app, 'GET', path)[0] == 401
+    assert request(app, 'GET', '/home/api/batches/'+'f'*32+'/preview-url/R1', headers=headers)[0] == 404
+    assert called == []
+    status, response_headers, body = request(app, 'GET', path, headers=headers)
+    assert status == 200
+    assert json.loads(body)['url'].startswith('https://oss.invalid/')
+    assert response_headers['Cache-Control'] == 'no-store'
+    assert called == [(video, batch_id, 'R1')]
+    def failed(*a, **kw): raise RuntimeError('sensitive upstream detail')
+    monkeypatch.setattr(preview_oss, 'signed_preview', failed)
+    status, _, body = request(app, 'GET', path, headers=headers)
+    assert status == 503
+    assert b'sensitive' not in body
+
+
+def test_oss_preparation_does_not_hold_project_read_lock(app, tmp_path, monkeypatch):
+    from exactcut import preview_oss
+    from concurrent.futures import ThreadPoolExecutor
+    headers = login(app)
+    _, _, body = request(app, 'POST', '/home/api/batches/blank', {}, headers)
+    batch_id = json.loads(body)['id']
+    video = tmp_path / 'preview.mp4'; video.write_bytes(b'fixture')
+    entered, finish = threading.Event(), threading.Event()
+    def slow(*args, **kwargs):
+        entered.set()
+        assert finish.wait(4)
+        return {'url': 'https://oss.invalid/private', 'expires_in': 900}
+    monkeypatch.setattr(workflow, 'preview_file', lambda *a, **kw: (video, {}))
+    monkeypatch.setattr(preview_oss, 'enabled', lambda: True)
+    monkeypatch.setattr(preview_oss, 'signed_preview', slow)
+    with ThreadPoolExecutor(2) as pool:
+        preview = pool.submit(request, app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+        try:
+            assert entered.wait(1)
+            detail = pool.submit(request, app, 'GET', f'/home/api/batches/{batch_id}', headers=headers)
+            assert detail.result(timeout=1)[0] == 200
+            assert not preview.done()
+        finally:
+            finish.set()
+        assert preview.result()[0] == 200
+
+
+def test_original_download_redirects_to_signed_oss_without_streaming(app,tmp_path,monkeypatch):
+    from exactcut import preview_oss
+    headers=login(app)
+    _,_,body=request(app,'POST','/home/api/batches/blank',{},headers)
+    batch_id=json.loads(body)['id'];video=tmp_path/'master.mp4';video.write_bytes(b'master')
+    monkeypatch.setattr(workflow,'preview_file',lambda *a,**kw:(video,{}))
+    monkeypatch.setattr(preview_oss,'enabled',lambda:True)
+    monkeypatch.setattr(preview_oss,'signed_preview',lambda *a,**kw:{'url':'https://oss.invalid/master?signature=fixture','expires_in':900})
+    status,response_headers,body=request(app,'GET',f'/home/api/batches/{batch_id}/download/R1',headers=headers)
+    assert status==302
+    assert response_headers['Location']=='https://oss.invalid/master?signature=fixture'
+    assert response_headers['Cache-Control']=='no-store'
+    assert body==b''

@@ -18,6 +18,7 @@ from .publish import publish_to_queue, wait_until_ready
 from .qc import inspect_output
 from .renderer import render_request
 from .preview import make_preview, available_preview
+from .preview_oss import upload_generated_preview, upload_generated_original
 from .util import file_sha256, json_sha256, now_iso, read_json, write_json_atomic
 
 
@@ -48,7 +49,7 @@ def _request_fingerprint(project_dir: Path, request: Any, config: dict[str, Any]
                     source_cache[str(source)] = {'identity': identity, 'sha256': digest}
             sources.append({"path": str(source), "sha256": digest})
     # Operational log retention does not change media bytes or cache identity.
-    media_config = {key: value for key, value in config.items() if key != 'logging'}
+    media_config = {key: value for key, value in config.items() if key not in {'logging', 'preview'}}
     return json_sha256({"pipeline": "exact_timeline_v3_unit_qc", "request": request.model_dump(mode="json"), "sources": sources, "config": media_config})
 
 
@@ -131,6 +132,9 @@ def execute_batch(
                 except Exception as exc:
                     previous['preview_error'] = str(exc)
                 persist()
+            upload_generated_preview(batch_dir, request, previous)
+            upload_generated_original(batch_dir, request, previous)
+            persist()
             previous["cache_reused"] = True
             if progress:
                 progress('reused', request.request_id)
@@ -221,6 +225,8 @@ def execute_batch(
                 record['stage_seconds']['preview'] = round(time.monotonic()-stage_started,3)
             except Exception as exc:
                 record['preview_error'] = str(exc)
+            upload_generated_preview(batch_dir, request, record)
+            upload_generated_original(batch_dir, request, record)
             if publish:
                 publication = publish_to_queue(output, manifest, request, dry_run=publish_dry_run)
                 record["publication"] = publication

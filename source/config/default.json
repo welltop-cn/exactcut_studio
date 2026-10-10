@@ -40,5 +40,8 @@
     "feishu_initial_status": "待处理",
     "wait_timeout_seconds": 1800,
     "poll_seconds": 15
+  },
+  "preview": {
+    "oss_enabled": true
   }
 }

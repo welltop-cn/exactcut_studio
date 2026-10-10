@@ -472,7 +472,7 @@ def detail(batch_id):
         if record.get('status') in SAFE and output.is_file():
             endpoint = 'preview' if available_preview(path, request, record) else 'video'
             asset['preview'] = f'/api/batches/{batch_id}/{endpoint}/{quote(request.request_id, safe="")}'
-            asset['original'] = f'/api/batches/{batch_id}/video/{quote(request.request_id, safe="")}'
+            asset['original'] = f'/api/batches/{batch_id}/download/{quote(request.request_id, safe="")}'
             asset['preview_kind'] = 'lightweight' if endpoint == 'preview' else 'original'
         assets.append(asset)
     data['assets'] = assets
@@ -492,7 +492,7 @@ def detail(batch_id):
         asset['error_info'] = guidance(asset.get('error'), 'fbbm' if pub.get('error') else record.get('stage'),
                                       continuation=asset['can_continue_fbbm'])
         asset['error'] = redact(asset.get('error'))
-        asset['preview_warning'] = guidance(record.get('preview_error'), 'preview')
+        asset['preview_warning'] = guidance(record.get('preview_error') or record.get('preview_oss_error'), 'preview')
         asset['observation'] = observation(record)
     return data
 
@@ -716,7 +716,13 @@ def _make_batch_previews(batch_id):
     failures = 0
     for request in manifest.requests:
         record = results['requests'].get(request.request_id, {})
-        if record.get('status') not in SAFE or available_preview(path, request, record):
+        if record.get('status') not in SAFE:
+            continue
+        from .preview_oss import upload_generated_preview, upload_generated_original
+        if available_preview(path, request, record):
+            upload_generated_preview(path / 'production', request, record)
+            upload_generated_original(path / 'production', request, record)
+            result_store.put(path / 'production', request.request_id, record)
             continue
         master = path / 'production/videos' / request.output_filename
         checkpoint(path, 'preview')
@@ -727,6 +733,8 @@ def _make_batch_previews(batch_id):
         except Exception as exc:
             record['preview_error'] = str(exc)
             failures += 1
+        upload_generated_preview(path / 'production', request, record)
+        upload_generated_original(path / 'production', request, record)
         result_store.put(path / 'production', request.request_id, record)
     return 2 if failures else 0
 
@@ -1078,7 +1086,8 @@ def upload(batch_id, request_id):
                 def receipt(value):
                     entry['intent']['receipt'] = value
                     store_publication(path, request_id, entry)
-                with guarded_delivery(receipt=receipt): publication = publish_to_queue(video, manifest, request)
+                with guarded_delivery(receipt=receipt, oss_source=record.get('original_oss')):
+                    publication = publish_to_queue(video, manifest, request)
                 entry['intent']['receipt'] = publication
                 store_publication(path, request_id, entry)
                 if (not publication.get('feishu_record_id') or publication.get('sha256') != entry['approved_sha256']

@@ -1182,6 +1182,34 @@ class Handler(BaseHTTPRequestHandler):
                     with LOCK:
                         result = batch_response(batch_id)
                     return self.respond(200, result)
+                if suffix.startswith(('preview-url/', 'download/')):
+                    from . import preview_oss
+                    original = suffix.startswith('download/')
+                    request_id = unquote(suffix.split('/', 1)[1])
+                    output, record = workflow.preview_file(batch_id, request_id, lightweight=not original)
+                    if not preview_oss.enabled():
+                        if original: return self.stream_video(output)
+                        from urllib.parse import quote
+                        return self.respond(200, {'url': f'/api/batches/{batch_id}/preview/{quote(request_id, safe="")}', 'expires_in': 0})
+                    try:
+                        receipt = record.get('original_oss') if original else (record.get('preview') or {}).get('oss')
+                        options = {'receipt': receipt} if receipt else {}
+                        if original: options['download_name'] = output.name
+                        options['save_receipt'] = lambda receipt: preview_oss.save_media_receipt(path / 'production', request_id, record, output, receipt, original=original)
+                        result = preview_oss.signed_preview(output, batch_id, request_id, **options)
+                    except Exception as exc:
+                        # Never include SDK request URLs/signatures in client errors or logs.
+                        diag.event('preview.oss_failed', level='warning', batch_id=batch_id, error_type=type(exc).__name__)
+                        return self.respond(503, {'error': '预览准备暂时失败，请稍后重试'})
+                    if original:
+                        self.send_response(302)
+                        self.send_header('Location', result['url'])
+                        self.send_header('Cache-Control', 'no-store')
+                        self.send_header('Referrer-Policy', 'no-referrer')
+                        self.send_header('Content-Length', '0')
+                        self.end_headers()
+                        return
+                    return self.respond(200, result)
                 if suffix.startswith('video/'):
                     output, _ = workflow.preview_file(batch_id, unquote(suffix[6:]))
                     return self.stream_video(output)

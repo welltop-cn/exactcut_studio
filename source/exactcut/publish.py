@@ -4,6 +4,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -23,15 +24,18 @@ from . import diagnostics as diag
 
 GUARDED_DELIVERY = ContextVar('guarded_delivery', default=False)
 DELIVERY_RECEIPT = ContextVar('delivery_receipt', default=None)
+OSS_COPY_SOURCE = ContextVar('oss_copy_source', default=None)
 
 
 @contextmanager
-def guarded_delivery(*, receipt=None):
+def guarded_delivery(*, receipt=None, oss_source=None):
     token = GUARDED_DELIVERY.set(True)
     receipt_token = DELIVERY_RECEIPT.set(receipt)
+    source_token = OSS_COPY_SOURCE.set(oss_source)
     try: yield
     finally:
         DELIVERY_RECEIPT.reset(receipt_token)
+        OSS_COPY_SOURCE.reset(source_token)
         GUARDED_DELIVERY.reset(token)
 
 
@@ -130,9 +134,27 @@ class OssPublisher:
                     raise PublishError(f"OSS同名对象内容不同，必须更换素材序号：{key}")
             else:
                 content_type = mimetypes.guess_type(video.name)[0] or "video/mp4"
-                result = bucket.put_object_from_file(
-                    key, str(video), headers={"Content-Type": content_type, "x-oss-meta-sha256": digest}
-                )
+                source = OSS_COPY_SOURCE.get()
+                if source:
+                    source_key = str(source.get('key', ''))
+                    if (source.get('bucket') != self.bucket_name or source.get('endpoint') != self.endpoint or
+                            source.get('sha256') != digest or source.get('bytes') != video.stat().st_size or
+                            not re.fullmatch(r'exactcut-previews/production/[0-9a-f]{32}/[^/]+/' + digest + r'\.mp4', source_key)):
+                        raise PublishError('私有成片回执与本次确认的版本不符，停止交付')
+                    meta = bucket.head_object(source_key)
+                    remote_hash = meta.headers.get('x-oss-meta-sha256') or meta.headers.get('X-Oss-Meta-Sha256')
+                    etag = meta.headers.get('ETag') or meta.headers.get('etag')
+                    if remote_hash != digest or meta.content_length != video.stat().st_size or not etag:
+                        raise PublishError('私有成片对象校验失败，停止交付')
+                    result = bucket.copy_object(self.bucket_name, source_key, key, headers={
+                        'x-oss-forbid-overwrite': 'true', 'x-oss-copy-source-if-match': etag,
+                        'x-oss-object-acl': 'public-read',
+                    })
+                else:
+                    result = bucket.put_object_from_file(
+                        key, str(video), headers={"Content-Type": content_type, "x-oss-meta-sha256": digest,
+                                                'x-oss-forbid-overwrite': 'true'}
+                    )
                 if result.status not in (200, 201):
                     raise PublishError(f"OSS上传失败：status={result.status}")
             bucket.put_object_acl(key, "public-read")

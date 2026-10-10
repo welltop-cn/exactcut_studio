@@ -104,10 +104,19 @@ def test_selected_orchestrator_isolates_sources_results_and_resolved_manifest(wo
         staged.write_bytes(b'video'); return {'expected_duration_ms': 1000, 'stage_seconds': {}}
     monkeypatch.setattr(o, 'render_request', render)
     monkeypatch.setattr(o, 'inspect_output', lambda *a: {'allowed': True, 'actual_duration_ms': 1000})
-    monkeypatch.setattr(o, 'make_preview', lambda *a: {})
+    monkeypatch.setattr(o, 'make_preview', lambda *a: {'fixture': 'generated'})
+    uploaded = []
+    def upload(batch_dir, request, record):
+        assert record['preview']['fixture'] == 'generated'
+        assert (batch_dir / 'videos' / request.output_filename).is_file()
+        uploaded.append(request.request_id)
+        record['preview']['oss'] = {'fixture': 'uploaded'}
+    monkeypatch.setattr(o, 'upload_generated_preview', upload)
     with ThreadPoolExecutor(2) as pool:
         results = list(pool.map(lambda r: o.execute_batch(workspace, manifest, {}, request_ids=[r], output_dir=path / 'production'), [rid, 'R2']))
     assert checked == [[rid], ['R2']] or checked == [['R2'], [rid]]
+    assert set(uploaded) == {rid, 'R2'}
+    assert all(r['preview']['oss'] == {'fixture': 'uploaded'} for r in w.result_records(path).values())
     assert set(w.result_records(path)) == {rid, 'R2'}
     assert all(r['status'] == 'qc_passed' for r in w.result_records(path).values())
     assert not (path / 'production/results.json').exists()

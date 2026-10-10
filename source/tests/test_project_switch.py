@@ -10,7 +10,7 @@ const vm=require('node:vm'),assert=require('node:assert/strict');
 const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 const nodes={},pending=[],rendered=[];
 let paused=0,released=0;
-const video={pause(){paused++},removeAttribute(){},querySelectorAll(){return []},load(){released++}};
+const video={dataset:{},pause(){paused++},removeAttribute(){},querySelectorAll(){return []},load(){released++}};
 const ctx=vm.createContext({
  dirty:false,selectedId:'old',current:{id:'old'},batchCache:[],archivedView:false,
  assetKeys:'old',hookPreviews:new Map(),validationDismissed:false,prefetchTimer:0,
@@ -22,6 +22,7 @@ const ctx=vm.createContext({
  renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
 });
+vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
 vm.runInContext(source.slice(source.indexOf('let openingBatchId='),source.indexOf('function isoDate(')),ctx);
 const item=marker=>({id:'a',marker,runtime:{status:'draft'},assets:[]});
 (async()=>{
@@ -63,6 +64,7 @@ const ctx=vm.createContext({dirty:false,selectedId:null,current:null,batchCache:
  renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
 });
+vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
 vm.runInContext(source.slice(source.indexOf('let openingBatchId='),source.indexOf('function isoDate(')),ctx);
 const item=(id,revision=1)=>({id,revision,draft:{text:'saved'},runtime:{status:'draft'},assets:[]});
 (async()=>{
