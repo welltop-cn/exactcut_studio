@@ -38,7 +38,7 @@ def fingerprint(job, batches, root, *, source_digests=None, config=None, _retry_
         from .media import resolve_episode_video
         from .workflow import download_plan
         from .models import BatchManifest
-        manifest = BatchManifest.model_validate(values['confirmed.json'])
+        manifest = selected_manifest(BatchManifest.model_validate(values['confirmed.json']), job)
         sources = {}
         for episode in download_plan(manifest)['required']:
             try:
@@ -56,7 +56,13 @@ def artifacts(job, batches, root):
     path = batches / job.get('batch_id', '')
     files = []
     if job.get('phase') == 'render':
-        files = list((path / 'production/videos').glob('*.mp4')) + list((path / 'production/previews').glob('*.mp4'))
+        if job.get('request_id'):
+            from .workflow import request_for
+            _, request = request_for(path, job['request_id'])
+            files = [file for directory in ('videos', 'previews')
+                     if (file := path / 'production' / directory / request.output_filename).is_file()]
+        else:
+            files = list((path / 'production/videos').glob('*.mp4')) + list((path / 'production/previews').glob('*.mp4'))
     elif job.get('phase') == 'fetch' and (path / 'confirmed.json').exists():
         from .media import resolve_episode_video
         from .workflow import download_plan
@@ -228,13 +234,21 @@ def digest_evidence(path):
     return {'path': str(path), 'sha256': digest, 'bytes': before[2], 'stat': before}
 
 
+def selected_manifest(manifest, job):
+    request_id = job.get('request_id')
+    if not request_id: return manifest
+    selected = [r for r in manifest.requests if r.request_id == request_id]
+    if not selected: raise ValueError('素材不存在')
+    return manifest.model_copy(update={'requests': selected})
+
+
 def source_paths(job, batches, root):
     path = batches / job.get('batch_id', '') / 'confirmed.json'
     if job.get('phase') != 'render' or not path.exists(): return {}
     from .media import resolve_episode_video
     from .workflow import download_plan
     from .models import BatchManifest
-    manifest = BatchManifest.model_validate(read_json(path))
+    manifest = selected_manifest(BatchManifest.model_validate(read_json(path)), job)
     sources = {}
     for episode in download_plan(manifest)['required']:
         try: sources[episode] = resolve_episode_video(root / 'projects' / manifest.drama_id, episode)

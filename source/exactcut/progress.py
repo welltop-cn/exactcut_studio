@@ -13,8 +13,9 @@ STAGES = {'source_check': '校验原片', 'storage_check': '检查可用空间',
 
 def observation(data, *, paused=False, now=None):
     now = now or datetime.now(timezone.utc)
-    end = data.get('execution_ended_at') or data.get('failed_at')
-    if data.get('status') != 'processing':
+    executing = bool(data.get('executor_running')) and not data.get('execution_ended_at')
+    end = data.get('execution_ended_at') or (None if executing else data.get('failed_at'))
+    if not executing and data.get('status') != 'processing':
         end = end or data.get('completed_at')
     def age(value, reference=now):
         if not value:

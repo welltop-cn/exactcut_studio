@@ -155,6 +155,12 @@ def run(batch_id, job_id):
             source_cache.ensure(job['project'], [episode], on_progress=progress)
             state.update(status='ready', signature=signature(job['project'], episode))
         except (ValueError, RuntimeError, OSError) as exc:
+            from .stage_results import ResourceDeferred
+            if isinstance(exc, ResourceDeferred):
+                state.update(status='waiting_resource')
+                result.update(status='waiting_resource', not_before=exc.not_before)
+                store()
+                raise
             from .error_guidance import guidance
             state.update(status='failed', error_info=guidance(str(exc), 'download'))
             failed = True
@@ -166,4 +172,5 @@ def run(batch_id, job_id):
 
 if __name__ == '__main__':
     load_env_file(project_env_file())
-    raise SystemExit(run(sys.argv[1], sys.argv[2]))
+    from .stage_results import run_child
+    raise SystemExit(run_child(run, sys.argv[1], sys.argv[2]))

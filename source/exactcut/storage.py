@@ -274,7 +274,8 @@ def job_budget(job, batches, root, *, config=None):
         manifest = manifest or BatchManifest.model_validate(read_json(path / 'confirmed.json'))
         render = (load_config() if config is None else config)['render']
         project = root / 'projects' / manifest.drama_id
-        manifest = resolve_full_episodes(manifest, project)
+        from .stage_results import selected_manifest
+        manifest = resolve_full_episodes(selected_manifest(manifest, job), project)
         budget = sum(render_budget([item.model_dump(mode='json') for item in request.timeline], render) for request in manifest.requests)
         return render_allocations(project, path / 'production', budget)
     return {str(root): 0}
@@ -292,7 +293,7 @@ def scheduler_job_budget(job, batches, root):
     if job.get('batch_id') and path.exists():
         manifest = read_json(path)
         if not any(item.get('full_episode') or item.get('to_end')
-                   for request in manifest['requests'] for item in request['timeline']):
+                   for request in manifest['requests'] if not job.get('request_id') or request['request_id'] == job['request_id'] for item in request['timeline']):
             return job_budget(job, batches, root)
         files = [path, *[p for p in stage_results.source_paths({**job, 'phase': 'render'}, batches, root).values() if p is not None]]
     elif not job.get('batch_id') and '--input' in (job.get('command') or []):

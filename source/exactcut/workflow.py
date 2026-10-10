@@ -16,7 +16,7 @@ import uuid
 from collections import Counter
 from pathlib import Path
 from urllib.parse import quote
-from . import batch_control
+from . import batch_control, result_store
 from .intake import validate_draft, download_plan
 from .llm_intake import read_excel
 from .material_download import validate_downloaded_video
@@ -62,7 +62,41 @@ def store_publication(path, request_id, entry):
 
 
 def runtime(path):
-    return read_json(path / 'runtime.json')
+    data = read_json(path / 'runtime.json')
+    batch_executor = bool(data.get('executor_running'))
+    records = result_records(path)
+    executing = [r for r in records.values() if r.get('executor_running')]
+    if any('executor_running' in r for r in records.values()):
+        data['executor_running'] = bool(data.get('executor_running') or executing)
+    if executing:
+        data['execution_ended_at'] = None
+        for field in ('heartbeat_at', 'last_progress_at'):
+            values = [r[field] for r in executing if r.get(field)]
+            if values: data[field] = max(values)
+    observed = executing or ([] if batch_executor else [r for r in records.values() if r.get('execution_started_at')])
+    if not executing:
+        observed = [r for r in observed if r['execution_started_at'] >= (data.get('execution_started_at') or '')]
+    if observed:
+        latest = max(observed, key=lambda r: r.get('last_progress_at') or r.get('execution_started_at') or '')
+        for field in ('stage', 'stage_started_at', 'progress_details', 'execution_started_at'):
+            if field in latest: data[field] = latest[field]
+        if not executing:
+            for field in ('execution_ended_at', 'heartbeat_at', 'last_progress_at'):
+                if field in latest: data[field] = latest[field]
+    if data.get('request_parallel') and (path / 'confirmed.json').exists():
+        requests = read_json(path / 'confirmed.json')['requests']
+        publications = read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
+        data['production_complete'] = bool(requests) and all(records.get(r['request_id'], {}).get('status') in SAFE for r in requests)
+        states = [publications.get(r['request_id'], {}).get('status') or records.get(r['request_id'], {}).get('status', 'pending') for r in requests]
+        if any(s in {'failed', 'publish_failed', 'unverified'} for s in states):
+            data.update(status='partial', message='部分素材失败或待核实，其余素材可继续')
+        elif states and all(s == 'fbbm_ready' for s in states):
+            data.update(status='complete', message='全部素材 FBBM 已就绪')
+        elif any(s in {'upload_queued', 'uploading', 'fbbm_queued'} for s in states):
+            data.update(status='publishing', message='素材正在交付，其余素材可继续制作或审片')
+        elif executing or any(s != 'pending' for s in states):
+            data.update(status='review', message='素材制作或审片中')
+    return data
 
 
 def update(path, status=None, message=None, **fields):
@@ -72,7 +106,7 @@ def update(path, status=None, message=None, **fields):
 
 
 def _update_locked(path, status=None, message=None, **fields):
-    data = runtime(path)
+    data = read_json(path / 'runtime.json')
     if status:
         data['status'] = status
     if message:
@@ -84,7 +118,14 @@ def _update_locked(path, status=None, message=None, **fields):
     return data
 
 
-def checkpoint(path, stage, *, advanced=True, **details):
+def checkpoint(path, stage, *, advanced=True, request_id=None, **details):
+    if request_id is not None:
+        record = result_records(path).get(request_id, {})
+        fields = {'stage': stage, 'progress_details': details}
+        if record.get('stage') != stage: fields['stage_started_at'] = now_iso()
+        if advanced: fields['last_progress_at'] = now_iso()
+        result_store.patch(path / 'production', request_id, **fields)
+        return
     fields = {'stage': stage, 'progress_details': details}
     if runtime(path).get('stage') != stage:
         fields['stage_started_at'] = now_iso()
@@ -95,14 +136,20 @@ def checkpoint(path, stage, *, advanced=True, **details):
 
 @contextmanager
 def execution(path, request_id=None, interval=3):
-    update(path, execution_started_at=now_iso(), execution_ended_at=None,
+    if request_id is not None:
+        result_store.patch(path / 'production', request_id, execution_started_at=now_iso(),
+                           execution_ended_at=None, executor_running=True, heartbeat_at=now_iso(),
+                           last_progress_at=now_iso(), stage=None, stage_started_at=None, progress_details={}, error=None)
+    else:
+        update(path, execution_started_at=now_iso(), execution_ended_at=None,
            executor_running=True, heartbeat_at=now_iso(), last_progress_at=now_iso(),
            stage=None, stage_started_at=None, progress_details={}, error=None,
            active_request=request_id)
     stop = threading.Event()
     def pulse():
         while not stop.wait(interval):
-            update(path, heartbeat_at=now_iso())
+            if request_id is None: update(path, heartbeat_at=now_iso())
+            else: result_store.patch(path / 'production', request_id, heartbeat_at=now_iso())
     thread = threading.Thread(target=pulse, daemon=True)
     thread.start()
     try:
@@ -110,7 +157,14 @@ def execution(path, request_id=None, interval=3):
     finally:
         stop.set()
         thread.join()
-        update(path, executor_running=False, execution_ended_at=now_iso())
+        end_execution(path, request_id)
+
+
+def end_execution(path, request_id=None, **fields):
+    if request_id is None:
+        update(path, executor_running=False, execution_ended_at=now_iso(), **fields)
+    else:
+        result_store.patch(path / 'production', request_id, executor_running=False, execution_ended_at=now_iso(), **fields)
 
 
 @contextmanager
@@ -298,8 +352,7 @@ def archive_draft(path):
 
 
 def result_records(path):
-    file = path / 'production/results.json'
-    return read_json(file).get('requests', {}) if file.exists() else {}
+    return result_store.read(path / 'production')['requests']
 
 
 def detail(batch_id):
@@ -493,7 +546,11 @@ def _start_batch(batch_id, revision):
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
     state = runtime(path)
-    if state['status'] in ACTIVE:
+    pending_render = any(job.get('batch_id') == batch_id and job.get('phase') in {'fetch', 'render'}
+                         and job.get('status') in {'queued', 'running', 'waiting_resource'}
+                         for file in (ROOT / '.web-state/jobs').glob('*.json')
+                         for job in [read_json(file)])
+    if state['status'] in ACTIVE or state.get('executor_running') or pending_render:
         raise ValueError('此批次正在执行，请勿重复提交')
     data = read_json(path / 'draft.json')
     if data['revision'] != revision:
@@ -567,7 +624,7 @@ def make_batch_previews(batch_id):
 def _make_batch_previews(batch_id):
     path = folder(batch_id)
     manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
-    results = read_json(path / 'production/results.json')
+    results = result_store.read(path / 'production')
     failures = 0
     for request in manifest.requests:
         record = results['requests'].get(request.request_id, {})
@@ -582,7 +639,7 @@ def _make_batch_previews(batch_id):
         except Exception as exc:
             record['preview_error'] = str(exc)
             failures += 1
-        write_json_atomic(path / 'production/results.json', results)
+        result_store.put(path / 'production', request.request_id, record)
     return 2 if failures else 0
 
 
@@ -607,7 +664,7 @@ def approval_evidence(batch_id, request_id, sha256, evidence=None):
 def queue_publish(batch_id, request_id, sha256, *, _evidence=None):
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
-    if runtime(path)['status'] in ACTIVE - {'publishing'}:
+    if not runtime(path).get('request_parallel') and runtime(path)['status'] in ACTIVE - {'publishing'}:
         raise ValueError('当前批次正在制作，请完成后再提交上传')
     reject_review_sha(result_records(path).get(request_id, {}), sha256)
     video, record = preview_file(batch_id, request_id)
@@ -655,7 +712,7 @@ def verification_binding(entry):
 def queue_verify_delivery(batch_id, request_id, sha256, *, _evidence=None, _job_id=None):
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
-    if runtime(path)['status'] in ACTIVE - {'publishing'}:
+    if not runtime(path).get('request_parallel') and runtime(path)['status'] in ACTIVE - {'publishing'}:
         raise ValueError('当前批次正在制作，请完成后再核实')
     approval_evidence(batch_id, request_id, sha256, _evidence)
     with publication_lock(path):
@@ -808,14 +865,18 @@ def produce(batch_id):
         return _produce(batch_id)
 
 
-def _produce(batch_id, *, render_only=False):
+def _produce(batch_id, *, render_only=False, request_id=None):
     from .orchestrator import execute_batch
     path = folder(batch_id)
     manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
+    if request_id is not None:
+        manifest, request = request_for(path, request_id)
+        manifest = manifest.model_copy(update={'requests': [request]})
+        update(path, request_parallel=True)
     project = ROOT / 'projects' / manifest.drama_id
     try:
         preparation_started = time.monotonic()
-        checkpoint(path, 'source_check')
+        checkpoint(path, 'source_check', request_id=request_id)
         required = download_plan(manifest)['required']
         from .media import resolve_episode_video
         available = True
@@ -838,16 +899,20 @@ def _produce(batch_id, *, render_only=False):
         def progress(stage, request_id):
             from .progress import STAGES
             details = result_records(path).get(request_id, {}).get('progress_details') or {}
-            checkpoint(path, stage, **details)
-            update(path, message=f"{request_id}：{STAGES.get(stage, stage)}", active_request=request_id)
-        results = execute_batch(project, manifest, load_config(), output_dir=path / 'production', progress=progress)
-        failed = [r for r in results['requests'].values() if r['status'] == 'failed']
+            checkpoint(path, stage, request_id=request_id if render_only else None, **details)
+            if not render_only: update(path, message=f"{request_id}：{STAGES.get(stage, stage)}", active_request=request_id)
+        options = {'request_ids': [request_id]} if request_id is not None else {}
+        results = execute_batch(project, manifest, load_config(), output_dir=path / 'production', progress=progress, **options)
+        selected = {rid: record for rid, record in results['requests'].items()
+                    if request_id is None or rid == request_id}
+        failed = [r for r in selected.values() if r.get('status') == 'failed']
         update(path, 'partial' if failed else 'review', f'制作结束，{len(results["requests"])-len(failed)} 条可预览，{len(failed)} 条失败', production_complete=not failed)
         return 2 if failed else 0
     except Exception as exc:
         from .stage_results import ResourceDeferred
         if isinstance(exc, ResourceDeferred): raise
-        update(path, 'failed', str(exc), error=type(exc).__name__)
+        if request_id is None: update(path, 'failed', str(exc), error=type(exc).__name__)
+        else: result_store.patch(path / 'production', request_id, status='failed', error=str(exc), error_type=type(exc).__name__)
         return 2
 
 
@@ -867,9 +932,9 @@ def fetch(batch_id):
             return 2
 
 
-def render(batch_id):
-    with execution(folder(batch_id)):
-        return _produce(batch_id, render_only=True)
+def render(batch_id, request_id=None):
+    with execution(folder(batch_id), request_id):
+        return _produce(batch_id, render_only=True, request_id=request_id)
 
 
 def publication_state(path, manifest, request_id, entry):
@@ -911,7 +976,7 @@ def upload(batch_id, request_id):
                 raise ValueError('预览确认后成片已变化，停止上传')
             entry['status'] = 'uploading'
             store_publication(path, request_id, entry)
-            checkpoint(path, 'upload')
+            checkpoint(path, 'upload', request_id=request_id)
             if not entry.get('publication'):
                 delivery_intent(path, request_id, entry, 'upload', video)
                 attempted = True
@@ -974,7 +1039,7 @@ def poll(batch_id, request_id):
             previous = entry.get('fbbm') or {}
             changed = any(result.get(key) != previous.get(key) for key in ('action', 'video_id', 'material_id', 'fb_status'))
             entry['fbbm'] = result
-            checkpoint(path, 'fbbm', advanced=changed, platform_action=result.get('action', 'syncing'))
+            checkpoint(path, 'fbbm', request_id=request_id, advanced=changed, platform_action=result.get('action', 'syncing'))
             if result.get('action') == 'ready' and result.get('video_id'):
                 entry.update(status='fbbm_ready', completed_at=now_iso()); entry.pop('error', None)
             elif result.get('action') == 'failed':
@@ -1004,7 +1069,10 @@ if __name__ == '__main__':
     load_env_file(project_env_file())
     if sys.argv[1] in {'fetch', 'render'}:
         from .stage_results import run_child
-        raise SystemExit(run_child(globals()[sys.argv[1]], sys.argv[2]))
+        args = [sys.argv[2]]
+        if sys.argv[1] == 'render' and len(sys.argv) > 3 and not sys.argv[3].startswith('--instance='):
+            args.append(sys.argv[3])
+        raise SystemExit(run_child(globals()[sys.argv[1]], *args))
     if sys.argv[1] in {'upload', 'poll'}:
         from .stage_results import run_child
         raise SystemExit(run_child(globals()[sys.argv[1]], sys.argv[2], sys.argv[3]))

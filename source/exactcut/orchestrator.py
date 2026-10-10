@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from . import result_store
 from .compiler import compile_workbook
 from .errors import ExactCutError
 from .media import resolve_episode_video, validate_manifest_sources, resolve_full_episodes
@@ -73,20 +74,34 @@ def execute_batch(
     progress: Any = None,
 ) -> dict[str, Any]:
     project_dir = project_dir.resolve()
+    request_ids = request_ids or None  # Preserve the legacy empty-selection convention.
     batch_started = time.monotonic()
     source_cache = {}
+    if request_ids is not None:
+        unknown = set(request_ids) - {r.request_id for r in manifest.requests}
+        if unknown: raise ExactCutError(f"未知需求编号：{sorted(unknown)}")
+        manifest = manifest.model_copy(update={'requests': [r for r in manifest.requests if r.request_id in request_ids]})
     manifest = resolve_full_episodes(manifest, project_dir)
     validate_manifest_sources(manifest, project_dir)
     batch_dir = output_dir or project_dir / "outputs" / manifest.business_date
+    for request in manifest.requests:
+        result_store.file_for(batch_dir, request.request_id)
     videos_dir = batch_dir / "videos"
     staging_dir = batch_dir / ".staging"
     failed_dir = batch_dir / "failed"
     audit_dir = batch_dir / "audit"
     for directory in (videos_dir, staging_dir, failed_dir, audit_dir):
         directory.mkdir(parents=True, exist_ok=True)
-    write_json_atomic(batch_dir / 'resolved.manifest.json', manifest.model_dump(mode='json'))
+    resolved = batch_dir / ('resolved.manifest.json' if request_ids is None else f'resolved-{manifest.requests[0].request_id}.manifest.json')
+    write_json_atomic(resolved, manifest.model_dump(mode='json'))
     results_path = batch_dir / "results.json"
-    results = read_json(results_path) if results_path.exists() else _new_results(manifest)
+    results = {**_new_results(manifest), **result_store.read(batch_dir)}
+    def persist():
+        if request_ids is None:
+            write_json_atomic(results_path, results)
+        for rid, record in results["requests"].items():
+            if rid in selected and (request_ids is not None or result_store.file_for(batch_dir, rid).exists()):
+                result_store.put(batch_dir, rid, record)
     selected = set(request_ids or [request.request_id for request in manifest.requests])
     unknown = selected - {request.request_id for request in manifest.requests}
     if unknown:
@@ -111,7 +126,7 @@ def execute_batch(
                     previous['preview'] = make_preview(output, batch_dir / 'previews' / request.output_filename, previous['output_sha256'])
                 except Exception as exc:
                     previous['preview_error'] = str(exc)
-                write_json_atomic(results_path, results)
+                persist()
             previous["cache_reused"] = True
             if progress:
                 progress('reused', request.request_id)
@@ -133,7 +148,7 @@ def execute_batch(
             except Exception as exc:
                 previous.update({"status": "publish_failed", "error": str(exc), "error_type": type(exc).__name__, "failed_at": now_iso()})
             results["updated_at"] = now_iso()
-            write_json_atomic(results_path, results)
+            persist()
             continue
         record: dict[str, Any] = {
             "request_id": request.request_id,
@@ -145,7 +160,7 @@ def execute_batch(
         }
         results["requests"][request.request_id] = record
         results["updated_at"] = now_iso()
-        write_json_atomic(results_path, results)
+        persist()
         staged = staging_dir / request.output_filename
         request_audit = audit_dir / request.request_id
         request_audit.mkdir(parents=True, exist_ok=True)
@@ -156,7 +171,7 @@ def execute_batch(
             record['progress_details'] = details
             record['last_progress_at'] = now_iso()
             results['updated_at'] = now_iso()
-            write_json_atomic(results_path, results)
+            persist()
             if progress:
                 progress(name, request.request_id)
         try:
@@ -229,9 +244,9 @@ def execute_batch(
             record['execution_ended_at'] = now_iso()
             record['elapsed_seconds'] = round(time.monotonic() - request_started, 3)
             results["updated_at"] = now_iso()
-            write_json_atomic(results_path, results)
+            persist()
             if progress:
                 progress(record['status'], request.request_id)
     results['metrics'] = {'elapsed_seconds': round(time.monotonic() - batch_started, 3), 'unique_source_files_hashed': len(source_cache)}
-    write_json_atomic(results_path, results)
+    persist()
     return results
