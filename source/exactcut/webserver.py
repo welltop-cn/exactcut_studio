@@ -192,8 +192,14 @@ def batch_response(batch_id, job=None):
     result = workflow.detail(batch_id)
     from .material_workers import parent_batch_id
     jobs = [item for item in stored_jobs() if item.get('batch_id') and parent_batch_id(item['batch_id']) == batch_id]
+    media_state = workflow.material_versions.read(workflow.folder(batch_id)) if result.get('media_managed') else None
     for asset in result.get('assets', []):
         asset['timing'] = asset_timing(asset['request_id'], jobs)
+        if media_state and asset.get('candidate'):
+            candidate = asset['candidate']
+            child_id = media_state['versions'][candidate['version_id']]['child_id']
+            candidate['timing'] = asset_timing(asset['request_id'], [j for j in jobs if j.get('batch_id') == child_id])
+            candidate['timing']['complete'] = False  # A rendered pair is not current until its parent commit.
     if job is None:
         job = max(jobs, key=lambda j: j.get('created', 0), default=None)
     if result['runtime']['status'] == 'queued':

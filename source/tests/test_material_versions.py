@@ -689,3 +689,93 @@ def test_requeued_old_render_cannot_replace_upload_retry(workspace, monkeypatch)
     assert version['child_id'] == child.name
     assert version['upload_job_id'] == upload_id and version['status'] == 'queued'
     assert read_json(jobs / (job['id'] + '.json'))['status'] == 'interrupted'
+
+
+def test_detail_projects_candidate_execution_separately_from_current(workspace):
+    m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
+    worker.stage_enter(job)
+    result_store.put(child / 'production', event['asset_id'], {'status': 'processing', 'stage': 'base_cut', 'progress_details': {'completed': 1, 'total': 3}})
+    w.update(child, download_complete=True)
+    detail = m.detail(path); asset = detail['assets'][0]
+    assert asset['preview'] and asset['version_id'] == old
+    assert asset['candidate']['observation']['details'] == {'completed': 1, 'total': 3}
+    assert detail['runtime']['download_complete'] is True
+    worker.stage_finish(job, 1)
+    assert m.detail(path)['assets'][0]['candidate']['status'] == 'failed'
+
+
+def test_completed_managed_pair_reports_downloads_ready(workspace):
+    m, path, state = enrolled(media=True)
+    assert m.detail(path)['runtime']['download_complete'] is True
+
+
+def test_candidate_progress_ui_keeps_current_preview_separate():
+    import shutil, subprocess
+    source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
+    helper = source[source.index('function productionProgress('):source.index('\nfunction renderQueue(')]
+    prefix = source[source.index('function executionAsset('):source.index('function productionProgress(')] if 'function executionAsset(' in source else ''
+    script = "const assert=require('node:assert/strict');const esc=s=>String(s??'');const durationLabel=s=>s+'秒';const stageNames={base_cut:'剪辑片段'};const materialLabel=s=>s;const materialEventDetails=()=>'';" + prefix + helper + """
+const asset={request_id:'R1',preview:'/old',status:'qc_passed',candidate:{status:'processing',stage:'base_cut',observation:{details:{completed:1,total:3}}}};
+let html=productionProgress(asset,{});assert.ok(html.includes('剪辑片段'));assert.ok(html.includes('1/3'));assert.ok(!html.includes('制作完成'));assert.equal(asset.preview,'/old');
+asset.candidate={status:'failed',error:'upload failed'};html=productionProgress(asset,{});assert.ok(html.includes('制作失败'));assert.ok(html.includes('upload failed'));assert.ok(!html.includes('制作完成'));
+"""
+    summary = next(line for line in source.splitlines() if line.startswith("$('progressCount').textContent="))
+    script += "const current={assets:[asset]},r={},assets=current.assets.map(executionAsset),done=assets.filter(a=>a.preview).length;const box={};const $=()=>box;" + summary + "assert.ok(box.textContent.includes('1 条失败'));assert.ok(box.textContent.startsWith('0/1'));"
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_managed_copy_retains_only_referenced_ending_image_as_independent_bytes(workspace):
+    import base64
+    m, path, state = enrolled(); rid = state['draft']['rows'][0]['request_id']
+    image = m.save_ending_image(path, rid, base64.b64encode(b'\x89PNG\r\n\x1a\nreferenced').decode())['image']
+    m.save_ending_image(path, rid, base64.b64encode(b'\x89PNG\r\n\x1a\nunreferenced').decode())
+    draft = copy.deepcopy(state['draft']); draft['rows'][0]['composition'] = {'plots': [{'episode': '1', 'start': '00:00', 'end': '00:10'}], 'ending': {'image': image}}
+    m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    copied = w.clone_batch(path.name)
+    newrid = copied['draft']['rows'][0]['request_id']
+    target = w.ending_image_file(copied['id'], newrid)
+    original = path / 'endings' / image
+    assert target.read_bytes() == original.read_bytes()
+    assert target.stat().st_ino != original.stat().st_ino
+    assert len(list(target.parent.iterdir())) == 1
+    assert copied['draft']['rows'][0]['composition']['ending']['image'] == target.name
+
+
+def test_enrollment_media_hashing_releases_global_naming_lock(workspace, monkeypatch):
+    import fcntl
+    m = module(); path, _, _, _ = complete_asset(imported())
+    original = m.file_sha256
+    probes = []
+    def probe(file):
+        with (w.ROOT / '.web-state/naming.lock').open('a') as lock:
+            try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError: pytest.fail('Media hashing holds global naming lock')
+            else: fcntl.flock(lock, fcntl.LOCK_UN)
+        probes.append(file)
+        return original(file)
+    monkeypatch.setattr(m, 'file_sha256', probe)
+    m.enroll(path)
+    assert probes
+
+
+def test_enrollment_rechecks_media_identity_before_commit(workspace, monkeypatch):
+    m = module(); path, _, video, _ = complete_asset(imported())
+    original = m.file_sha256
+    def changing_hash(file):
+        digest = original(file)
+        if file == video: video.write_bytes(b'changed after verification')
+        return digest
+    monkeypatch.setattr(m, 'file_sha256', changing_hash)
+    with pytest.raises(ValueError, match='更新'): m.enroll(path)
+    assert not m.managed(path)
+
+
+def test_managed_copy_rejects_changed_content_addressed_ending(workspace):
+    import base64
+    m, path, state = enrolled(); rid = state['draft']['rows'][0]['request_id']
+    image = m.save_ending_image(path, rid, base64.b64encode(b'\x89PNG\r\n\x1a\noriginal').decode())['image']
+    draft = copy.deepcopy(state['draft']); draft['rows'][0]['composition'] = {'plots': [], 'ending': {'image': image}}
+    m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    (path / 'endings' / image).write_bytes(b'changed')
+    with pytest.raises(ValueError, match='校验'): w.clone_batch(path.name)

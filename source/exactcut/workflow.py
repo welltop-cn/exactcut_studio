@@ -372,8 +372,17 @@ def ending_image_file(batch_id, request_id):
         asset = state['assets'].get(request_id)
         if state['deleted_at'] or not asset or asset['deleted_at']: raise ValueError('素材不存在')
         name = (asset['row'].get('composition') or {}).get('ending', {}).get('image', '')
-        if not re.fullmatch(r'[a-f0-9]{64}\.(png|jpg|webp)', name): raise ValueError('还没有结尾图片')
-        return parent / 'endings' / name
+    else:
+        rows = read_json(parent / 'draft.json')['draft']['rows']
+        row = next((row for row in rows if row['request_id'] == request_id), {})
+        name = (row.get('composition') or {}).get('ending', {}).get('image', '')
+    if name:
+        if not re.fullmatch(r'[\w.-]{1,75}\.(png|jpg|webp)', name): raise ValueError('结尾图片路径无效')
+        target = parent / 'endings' / name
+        if target.is_symlink() or not target.resolve().is_relative_to(parent.resolve()) or not target.is_file():
+            raise ValueError('结尾图片不存在或路径无效')
+        return target
+    if material_versions.managed(parent): raise ValueError('还没有结尾图片')
     folder_path = parent / 'endings'
     matches = [path for path in folder_path.glob(request_id + '.*') if path.suffix in {'.png', '.jpg', '.webp'}]
     if len(matches) != 1:
@@ -647,6 +656,24 @@ def _clone_batch(batch_id, *, purpose='copy'):
     source_xlsx = source / 'source.xlsx'
     if source_xlsx.is_file():
         (path / 'source.xlsx').write_bytes(source_xlsx.read_bytes())
+    if managed:
+        # Only referenced inputs enter the copy; historical images stay with
+        # their original project. Exclusive creation never overwrites a file.
+        for row in data['draft']['rows']:
+            name = (row.get('composition') or {}).get('ending', {}).get('image', '')
+            if not name: continue
+            if not re.fullmatch(r'[\w.-]{1,75}\.(png|jpg|webp)', name): raise ValueError('结尾图片路径无效')
+            original = source / 'endings' / name
+            if original.is_symlink() or not original.resolve().is_relative_to(source.resolve()): raise ValueError('结尾图片路径无效')
+            digest = file_sha256(original)
+            if re.fullmatch(r'[a-f0-9]{64}', original.stem) and digest != original.stem: raise ValueError('结尾图片校验失败')
+            target = path / 'endings' / name
+            target.parent.mkdir(exist_ok=True)
+            if not target.exists():
+                with original.open('rb') as incoming, target.open('xb') as outgoing:
+                    shutil.copyfileobj(incoming, outgoing); outgoing.flush(); os.fsync(outgoing.fileno())
+            if file_sha256(target) != digest or file_sha256(original) != digest: raise ValueError('结尾图片副本校验失败')
+            material_versions.sync_directory(target.parent)
     data.update(id=batch_id, created_at=now_iso(), revision=1)
     data.update(source_batch_id=source.name, source_revision=source_revision, clone_purpose=purpose)
     data.pop('imported_batches', None)

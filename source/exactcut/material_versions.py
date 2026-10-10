@@ -116,9 +116,21 @@ def _quiescent(path):
 
 
 def enroll(path):
-    from . import workflow as w
-    with w.naming_lock():
-        return _enroll(path)
+    return _enroll(path)
+
+
+def _enrollment_files(path):
+    # Compare metadata after cold hash verification without reading media while
+    # holding the shared naming lock. New/deleted result shards also invalidate.
+    files = [path / name for name in ('draft.json', 'confirmed.json', 'runtime.json', 'control.json', 'publications.json', 'production/results.json')]
+    for directory in ('production/results', 'production/videos', 'production/previews'):
+        files.extend((path / directory).glob('*'))
+    identities = {}
+    for file in files:
+        try: stat = file.lstat()
+        except FileNotFoundError: continue
+        identities[str(file)] = (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    return identities
 
 
 def _enroll(path):
@@ -130,7 +142,7 @@ def _enroll(path):
     if managed(path):
         # A prepared document is committed before the active registry. Recovery
         # only completes that exact pair; missing/corrupt data never falls back.
-        with locked(path):
+        with w.naming_lock(), locked(path):
             marker = read_json(registry(path)) if registry(path).exists() else {}
             if marker.get('status') == 'pending':
                 state = read_json(path / 'media-state.json') if (path / 'media-state.json').exists() else marker.get('prepared_state')
@@ -142,6 +154,7 @@ def _enroll(path):
                 durable_write(registry(path), {k: v for k, v in {**marker, 'status': 'active'}.items() if k != 'prepared_state'})
             return _read(path)
     _quiescent(path)
+    identities = _enrollment_files(path)
     document = read_json(path / 'draft.json')
     before = json_sha256(document)
     rows = document['draft']['rows']
@@ -199,11 +212,11 @@ def _enroll(path):
                 did = uuid.uuid4().hex
                 state['deliveries'][did] = {'delivery_id': did, 'asset_id': rid, 'version_id': vid,
                                             'status': pub.get('status', 'publish_failed'), 'publication': pub, 'legacy': True}
-    _quiescent(path)
-    with locked(path):
+    with w.naming_lock(), locked(path):
         if managed(path):
             return _read(path)
-        if json_sha256(read_json(path / 'draft.json')) != before:
+        _quiescent(path)
+        if _enrollment_files(path) != identities or json_sha256(read_json(path / 'draft.json')) != before:
             raise ValueError('项目已更新，请重试纳管')
         marker = {'schema_version': 1, 'batch_id': path.name, 'enrollment_id': state['enrollment_id'],
                   'status': 'pending', 'prepared_sha256': json_sha256(state), 'prepared_state': state}
@@ -463,7 +476,8 @@ def detail(path):
     document = copy.deepcopy(state['document'])
     manifest, errors = validate_draft(state['draft'], str(path / 'source.xlsx'))
     requests = {r.request_id: r for r in manifest.requests} if manifest else {}
-    assets, candidates = [], []
+    from .progress import observation
+    assets, candidates, downloads = [], [], []
     for row in state['draft']['rows']:
         rid = row['request_id']; asset = state['assets'][rid]
         current = state['versions'].get(asset['current_version'], {})
@@ -490,18 +504,25 @@ def detail(path):
                         original=f'/api/batches/{path.name}/download/{quote(rid, safe="")}',
                         preview_kind='lightweight' if current.get('preview_path') else 'original')
         if candidate:
-            progress = {}
+            progress, child_runtime = {}, {}
             child = w.BATCHES / candidate['child_id']
             if (child / 'draft.json').exists():
                 progress = w.result_records(child).get(rid, {})
+                child_runtime = w.runtime(child)
             item['candidate'] = {'version_id': candidate['version_id'], 'status': candidate['status'],
                                  'error': redact(candidate.get('error')), 'stage': progress.get('stage'),
-                                 'generation': candidate['generation']}
+                                 'generation': candidate['generation'],
+                                 'observation': observation(progress or child_runtime, paused=state['control']['paused']),
+                                 'stage_seconds': progress.get('stage_seconds', {}),
+                                 'error_info': guidance(candidate.get('error'), progress.get('stage')) if candidate.get('error') else None}
+            downloads.append(bool(child_runtime.get('download_complete')))
             candidates.append(candidate['status'])
             if not current:
                 item['status'] = 'failed' if candidate['status'] == 'failed' else 'processing'
             item['error'] = redact(candidate.get('error'))
             item['error_info'] = guidance(candidate.get('error'), progress.get('stage')) if candidate.get('error') else None
+        else:
+            downloads.append(bool(current))
         assets.append(item)
     status = 'producing' if 'processing' in candidates else 'queued' if 'queued' in candidates else 'partial' if 'failed' in candidates else 'review' if any(a.get('preview') for a in assets) else 'draft'
     if _blocked(state): status = 'publishing'
@@ -510,7 +531,8 @@ def detail(path):
                'underlying_status': status, 'paused': control['paused'], 'archived': control['archived'] or bool(state['deleted_at']),
                'message': '当前成片保留；可在本项目编辑并制作新版本', 'updated_at': state['updated_at'],
                'events': [], 'request_parallel': True, 'executor_running': 'processing' in candidates,
-               'observation': {}, 'error_info': None}
+               'observation': {}, 'error_info': None,
+               'download_complete': bool(downloads) and all(downloads)}
     feedback = sorted([read_json(f) for f in w.FEEDBACK.glob(path.name + '-*.json')], key=lambda e: e['created_at'], reverse=True)
     document.update(revision=state['revision'], draft=copy.deepcopy(state['draft']), assets=assets,
                     media_managed=True, media_delivery_enabled=delivery_enabled(), deleted_at=state['deleted_at'], runtime=runtime, errors=errors,
