@@ -19,7 +19,8 @@ const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
   requestAnimationFrame:f=>f(),current:{id:'a'},activeTab:'progress',selectedId:'a',openingBatchId:null,
   appUrl:p=>p,$:id=>id==='workspace'?{hidden:false}:{querySelectorAll:()=>[video]},
   fetch:(url,options)=>{calls++;options.signal.addEventListener('abort',()=>aborted=true);return new Promise(r=>resolveFetch=r)}});
- vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
+ vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
+vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
  vm.runInContext('preparePreviewLoads()',ctx);assert.equal(calls,0);
  ctx.activeTab='review';vm.runInContext('preparePreviewLoads()',ctx);assert.equal(calls,1);
  ctx.activeTab='progress';vm.runInContext('stopPreviewLoads()',ctx);assert.equal(aborted,true);
@@ -45,6 +46,7 @@ const ctx=vm.createContext({activeTab:'review',hookPreviews:new Map(),
  localStorage:{setItem(){}},history:{replaceState(){}},showPage(){},
  setTab(name){ctx.activeTab=name},
  renderEditor(){seen.push(ctx.activeTab)},renderRuntime(){seen.push(ctx.activeTab)}});
+vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('function displayBatch('),source.indexOf('async function openBatch(')),ctx);
 ctx.item={id:'b',runtime:{status:'review'},assets:[{preview:'/video'}]};
 vm.runInContext('displayBatch(item)',ctx);
@@ -73,7 +75,8 @@ const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
  const ctx=vm.createContext({AbortController,Date:{now:()=>now},encodeURIComponent,setTimeout,clearTimeout,
   current:{id:'a'},activeTab:'review',selectedId:'a',appUrl:p=>p,$:id=>id==='workspace'?{hidden:false}:{querySelectorAll:()=>[video]},
   fetch:async()=>{calls++;return {ok:true,json:async()=>({url:'https://oss.invalid/'+calls,expires_in:900})}}});
- vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);ctx.video=video;
+ vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
+vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);ctx.video=video;
  await vm.runInContext('loadPreview(video)',ctx);
  video.currentTime=43;video.paused=false;now+=901000;video.onplay();
  await new Promise(r=>setTimeout(r,0));assert.equal(calls,2);video.onloadedmetadata();assert.equal(video.currentTime,43);assert.equal(plays,1);

@@ -22,7 +22,9 @@ const ctx=vm.createContext({
  renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
 });
+vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
+vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('let openingBatchId='),source.indexOf('function isoDate(')),ctx);
 const item=marker=>({id:'a',marker,runtime:{status:'draft'},assets:[]});
 (async()=>{
@@ -64,7 +66,9 @@ const ctx=vm.createContext({dirty:false,selectedId:null,current:null,batchCache:
  renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
 });
+vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
+vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('let openingBatchId='),source.indexOf('function isoDate(')),ctx);
 const item=(id,revision=1)=>({id,revision,draft:{text:'saved'},runtime:{status:'draft'},assets:[]});
 (async()=>{
@@ -110,6 +114,7 @@ const ctx=vm.createContext({polling:false,selectedId:'a',current:old,
  refreshBatches:async()=>{},refreshQueue:async()=>{},prefetchSources:async()=>{},
  api:()=>{calls++;return new Promise(r=>resolveDetail=r)},$:()=>({}),
  renderRuntime(){renders++},renderEditor(){},refreshTiming(){},hookPreviews:new Map()});
+vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('async function poll('),source.indexOf('function renderSourcePrefetch(')),ctx);
 (async()=>{
  await vm.runInContext('poll()',ctx);assert.equal(calls,0);
@@ -137,6 +142,7 @@ const ctx=vm.createContext({polling:false,selectedId:'a',current:old,
  refreshBatches:()=>new Promise(r=>finishList=r),refreshQueue:async()=>{},prefetchSources:async()=>{},
  api:async()=>({...old,runtime:{updated_at:'2026-10-10T00:00:01Z'}}),$:()=>({}),
  renderRuntime(){renders++},renderEditor(){},refreshTiming(){},hookPreviews:new Map()});
+vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('async function poll('),source.indexOf('function renderSourcePrefetch(')),ctx);
 (async()=>{
  const pending=vm.runInContext('poll()',ctx);await new Promise(setImmediate);

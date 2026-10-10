@@ -508,6 +508,13 @@ def detail(path):
                 'unit_checks': record.get('unit_checks', []), 'hook_warnings': record.get('hook_warnings', []),
                 'preview_warning': None, 'error': '', 'error_info': None, 'can_continue_fbbm': False,
                 'deliveries': [{'delivery_id': d['delivery_id'], 'version_id': d['version_id'], 'status': d['status']} for d in deliveries]}
+        item['base_cache_reused'] = record.get('base_cache_reused', False)
+        item['planned_duration_ms'] = record.get('planned_duration_ms', (record.get('qc') or {}).get('expected_duration_ms'))
+        emphasis = record.get('hook_emphasis')
+        if isinstance(emphasis, dict):
+            item['hook_emphasis'] = {'source': emphasis.get('source'), 'reason': emphasis.get('reason', ''),
+                                     'highlights': [{'phrase': span['phrase'], 'role': span['role']}
+                                                    for span in emphasis.get('highlights', [])]}
         if latest.get('version_id') == asset['current_version']:
             item['status'] = latest.get('status', item['status'])
             item['video_id'] = (publication.get('fbbm') or {}).get('video_id')
@@ -536,6 +543,11 @@ def detail(path):
             item['error_info'] = guidance(candidate.get('error'), progress.get('stage')) if candidate.get('error') else None
         else:
             downloads.append(bool(current))
+        if latest.get('version_id') == asset['current_version']:
+            item['stage_seconds'] = {**item['stage_seconds'], **publication.get('stage_seconds', {})}
+            if publication.get('error'):
+                item['error'] = redact(publication['error'])
+                item['error_info'] = guidance(publication['error'], 'fbbm')
         assets.append(item)
     status = 'producing' if 'processing' in candidates else 'queued' if 'queued' in candidates else 'partial' if 'failed' in candidates else 'review' if any(a.get('preview') for a in assets) else 'draft'
     if _blocked(state): status = 'publishing'
@@ -546,6 +558,7 @@ def detail(path):
         file = history_path / 'runtime.json'
         if file.exists():
             events.extend(read_json(file).get('events', []))
+    events = [{**event, 'message': redact(event.get('message'))} for event in events]
     events.sort(key=lambda event: event['at'])
     runtime = {'status': 'paused' if control['paused'] and status in w.ACTIVE else status,
                'underlying_status': status, 'paused': control['paused'], 'archived': control['archived'] or bool(state['deleted_at']),
