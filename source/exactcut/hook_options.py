@@ -25,6 +25,11 @@ class HookOptions(BaseModel):
     duration_ms: int | None = Field(default=None, ge=1000, le=12000)
     manual_ranges: list[HookRange] = Field(default_factory=list, max_length=4)
     preview_key: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
+    font: Literal['auto', 'sans', 'sans_italic', 'serif', 'cjk'] = 'auto'
+    text_color: str | None = Field(default=None, pattern=r'^#[0-9a-fA-F]{6}$')
+    accent_color: str | None = Field(default=None, pattern=r'^#[0-9a-fA-F]{6}$')
+    # Pixels at 1080-wide output, scaled proportionally for smaller renders.
+    font_size: int | None = Field(default=None, ge=32, le=96, strict=True)
 
 
 def approved_emphasis(text: str, options: HookOptions, cache_dir: Path) -> dict:

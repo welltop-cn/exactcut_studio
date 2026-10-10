@@ -163,7 +163,8 @@ def test_browser_manual_token_offsets_match_python_after_emoji_newlines_and_punc
 
 @pytest.mark.skipif(not shutil.which('ffmpeg'),reason='requires ffmpeg')
 def test_production_render_uses_approved_preview_without_reanalysing(tmp_path,monkeypatch):
-    r=request(mode='manual',position='middle',manual_ranges=[{'start':19,'end':31}])
+    r=request(mode='manual',position='middle',manual_ranges=[{'start':19,'end':31}],
+              font='serif',font_size=48,text_color='#12AB34',accent_color='#EF2468')
     timeline=[i.model_dump(mode='json') for i in r.timeline]
     work=tmp_path/'preview-work';work.mkdir()
     emphasis=approved_emphasis(r.hook_text,r.hook_options,work)
@@ -179,3 +180,6 @@ def test_production_render_uses_approved_preview_without_reanalysing(tmp_path,mo
     assert result['hook_visual']['preview_approved']
     assert result['hook_visual']['placement']['position']=='middle'
     assert result['hook_visual']['emphasis']==emphasis
+    assert result['hook_visual']['layout']['font_size']==24
+    assert result['hook_visual']['palette']['base_l1']=='#12AB34'
+    assert result['hook_visual']['palette']['accent']=='#EF2468'

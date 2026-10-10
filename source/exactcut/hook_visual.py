@@ -22,7 +22,9 @@ from .fonts import font_path as bundled_font_path, load_font
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CONFIG_PATH = Path(__file__).with_name("hook_visual_styles.json")
-HOOK_LAYOUT_VERSION = 8
+HOOK_LAYOUT_VERSION = 9
+HOOK_FONT_PROFILES = {'sans': 'default', 'sans_italic': 'neon_reversal',
+                      'serif': 'ceo_luxury', 'cjk': 'title_card'}
 HOOK_MAX_LINES = 3
 HOOK_WIDTH_RATIO = 0.86
 HOOK_HEIGHT_RATIO = 0.18
@@ -316,11 +318,22 @@ def _font(path: str, size: int):
     return load_font(path, size)
 
 
+def apply_hook_typography(decision, options):
+    if options.font != 'auto':
+        decision['font_path'] = bundled_font_path(HOOK_FONT_PROFILES[options.font])
+    if options.text_color:
+        decision['palette'].update(base_l1=options.text_color, base_l2=options.text_color)
+    if options.accent_color:
+        decision['palette']['accent'] = options.accent_color
+    decision['font_size_override'] = options.font_size
+
+
 def _wrap_lines(
     hook_text: str,
     font_path: str,
     video_w: int,
     video_h: int = 1920,
+    font_size: int | None = None,
 ) -> tuple[Any, int, list[str]]:
     unmarked = re.sub(r"\*\*(.+?)\*\*", r"\1", hook_text or "", flags=re.S)
     clean_lines = [
@@ -362,6 +375,15 @@ def _wrap_lines(
                 return False
         return True
 
+    if font_size is not None:
+        size = max(1, round(font_size * video_w / 1080))
+        font = _font(font_path, size)
+        for candidate in ([part for line in clean_lines for part in wrap(line, font)], wrap(clean, font)):
+            if fits(candidate, font, size, HOOK_MAX_LINES):
+                return font, size, candidate
+        from .errors import ValidationError
+        raise ValidationError('当前字号无法在最多三行的安全区域内完整显示；请减小字号、缩短文案或恢复自动字号。')
+
     normal_sizes = sorted({max(1, round(size * video_w / 1080)) for size in range(78, 47, -2)}, reverse=True)
     compact_sizes = sorted({max(1, round(size * video_w / 1080)) for size in range(46, 31, -2)}, reverse=True)
     # Prefer two readable lines; allow three before using the compact font range.
@@ -386,13 +408,15 @@ def _wrap_lines(
 
 
 @lru_cache(maxsize=512)
-def validate_hook_layout(hook_text: str, video_w: int = 1080, video_h: int = 1920) -> None:
+def validate_hook_layout(hook_text: str, video_w: int = 1080, video_h: int = 1920,
+                         *, font='auto', font_size=None, style='auto') -> None:
     if not hook_text.strip():
         return
     # Frame-dependent auto routing can select any supported font at render time.
-    for style in sorted(AUTO_STYLE_IDS | {'default'}):
-        decision = choose_hook_visual({'hook_text': hook_text}, {}, forced_style=style)
-        _wrap_lines(hook_text, decision['font_path'], video_w, video_h)
+    for selected in sorted(AUTO_STYLE_IDS | {'default'}) if style == 'auto' else [style]:
+        decision = choose_hook_visual({'hook_text': hook_text}, {}, forced_style=selected)
+        path = bundled_font_path(HOOK_FONT_PROFILES[font]) if font != 'auto' else decision['font_path']
+        _wrap_lines(hook_text, path, video_w, video_h, font_size)
 
 
 def _accent_split(line: str, phrase: str) -> tuple[str, str, str] | None:
@@ -425,7 +449,8 @@ def render_personalized_hook_png(
 ) -> Path:
     style_id = str(decision["style_id"])
     palette = decision["palette"]
-    font, size, lines = _wrap_lines(hook_text, str(decision["font_path"]), video_w, video_h)
+    font, size, lines = _wrap_lines(hook_text, str(decision["font_path"]), video_w, video_h,
+                                   decision.get('font_size_override'))
     decision["layout"] = {"font_size": size, "lines": lines, "max_lines": HOOK_MAX_LINES,
                           "version": HOOK_LAYOUT_VERSION, "max_width_ratio": HOOK_WIDTH_RATIO,
                           "max_height_ratio": HOOK_HEIGHT_RATIO}

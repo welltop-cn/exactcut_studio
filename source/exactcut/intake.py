@@ -12,6 +12,7 @@ from .naming import build_material_filename
 from .timecode import format_ms
 from .errors import ValidationError
 from .hook_visual import validate_hook_layout
+from .hook_options import HookOptions
 
 ALIASES = {
     'drama_id': ['剧id', '剧集id', '短剧id', '项目id', 'dramaid', 'novelid', 'seriesid'],
@@ -349,7 +350,7 @@ def compile_composition(row):
         return
     from .timecode import format_ms, parse_timepoint
     opening = composition.get('opening') if isinstance(composition.get('opening'), dict) else {}
-    text = str(opening.get('text') or '').replace('\n', ' ').strip()
+    text = str(opening.get('text') or '').replace('\r', '').strip()
     style = opening.get('style') if opening.get('style') in HOOK_STYLES else 'default'
     position = opening.get('position') if opening.get('position') in {'top', 'middle', 'bottom'} else 'bottom'
     size = opening.get('size') if opening.get('size') in {'s', 'm', 'l'} else 'm'
@@ -388,7 +389,9 @@ def compile_composition(row):
         'ending': {'guide': str(ending.get('guide') or '').replace('\r', '').strip()[:200], 'image': image},
     }
     row['hook_text'] = text
-    row['hook_options'] = {'mode': 'none', 'style': style, 'position': position,
+    typography = {key: value for key, value in (row.get('hook_options') or {}).items()
+                  if key in {'font', 'font_size', 'text_color', 'accent_color', 'preview_key'}}
+    row['hook_options'] = {**typography, 'mode': 'none', 'style': style, 'position': position,
                            'duration_ms': int(round(duration_s * 1000)), 'manual_ranges': []}
     row['timeline_text'] = '\n'.join(lines)
 
@@ -520,7 +523,9 @@ def validate_draft(draft, source=''):
                 raise ValueError('；'.join(problems) if problems else '请填写至少一个有效片段')
             if problems:
                 raise ValueError('；'.join(problems))
-            validate_hook_layout(str(row.get('hook_text', '')))
+            hook_options = HookOptions.model_validate(row.get('hook_options') or {})
+            validate_hook_layout(str(row.get('hook_text', '')), font=hook_options.font,
+                                 font_size=hook_options.font_size, style=hook_options.style)
             seq = int(row.get('seq', i))
             if not str(draft.get('author', '')).strip():
                 continue  # Report missing director once, while still checking every timeline.
