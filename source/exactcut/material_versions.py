@@ -379,6 +379,11 @@ def confirm(path, data):
     # Caller holds global naming lock; no media lock is held while scanning.
     names = {r['output_filename'] for r in serialized['requests']}
     if len(names) != len(serialized['requests']): raise ValueError('素材命名重复')
+    for request in serialized['requests']:
+        if any(version['asset_id'] != request['request_id']
+               and any(old['output_filename'] == request['output_filename'] for old in version['manifest']['requests'])
+               for version in snapshot['versions'].values()):
+            raise ValueError('素材命名重复，请保存草稿重新分配素材序号')
     for file in w.BATCHES.glob('*/draft.json'):
         if file.parent != path and not internal(file.parent) and names & reserved_names(file.parent):
             raise ValueError('素材命名重复，请修改素材序号')

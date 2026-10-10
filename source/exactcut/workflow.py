@@ -277,33 +277,42 @@ def allocate_sequences(draft, batch_id, *, all_new=False):
         scope = naming_scope(draft)
     except (ValueError, RuntimeError):
         return False  # Missing metadata stays editable; validation still blocks execution.
-    used = set()
-    for file in BATCHES.glob('*/draft.json'):
-        from .material_versions import internal
-        if file.parent.name == batch_id or internal(file.parent):
+    used, owned = set(), {}
+    paths = {file.parent for pattern in ('*/draft.json', '*/confirmed.json') for file in BATCHES.glob(pattern)}
+    for path in paths:
+        if material_versions.internal(path):
             continue
-        other = material_versions.read(file.parent)['draft'] if material_versions.managed(file.parent) else read_json(file)['draft']
-        try:
-            if naming_scope(other) == scope:
-                used.update(int(row['seq']) for row in other.get('rows', []) if str(row.get('seq', '')).isdigit())
-        except (ValueError, RuntimeError):
+        state = material_versions.read(path) if material_versions.managed(path) else None
+        if path.name == batch_id:
+            if state:
+                # A retained name belongs to its asset, not to the whole project.
+                # The owner may make another version; a new asset must not reuse it.
+                for version in state['versions'].values():
+                    for request in version['manifest']['requests']:
+                        parsed = validate_material_filename(request['output_filename'])
+                        if tuple(parsed[key] for key in ('date', 'type', 'creator1', 'creator2', 'novel_id')) == scope:
+                            owned.setdefault(int(parsed['seq']), set()).add(version['asset_id'])
             continue
-    for file in BATCHES.glob('*/confirmed.json'):
-        from .material_versions import internal
-        if file.parent.name == batch_id or internal(file.parent):
-            continue
-        for name in material_versions.reserved_names(file.parent):
+        if (path / 'draft.json').exists():
+            other = state['draft'] if state else read_json(path / 'draft.json')['draft']
+            try:
+                if naming_scope(other) == scope:
+                    used.update(int(row['seq']) for row in other.get('rows', []) if str(row.get('seq', '')).isdigit())
+            except (ValueError, RuntimeError):
+                pass
+        # Managed parents do not necessarily have a legacy confirmed.json.
+        for name in material_versions.reserved_names(path):
             parsed = validate_material_filename(name)
             if tuple(parsed[key] for key in ('date', 'type', 'creator1', 'creator2', 'novel_id')) == scope:
                 used.add(int(parsed['seq']))
     local = [int(row['seq']) for row in draft['rows'] if str(row.get('seq', '')).isdigit()]
-    next_seq = max([0, *used, *local]) + 1
+    next_seq = max([0, *used, *owned, *local]) + 1
     changed = False
     for row in draft['rows']:
         if not str(row.get('seq', '')).isdigit() or int(row['seq']) < 1:
             continue
         original = int(row['seq'])
-        if all_new or original in used:
+        if all_new or original in used or owned.get(original, set()) - {row.get('request_id')}:
             row.setdefault('original_seq', str(original))
             row['seq'] = str(next_seq)
             next_seq += 1
