@@ -595,8 +595,19 @@ def queue_verification(path, data):
     def apply(state):
         _editable(state, execution=True)
         if state['deliveries'][did]['status'] != 'unverified': raise ValueError('交付状态已更新')
-        if any(e['kind'] == 'verification' and e['delivery_id'] == did for e in state['outbox'].values()):
-            raise ValueError('已存在核实任务，请等待原任务结果')
+        from . import batch_control
+        previous = [e for e in state['outbox'].values()
+                    if e['kind'] == 'verification' and e['delivery_id'] == did and e['status'] != 'superseded']
+        for event in previous:
+            file = w.ROOT / '.web-state/jobs' / (event['job_id'] + '.json')
+            job = read_json(file) if file.exists() else {}
+            # Missing jobs are unfinished outbox handoffs. A terminal label also
+            # does not authorize replacing a process which may still write.
+            if (job.get('status') not in {'completed', 'failed', 'interrupted', 'unverified'}
+                    or (job.get('pid') and (not batch_control.belongs(job)
+                        or batch_control.child_state(job) not in {None, 'Z'}))):
+                raise ValueError('已存在核实任务，请等待原任务结果')
+        for event in previous: event['status'] = 'superseded'
         job_id = uuid.uuid4().hex
         state['outbox'][job_id] = {**copy.deepcopy(delivery), 'kind': 'verification', 'job_id': job_id,
                                   'binding': binding, 'status': 'pending'}

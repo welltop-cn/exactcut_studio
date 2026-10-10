@@ -77,9 +77,13 @@ def _job(parent, event, child):
             'status': 'queued', 'instance': instance_marker(), 'command': [*command, instance_marker()]}
 
 
-def _merge_delivery(parent, event, entry):
+def _merge_delivery(parent, event, entry, *, verification_job_id=None):
     with m.locked(parent):
-        state = m._read(parent); delivery = state['deliveries'][event['delivery_id']]
+        state = m._read(parent)
+        if verification_job_id:
+            verification = state['outbox'].get(verification_job_id)
+            if not verification or verification['status'] == 'superseded': return
+        delivery = state['deliveries'][event['delivery_id']]
         status = entry.get('status', delivery['status'])
         if delivery['status'] == 'unverified' and status != 'fbbm_ready': status = 'unverified'
         if entry.get('intent', {}).get('status') == 'pending': status = 'unverified'
@@ -176,7 +180,11 @@ def stage_enter(job):
     if not context: return
     parent, child, identity = context
     if identity['kind'] == 'delivery':
-        delivery = m.read(parent)['deliveries'][identity['delivery_id']]
+        state = m.read(parent)
+        if job.get('action') == 'verify-delivery':
+            event = state['outbox'].get(job['id'])
+            if not event or event['status'] == 'superseded': raise ValueError('核实任务已被替代')
+        delivery = state['deliveries'][identity['delivery_id']]
         if delivery.get('target_sha256') != m.delivery_target():
             raise ValueError('交付目标配置已变化，停止执行；请核对原目标')
         return
@@ -268,10 +276,14 @@ def stage_finish(job, code):
     if not context: return
     parent, child, identity = context
     if identity['kind'] == 'delivery':
+        if job.get('action') == 'verify-delivery':
+            event = m.read(parent)['outbox'].get(job['id'])
+            if not event or event['status'] == 'superseded': return
         file = child / 'publications.json'
         if file.exists():
             event = m.read(parent)['outbox'][child.name]
-            _merge_delivery(parent, event, read_json(file).get(identity['asset_id'], {}))
+            _merge_delivery(parent, event, read_json(file).get(identity['asset_id'], {}),
+                            verification_job_id=job['id'] if job.get('action') == 'verify-delivery' else None)
         return
     if job.get('phase') not in {'fetch', 'render', 'media-upload'}: return
     state = m.read(parent); version = state['versions'][identity['version_id']]
@@ -360,14 +372,32 @@ def parent_batch_id(batch_id):
 def recover_verification(parent, event):
     """Only an explicit CAS-approved verification may run after unknown intent."""
     from . import workflow as w
+    latest = m.read(parent)['outbox'].get(event['job_id'])
+    if not latest or latest['status'] == 'superseded': return
+    target = w.ROOT / '.web-state/jobs' / (event['job_id'] + '.json')
+    if target.exists(): return
+    # Hash large media before taking the parent lock. queue_verify_delivery
+    # rechecks the cheap file identity against this evidence under the lock.
+    evidence = w.approval_evidence(event['child_id'], event['asset_id'], event['sha256'])
+    # Serialize local publication/job handoffs with explicit retry approval, so
+    # a recovery snapshot cannot reset the publication after being superseded.
+    with m.locked(parent):
+        return _recover_verification(parent, event, evidence)
+
+
+def _recover_verification(parent, event, evidence):
+    from . import workflow as w
+    latest = m.read(parent)['outbox'].get(event['job_id'])
+    if not latest or latest['status'] == 'superseded': return
     child = w.BATCHES / event['child_id']; rid = event['asset_id']
     file = child / 'publications.json'; entry = read_json(file)[rid]
     if w.verification_binding(entry) != event['binding']: raise ValueError('交付核实身份变化')
     if entry.get('status') == 'fbbm_ready': return
     target = w.ROOT / '.web-state/jobs' / (event['job_id'] + '.json')
     if target.exists(): return
-    if not entry.get('verification_only'):
-        w.queue_verify_delivery(child.name, rid, event['sha256'], _job_id=event['job_id'])
+    w.approval_evidence(child.name, rid, event['sha256'], evidence)
+    if (entry.get('verification_queue') or {}).get('job_id') != event['job_id']:
+        w.queue_verify_delivery(child.name, rid, event['sha256'], _job_id=event['job_id'], _evidence=evidence)
     entry = read_json(file)[rid]
     if entry.get('verification_only') != event['binding']: raise ValueError('交付核实绑定变化')
     from .accounts import owner
