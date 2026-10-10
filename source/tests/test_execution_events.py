@@ -90,8 +90,10 @@ assert.ok(!queued.includes('<progress'));
 const paused=productionProgress({request_id:'r3',status:'processing',stage:'base_cut'}, {paused:true});
 assert.ok(paused.includes('已暂停'));
 assert.ok(!paused.includes('<progress'));
-const done=productionProgress({request_id:'r4',status:'fbbm_queued',preview:'/preview'},{});
+const done=productionProgress({request_id:'r4',status:'fbbm_queued',preview:'/preview',timing:{queue_seconds:60,total_seconds:200,complete:true}},{});
 assert.ok(done.includes('制作完成'));
+assert.ok(done.includes('制作排队 60 秒'));
+assert.ok(done.includes('准备至预览总用时 200 秒'));
 assert.ok(!done.includes('等待 FBBM'));
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)

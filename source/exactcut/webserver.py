@@ -150,6 +150,8 @@ def queue_snapshot(user):
         task = {'id': job['id'], 'batch_id': bid, 'request_id': job.get('request_id'),
                 'project_name': name, 'lane': lane, 'status': status,
                 'created': job.get('created'), 'started': job.get('started'), 'wait_reason': reason}
+        if job.get('created') is not None:
+            task['queue_seconds'] = max(0, int((job.get('started') if status == 'running' and job.get('started') is not None else now) - job['created']))
         if status == 'running' and job.get('started') is not None:
             task['elapsed_seconds'] = max(0, int(now - job['started']))
         if path:
@@ -163,9 +165,30 @@ def queue_snapshot(user):
             'updated_at': now}
 
 
+def asset_timing(request_id, jobs, *, now=None):
+    """Wall time from preparation submission through the render worker's preview finish."""
+    now = time.time() if now is None else now
+    renders = [j for j in jobs if j.get('phase') == 'render' and j.get('request_id') == request_id]
+    render = max(renders, key=lambda j: j.get('created', 0), default=None)
+    parents = {j['id']: j for j in jobs}
+    preparation = parents.get(render.get('parent_id')) if render else max(
+        (j for j in jobs if j.get('phase') == 'fetch'), key=lambda j: j.get('created', 0), default=None)
+    start = (preparation or render or {}).get('created')
+    if start is None:
+        return {}
+    complete = bool(render and render.get('status') == 'completed')
+    end = (render or {}).get('finished') or now
+    timing = {'total_seconds': max(0, int(end - start)), 'complete': complete}
+    if render and render.get('created') is not None:
+        timing['queue_seconds'] = max(0, int((render.get('started') or end) - render['created']))
+    return timing
+
+
 def batch_response(batch_id, job=None):
     result = workflow.detail(batch_id)
     jobs = [item for item in stored_jobs() if item.get('batch_id') == batch_id]
+    for asset in result.get('assets', []):
+        asset['timing'] = asset_timing(asset['request_id'], jobs)
     if job is None:
         job = max(jobs, key=lambda j: j.get('created', 0), default=None)
     if result['runtime']['status'] == 'queued':

@@ -54,3 +54,21 @@ def test_queue_endpoint_requires_login_and_uses_authenticated_user(monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_asset_timing_includes_preparation_and_freezes_after_preview():
+    jobs = [
+        {'id': 'fetch', 'phase': 'fetch', 'created': 100, 'started': 110, 'finished': 150, 'status': 'completed'},
+        {'id': 'render', 'parent_id': 'fetch', 'phase': 'render', 'request_id': 'r1',
+         'created': 150, 'started': 210, 'finished': 300, 'status': 'completed'},
+    ]
+    timing = web.asset_timing('r1', jobs, now=500)
+    assert timing == {'queue_seconds': 60, 'total_seconds': 200, 'complete': True}
+    jobs[1].update(status='queued', started=None, finished=None)
+    assert web.asset_timing('r1', jobs, now=200) == {
+        'queue_seconds': 50, 'total_seconds': 100, 'complete': False}
+    jobs[1].update(status='running', started=210)
+    assert web.asset_timing('r1', jobs, now=250) == {
+        'queue_seconds': 60, 'total_seconds': 150, 'complete': False}
+    assert web.asset_timing('r2', jobs, now=200)['total_seconds'] == 100
+    assert web.asset_timing('r1', [], now=200) == {}
