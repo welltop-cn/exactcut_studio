@@ -22,4 +22,8 @@
 
 ## 发布状态
 
-尚未发布。SSH 配置中的 deploy 账号执行 `/srv/exactcut/bin/linux-ops status` 返回 PermissionError，`sudo -n` 返回需要密码；未绕过发布器修改线上文件，未停止生产任务。等待现有授权发布入口。
+用户确认使用 root 发布后，通过既有 linux-ops 构建并于 2026-10-10 22:00（上海）发布 `us-east-20261010-instant-switch`。提交 `ba71b8735996b28848918671194a08b0dbaae19d`；镜像 `sha256:63d903cf7a23c72a187821bd6222d49e992ffef72f59a711f86500e761c4f11a`。Linux 完整回归 841 passed / 2 skipped。发布前无活动任务，未强停任务；公网健康检查 status=ok、maintenance=false、worker_alive=true。
+
+## 线上 Chrome 验收
+
+确认 admin 标签页 dirty=false 后刷新，新脚本版本 `a150134cbe5ac51022a9`。实际项目首次未预读取打开 428 ms；随后三次切回分别 6、4、4 ms 更新 DOM，均在后台详情请求完成前显示正确项目。之后复核 selectedId、current.id、hash 一致，openingBatchId=null，两个视频源保留且没有播放器错误。最终返回用户指定项目 `452471dced424bec8bd5b668e641402d`。未新增账号或制作任务。
