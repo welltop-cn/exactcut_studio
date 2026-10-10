@@ -137,7 +137,7 @@ async function restoreWorkspace(){
  const id=linked&&batches.some(b=>b.id===linked)?linked:workspace.batch_id;
  if(id)await openBatch(id);else showEmptyWorkspace();
 }
-(async()=>{try{currentUser=await api('/api/me');$('accountName').textContent=currentUser.name+' · '+(currentUser.role==='admin'?'管理员':'制作人');$('accountsNav').hidden=currentUser.role!=='admin';$('storageNav').hidden=currentUser.role!=='admin';await restoreWorkspace();await poll()}catch(e){showEmptyWorkspace(true);toast(e.message,true)}})();setInterval(poll,3000);
+(async()=>{try{currentUser=await api('/api/me');$('accountName').textContent=currentUser.name+' · '+(currentUser.role==='admin'?'管理员':'制作人');$('accountsNav').hidden=currentUser.role!=='admin';$('storageNav').hidden=currentUser.role!=='admin';$('usageNav').hidden=currentUser.role!=='admin';await restoreWorkspace();await poll()}catch(e){showEmptyWorkspace(true);toast(e.message,true)}})();setInterval(poll,3000);
 $('retryWorkspace').onclick=()=>operation($('retryWorkspace'),async()=>{await restoreWorkspace();await poll()});
 
 $('currentBatches').onclick=()=>{archivedView=false;renderBatches(batchCache)};
@@ -186,3 +186,16 @@ function renderStorage(data){storageInfo=data;const gb=n=>(n/1024**3).toFixed(2)
 $('storageNav').onclick=()=>operation($('storageNav'),async()=>{renderStorage(await api('/api/storage'));$('storageReceipt').textContent='';$('storageDialog').showModal()});
 $('closeStorage').onclick=()=>$('storageDialog').close();
 $('cleanupCache').onclick=()=>operation($('cleanupCache'),async()=>{if(!storageInfo||!window.confirm(`清理 ${storageInfo.cleanup_count} 项可重建的基础剪辑缓存？下次使用会重新剪辑，原片和正式成片保留。`))return;const data=await api('/api/storage/cleanup',{token:storageInfo.cleanup_token});renderStorage(data);$('storageReceipt').textContent=`已清理 ${data.result.removed} 项，释放 ${(data.result.freed_bytes/1024**2).toFixed(1)} MB；跳过 ${data.result.skipped_busy_or_changed} 项正在使用或已变化的缓存。`});
+
+function renderUsage(data){
+ const bytes=n=>n<1024?`${n} B`:n<1024**2?`${(n/1024).toFixed(2)} KiB`:n<1024**3?`${(n/1024**2).toFixed(2)} MiB`:`${(n/1024**3).toFixed(2)} GiB`;
+ const rows=(items,cells,columns)=>items.length?items.map(item=>'<tr>'+cells(item).map(value=>`<td>${esc(value)}</td>`).join('')+'</tr>').join(''):`<tr><td colspan="${columns}" class="hint">暂无数据</td></tr>`;
+ const descending=items=>[...items].sort((a,b)=>b.bytes-a.bytes);
+ $('usageTotals').innerHTML=`<p>数据根合计：<strong>${bytes(data.totals.bytes)}</strong></p><p>磁盘剩余：<strong>${bytes(data.totals.free_bytes)}</strong> / ${bytes(data.totals.total_bytes)}</p><p class="hint">生成时间：${esc(new Date(data.generated_at).toLocaleString())}</p>`;
+ $('usageProjects').innerHTML=rows(descending(data.projects),p=>[p.name,p.owner,p.drama_id||'未选择',p.assets,bytes(p.bytes)],5);
+ $('usageUsers').innerHTML=rows(descending(data.users),u=>[u.username,u.projects,bytes(u.bytes)],3);
+ const shared=[...data.shared].sort((a,b)=>(b.sources_bytes+b.cache_bytes+b.episodes_bytes)-(a.sources_bytes+a.cache_bytes+a.episodes_bytes));
+ $('usageShared').innerHTML=rows(shared,s=>[s.drama_id,bytes(s.sources_bytes),bytes(s.cache_bytes),bytes(s.episodes_bytes),s.referenced_by.join('、')||'无引用'],5);
+}
+$('usageNav').onclick=()=>operation($('usageNav'),async()=>{renderUsage(await api('/api/usage'));$('usageDialog').showModal()});
+$('closeUsage').onclick=()=>$('usageDialog').close();

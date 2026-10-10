@@ -1,5 +1,7 @@
 # Linux 部署与迁移约定
 
+> 2026-10-10：本文网页入口示例统一为新默认 `/home`；历史验收记录不代表该路径已经上线。现有生产 runtime 与 nginx 的迁移由部署方处理，本次仅修改开发代码和文档。Cookie Path 改为 `/home/` 后，已登录用户需重新登录一次。
+
 首期只维护两份实际密钥配置：本地 `.env.development` 和服务器 `<部署根>/config/production.env`。Docker 中的应用不依赖 Mac 路径、Cloudflare Tunnel、宿主 Python 或宿主字体。Linux 运维脚本使用系统 Python 3.10+ 和 Docker/Compose；同架构机器可迁移已验收镜像，跨架构需要重建并重新验收。
 
 ## 配置与数据
@@ -57,7 +59,7 @@ sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut rollback <指定版本>
 
 切换前进入维护状态，等待现有请求和任务结束；超时退出，不强制杀任务。发布后检查 `/healthz` 的 status、production 环境、版本和 worker。失败自动恢复前一版本，**代码回滚保留当前数据库和业务数据**。首次发布失败删除自己的失败容器，以便重试；同名未登记容器禁止接管。若恢复也失败，保留维护状态，排除原因后运行 `linux-ops --root <根> recover`。
 
-生产 `config/runtime.json` 的 `web.base_path` 设为 `/exactcut`（不带末尾斜线），开发默认值为空。`linux-ops --root <根> nginx` 据此生成 location 片段，安装为 `/etc/nginx/snippets/exactcut-production.conf` 并在已有80端口 server 块内 include；保留 `/paypal_dispute/` 和 `/domain-watch/`。访问入口为 `http://<IP>/exactcut/`，后端仍仅监听本地18792，不新增公网端口。`deployment.json` 的 `public_port` 为80。nginx保留前缀传给应用；应用统一处理登录跳转、静态资源、API、Cookie和视频Range。安装前用 `nginx -t` 验证，再 reload。
+生产 `config/runtime.json` 的 `web.base_path` 设为 `/home`（不带末尾斜线），开发默认值同为 `/home`。`linux-ops --root <根> nginx` 据此生成 location 片段，安装为 `/etc/nginx/snippets/exactcut-production.conf` 并在已有80端口 server 块内 include；保留 `/paypal_dispute/` 和 `/domain-watch/`。访问入口为 `http://<IP>/home/`，后端仍仅监听本地18792，不新增公网端口。`deployment.json` 的 `public_port` 为80。nginx保留前缀传给应用；应用统一处理登录跳转、静态资源、API、Cookie和视频Range。安装前用 `nginx -t` 验证，再 reload。
 
 ## 可重复的外部验证
 

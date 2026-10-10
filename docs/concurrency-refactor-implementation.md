@@ -1,5 +1,7 @@
 # 并发改造实施记录
 
+> 2026-10-10：本文网页入口示例统一为新默认 `/home`；历史验收记录不代表该路径已经上线。现有生产 runtime 与 nginx 的迁移由部署方处理，本次仅修改开发代码和文档。Cookie Path 改为 `/home/` 后，已登录用户需重新登录一次。
+
 实施规范：`docs/concurrency-refactor-plan.md`。数据 schema 保持 1；新增任务字段可选。
 
 ## 工作边界与取舍
@@ -295,7 +297,7 @@ done > "$EVIDENCE/render-thread-samples.txt"
 
 ### 3. 场景执行与证据字段
 
-工作台入口 `http://8.221.122.75/exactcut/`，用两个独立浏览器会话登录两个验收账号。每个账号选择不同项目/剧号，各创建至少一个 batch；记录用户名、batch_id、request_id、job_id 及准确提交时间。人工审片后逐条确认，不用旧 execute --publish。
+工作台入口 `http://8.221.122.75/home/`，用两个独立浏览器会话登录两个验收账号。每个账号选择不同项目/剧号，各创建至少一个 batch；记录用户名、batch_id、request_id、job_id 及准确提交时间。人工审片后逐条确认，不用旧 execute --publish。
 
 每个观察点保存时间、任务/阶段结果/磁盘预约快照（避免复制密码/账号数据库）：
 
@@ -350,7 +352,7 @@ PY
 BACKEND_PORT=$(python3 -c 'import json; print(json.load(open("/srv/exactcut/config/deployment.json"))["backend_port"])')
 curl --fail-with-body --user admin -H 'X-Exactcut-Request: 1' -H 'Content-Type: application/json' \
   --data-binary "@$EVIDENCE/verify-request.json" \
-  "http://127.0.0.1:$BACKEND_PORT/exactcut/api/batches/$BATCH_A/verify-delivery" \
+  "http://127.0.0.1:$BACKEND_PORT/home/api/batches/$BATCH_A/verify-delivery" \
   -o "$EVIDENCE/verify-response.json"
 ```
 

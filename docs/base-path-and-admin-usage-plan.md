@@ -2,12 +2,12 @@
 
 日期：2026-10-10。分支 `concurrency-refactor`。数据 schema 保持 1。
 
-## 1. 基础路径：默认改 `/home`，彻底去掉 `/exactcut`
+## 1. 基础路径：默认改 `/home`，彻底去掉旧网页前缀
 
 - `source/config/default.json` 的 `web.base_path`：`""` → **`"/home"`**（这是"默认值"）。
-- `source/config/production.json` 的 `web.base_path`：`"/exactcut"` → **`"/home"`**。
+- `source/config/production.json` 的 `web.base_path`：旧前缀 → **`"/home"`**。
 - 代码逻辑**无需改动**：`web_base_path()` 校验、`public_url()` 前缀、`normalize_path()` 去前缀、Cookie `Path`、登录跳转、`<base href>` 都由 `base_path` 驱动，`/home` 合法（正则 `(?:/[a-zA-Z0-9_-]+)+` 匹配）。
-- 清理仓库/测试/文档里对 **`/exactcut`** 的引用，改为 `/home`（或说明由部署方处理）。**不要**再保留 `/exactcut` 的任何兼容/跳转。
+- 清理仓库/测试/文档里对**旧网页前缀**的引用，改为 `/home`（或说明由部署方处理）。**不要**再保留旧网页前缀的任何兼容/跳转。
 - nginx 由编排者在服务器执行，**不在本次代码范围内**；但请核对 `deploy/linux_ops.py` 的 `nginx_config()` 对 `base_path="/home"` 输出正确（应生成 `location = /home {301 /home/}` + `location /home/ {proxy}` 片段）。
 - 注意：**Cookie Path 变化会让已登录用户需要重新登录一次**——这是预期，文档里写明。
 

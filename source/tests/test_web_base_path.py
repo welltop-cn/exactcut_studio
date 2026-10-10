@@ -21,7 +21,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(workflow, 'BATCHES', tmp_path / '.web-state/batches')
     monkeypatch.setattr(workflow, 'FEEDBACK', tmp_path / 'feedback')
     instance = ThreadingHTTPServer(('127.0.0.1', 0), webserver.Handler)
-    instance.base_path = '/exactcut'
+    instance.base_path = '/home'
     instance.password = 'path-prefix-fixture-password'
     instance.auth_db = tmp_path / '.web-state/accounts.sqlite3'
     instance.auth_db.parent.mkdir(parents=True)
@@ -47,39 +47,39 @@ def request(app, method, path, data=None, headers=None):
 
 
 def login(app):
-    status, headers, _ = request(app, 'POST', '/exactcut/api/login',
+    status, headers, _ = request(app, 'POST', '/home/api/login',
                                 {'username': 'admin', 'password': app.password},
                                 {'X-Exactcut-Request': '1'})
     assert status == 200
-    assert '; Path=/exactcut/;' in headers['Set-Cookie']
+    assert '; Path=/home/;' in headers['Set-Cookie']
     return {'Cookie': headers['Set-Cookie'].split(';')[0], 'X-Exactcut-Request': '1'}
 
 
 def test_prefixed_login_redirect_pages_and_session(app):
-    status, headers, _ = request(app, 'GET', '/exactcut/')
+    status, headers, _ = request(app, 'GET', '/home/')
     assert status == 302
-    assert headers['Location'] == '/exactcut/login'
-    status, _, body = request(app, 'GET', '/exactcut/login')
+    assert headers['Location'] == '/home/login'
+    status, _, body = request(app, 'GET', '/home/login')
     assert status == 200
-    assert b'<base href="/exactcut/">' in body
+    assert b'<base href="/home/">' in body
     headers = login(app)
-    status, _, body = request(app, 'GET', '/exactcut/', headers=headers)
-    assert status == 200 and b'<base href="/exactcut/">' in body
+    status, _, body = request(app, 'GET', '/home/', headers=headers)
+    assert status == 200 and b'<base href="/home/">' in body
     assert b'src="app.js"' in body and b'href="template.xlsx"' not in body
     for path in ('app.js', 'helper.js', 'template.xlsx', 'api/me', 'api/batches', 'healthz'):
-        assert request(app, 'GET', '/exactcut/' + path, headers=headers)[0] == 200
+        assert request(app, 'GET', '/home/' + path, headers=headers)[0] == 200
     assert request(app, 'GET', '/healthz')[0] == 200
 
 
 def test_prefixed_creation_image_and_video_range(app, tmp_path, monkeypatch):
     headers = login(app)
-    status, _, body = request(app, 'POST', '/exactcut/api/batches/blank', {}, headers)
+    status, _, body = request(app, 'POST', '/home/api/batches/blank', {}, headers)
     assert status == 201
     created = json.loads(body)
     batch_id = created['id']
     request_id = created['draft']['rows'][0]['request_id']
     png = b'\x89PNG\r\n\x1a\nfixture'
-    endpoint = f'/exactcut/api/batches/{batch_id}/ending-image'
+    endpoint = f'/home/api/batches/{batch_id}/ending-image'
     assert request(app, 'POST', endpoint, {'request_id': request_id,
                    'content': base64.b64encode(png).decode()}, headers)[0] == 200
     assert request(app, 'GET', endpoint + '/' + request_id + '?v=fixture.png', headers=headers)[2] == png
@@ -88,13 +88,13 @@ def test_prefixed_creation_image_and_video_range(app, tmp_path, monkeypatch):
     monkeypatch.setattr(workflow, 'preview_file', lambda *args, **kwargs: (video, {}))
     for suffix in ('video', 'preview'):
         status, response_headers, body = request(app, 'GET',
-            f'/exactcut/api/batches/{batch_id}/{suffix}/fixture.mp4',
+            f'/home/api/batches/{batch_id}/{suffix}/fixture.mp4',
             headers={**headers, 'Range': 'bytes=2-5'})
         assert status == 206 and body == b'2345'
         assert response_headers['Content-Range'] == 'bytes 2-5/10'
 
 
-@pytest.mark.parametrize('value', ['/exactcut/', 'exactcut', '//other', '/a/../b', '/a?x', '/a"'])
+@pytest.mark.parametrize('value', ['/home/', 'exactcut', '//other', '/a/../b', '/a?x', '/a"'])
 def test_invalid_base_path_rejected(value, monkeypatch):
     monkeypatch.setattr(util, 'load_config', lambda: {'web': {'base_path': value}})
     with pytest.raises(ValueError, match='base_path'):
@@ -110,7 +110,7 @@ def test_frontend_prefixed_requests_and_http_submission_ids():
 const vm=require('node:vm'),assert=require('node:assert/strict');
 const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 (async()=>{
-for(const prefix of ['', '/exactcut', '/tools/cut']){
+for(const prefix of ['', '/home', '/tools/cut']){
  const saved=new Map(),calls=[],redirects=[];
  const context=vm.createContext({URL,document:{baseURI:'http://example.test'+prefix+'/'},
   crypto:{getRandomValues:require('node:crypto').webcrypto.getRandomValues.bind(require('node:crypto').webcrypto)},
@@ -131,3 +131,17 @@ for(const prefix of ['', '/exactcut', '/tools/cut']){
 '''
     result = subprocess.run([node, '-e', script], input=json.dumps(source), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_default_and_production_base_path_are_home():
+    config = Path(__file__).resolve().parents[1] / 'config'
+    for name in ('default.json', 'production.json'):
+        assert json.loads((config / name).read_text())['web']['base_path'] == '/home'
+
+
+def test_other_prefix_is_not_redirected_or_compatible(app):
+    headers = login(app)
+    for suffix in ('/', '/api/me', '/login', '/app.js'):
+        status, response_headers, _ = request(app, 'GET', '/retired-prefix' + suffix, headers=headers)
+        assert status == 404
+        assert 'Location' not in response_headers

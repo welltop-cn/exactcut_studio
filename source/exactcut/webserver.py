@@ -38,7 +38,7 @@ def web_base_path():
     from .util import load_config
     value = load_config().get('web', {}).get('base_path', '')
     if not isinstance(value, str) or (value and not re.fullmatch(r'(?:/[a-zA-Z0-9_-]+)+', value)):
-        raise ValueError('web.base_path 必须为空或 /exactcut 形式的路径，末尾不带斜线')
+        raise ValueError('web.base_path 必须为空或 /home 形式的路径，末尾不带斜线')
     return value
 
 
@@ -968,6 +968,12 @@ class Handler(BaseHTTPRequestHandler):
             if not self.is_admin():return
             from .storage import report
             return self.respond(200,report(ROOT))
+        if self.path == '/api/usage':
+            if not self.is_admin(): return
+            try:
+                return self.respond(200, storage.usage_report(ROOT))
+            except storage.UsageUnavailable as exc:
+                return self.respond(503, {'error': str(exc)})
         if self.path == '/':
             if getattr(self.server, 'auth_db', None) and not self.session_token:
                 self.cookie(accounts.login(self.server.auth_db, self.user))

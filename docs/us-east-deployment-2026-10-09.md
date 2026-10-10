@@ -1,5 +1,7 @@
 # 美东全新生产实例部署记录（2026-10-09）
 
+> 2026-10-10：本文网页入口示例统一为新默认 `/home`；历史验收记录不代表该路径已经上线。现有生产 runtime 与 nginx 的迁移由部署方处理，本次仅修改开发代码和文档。Cookie Path 改为 `/home/` 后，已登录用户需重新登录一次。
+
 本次在 `8.221.122.75` 建立独立生产实例。复用东京实例已验证的外部服务配置，不迁移账号、项目、视频、缓存或任务状态；东京实例不因本次部署而停止或升级。
 
 ## 实测机器与系统准备
@@ -26,7 +28,7 @@
 }
 ```
 
-`config/runtime.json` 使用集中生产配置：`web.base_path=/exactcut`；预留50 GiB，正片缓存100 GiB，基础剪辑缓存50 GiB、保留7天，可用空间低于80 GiB触发按需正片回收。缓存策略不是磁盘硬配额，成片仍需保留和归档策略。本地开发配置未修改。
+`config/runtime.json` 使用集中生产配置：`web.base_path=/home`；预留50 GiB，正片缓存100 GiB，基础剪辑缓存50 GiB、保留7天，可用空间低于80 GiB触发按需正片回收。缓存策略不是磁盘硬配额，成片仍需保留和归档策略。本地开发配置未修改。
 
 素材OSS位于美西；本机位于美东，保持公网 `oss-us-west-1.aliyuncs.com`。当前发布代码未配置public base时由endpoint拼接成片URL，不能改成内网域名后把生成的内网地址交给FBBM。
 
@@ -40,7 +42,7 @@
 
 - 新机Linux完整回归343passed/5skipped，66.19秒，测试容器限制1CPU/2GiB；无生产配置或数据挂载、外部调用开关关闭。缺Docker CLI/Node的五项在本地已覆盖，本地348passed、无跳过。
 - 外部检查全部通过：OSS目标桶/来源桶各读取32MiB，12.811/12.764MiB/s；AI小型Responses结构化输出、飞书字段类型及状态选项、FBBM可用性均通过。未上传、创建飞书记录或执行素材发布；抽样吞吐不能作为完整视频下载承诺。
-- nginx正式入口为 **http://8.221.122.75/exactcut/**，根路径跳转到工作台路径；后端仅监听 `127.0.0.1:18792`。站点 `/etc/nginx/sites-available/exactcut` include `/etc/nginx/snippets/exactcut-production.conf`，由管理器生成location。原默认欢迎页配置已备份，正式配置语法检查通过后reload。
+- nginx正式入口为 **http://8.221.122.75/home/**，根路径跳转到工作台路径；后端仅监听 `127.0.0.1:18792`。站点 `/etc/nginx/sites-available/exactcut` include `/etc/nginx/snippets/exactcut-production.conf`，由管理器生成location。原默认欢迎页配置已备份，正式配置语法检查通过后reload。
 - 发布后healthz为ok、production、目标版本、worker_alive=true、maintenance=false。Docker实际CPU额度14，内存25769803776字节（24GiB）。
 - 从本机通过公网入口验证登录、Cookie Path、工作台、静态脚本、模板、生产缓存策略及下载/AI/发布开关。初始批次数为0，账号库仅新建admin；首次工作台初始化建立一个默认项目，再次进入返回同一项目。没有创建制作或发布任务。
 

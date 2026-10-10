@@ -34,7 +34,7 @@ def draft_with(*episodes):
 
 def prefetch(console, draft, **extra):
     app, item, headers = console
-    status, _, body = request(app, 'POST', f"/exactcut/api/batches/{item['id']}/sources",
+    status, _, body = request(app, 'POST', f"/home/api/batches/{item['id']}/sources",
                               {'draft': draft, **extra}, headers)
     return status, json.loads(body)
 
@@ -54,7 +54,7 @@ def test_first_valid_clip_queues_sources_without_saving_or_confirming_draft(cons
     assert w.runtime(w.folder(item['id']))['status'] == 'draft'
     assert (w.folder(item['id']) / 'draft.json').read_bytes() == before
     assert not (w.folder(item['id']) / 'confirmed.json').exists()
-    assert request(app, 'POST', f"/exactcut/api/batches/{item['id']}/save",
+    assert request(app, 'POST', f"/home/api/batches/{item['id']}/save",
                    {'revision': 1, 'draft': draft_with('EP1')}, headers)[0] == 200
 
 
@@ -82,7 +82,7 @@ def test_invalid_id_and_unfinished_clips_do_not_download(console):
 
 def test_sources_requires_auth_csrf_ownership_and_enabled_worker(console, monkeypatch):
     app, item, headers = console
-    endpoint = f"/exactcut/api/batches/{item['id']}/sources"
+    endpoint = f"/home/api/batches/{item['id']}/sources"
     body = {'draft': draft_with('EP1')}
     assert request(app, 'POST', endpoint, body)[0] == 401
     assert request(app, 'POST', endpoint, body, {'Cookie': headers['Cookie']})[0] == 403
@@ -90,7 +90,7 @@ def test_sources_requires_auth_csrf_ownership_and_enabled_worker(console, monkey
     accounts.assign(w.folder(item['id']), {'username': 'someone-else'})
     # Admin may access all batches, so check an authenticated producer instead.
     accounts.manage(app.auth_db, 'admin', {'username': 'alice', 'name': 'Alice', 'password': 'fixture-password'})
-    _, h, _ = request(app, 'POST', '/exactcut/api/login',
+    _, h, _ = request(app, 'POST', '/home/api/login',
                        {'username': 'alice', 'password': 'fixture-password'}, {'X-Exactcut-Request': '1'})
     assert request(app, 'POST', endpoint, body,
                    {'Cookie': h['Set-Cookie'].split(';')[0], 'X-Exactcut-Request': '1'})[0] == 404
@@ -115,7 +115,7 @@ def test_queued_render_reports_prefetch_bytes_without_changing_durable_runtime(c
     prefetch(console, draft_with('EP1', 'EP2', 'EP6'))
     job = jobs()[0]
     job['status'] = 'running'; web.save(job)
-    request(app, 'POST', f"/exactcut/api/batches/{item['id']}/save",
+    request(app, 'POST', f"/home/api/batches/{item['id']}/save",
             {'revision': 1, 'draft': draft_with('EP1', 'EP2')}, headers)
     path = w.folder(item['id'])
     w.update(path, 'queued', '等待制作', plan={'required': ['EP1', 'EP2']})
@@ -128,7 +128,7 @@ def test_queued_render_reports_prefetch_bytes_without_changing_durable_runtime(c
         'EP2': {'status': 'downloading', 'received_bytes': 1048576, 'total_bytes': 4194304},
         'EP6': {'status': 'downloading', 'received_bytes': 99999999, 'total_bytes': 999999999}}})
     before = (path / 'runtime.json').read_bytes()
-    status, _, body = request(app, 'GET', f"/exactcut/api/batches/{item['id']}", headers=headers)
+    status, _, body = request(app, 'GET', f"/home/api/batches/{item['id']}", headers=headers)
     assert status == 200
     runtime = json.loads(body)['runtime']
     assert runtime.get('download_prefetch') is True
@@ -213,7 +213,7 @@ def test_clearing_drama_cancels_queued_downloads_without_changing_draft(console,
     prefetch(console, draft_with('EP1'))
     job = jobs()[0]
     app, item, headers = console
-    status, _, body = request(app, 'POST', f"/exactcut/api/batches/{item['id']}/sources",
+    status, _, body = request(app, 'POST', f"/home/api/batches/{item['id']}/sources",
                               {'cancel': True}, headers)
     assert status == 200 and json.loads(body)['episodes'] == []
     monkeypatch.setattr(cache, 'ensure', lambda *a, **k: pytest.fail('Cancelled source was fetched'))

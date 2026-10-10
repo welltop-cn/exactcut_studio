@@ -209,4 +209,4 @@ def test_dev_launcher_ignores_inherited_production_runtime_config(tmp_path):
                             timeout=10, env={**os.environ, 'EXACTCUT_PYTHON': str(probe),
                                              'EXACTCUT_CONFIG_FILE': str(foreign), 'PYTHONPATH': str(root)})
     assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout.splitlines()[-1])['base_path'] == ''
+    assert json.loads(result.stdout.splitlines()[-1])['base_path'] == '/home'

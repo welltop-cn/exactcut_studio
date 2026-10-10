@@ -9,15 +9,15 @@ from test_web_base_path import app, login, request
 
 
 def enter(app, headers, data=None):
-    status, _, body = request(app, 'POST', '/exactcut/api/workspace', data or {}, headers)
+    status, _, body = request(app, 'POST', '/home/api/workspace', data or {}, headers)
     assert status == 200, body
     return json.loads(body)
 
 
 def test_first_visit_is_owned_and_concurrent_visits_create_only_one_draft(app):
-    assert request(app, 'POST', '/exactcut/api/workspace', {})[0] == 401
+    assert request(app, 'POST', '/home/api/workspace', {})[0] == 401
     headers = login(app)
-    assert request(app, 'POST', '/exactcut/api/workspace', {}, {'Cookie': headers['Cookie']})[0] == 403
+    assert request(app, 'POST', '/home/api/workspace', {}, {'Cookie': headers['Cookie']})[0] == 403
     with ThreadPoolExecutor(max_workers=6) as pool:
         results = list(pool.map(lambda _: enter(app, headers), range(6)))
     batch_id = results[0]['batch_id']
@@ -29,8 +29,8 @@ def test_first_visit_is_owned_and_concurrent_visits_create_only_one_draft(app):
     assert len(item['draft']['rows']) == 1 and len(item['draft']['rows'][0]['clips']) == 1
     assert accounts.owner(workflow.folder(batch_id)) == 'admin'
     assert not list((workflow.ROOT / '.web-state/jobs').glob('*.json'))
-    assert request(app, 'POST', f'/exactcut/api/batches/{batch_id}/archive', {}, headers)[0] == 200
-    assert request(app, 'POST', f'/exactcut/api/batches/{batch_id}/delete', {'confirmation': batch_id}, headers)[0] == 200
+    assert request(app, 'POST', f'/home/api/batches/{batch_id}/archive', {}, headers)[0] == 200
+    assert request(app, 'POST', f'/home/api/batches/{batch_id}/delete', {'confirmation': batch_id}, headers)[0] == 200
     assert enter(app, headers)['batch_id'] is None
     assert workflow.summaries() == []
 
@@ -40,7 +40,7 @@ def test_accounts_receive_independent_defaults_including_admin(app):
     for username in ('alice', 'bob'):
         password = 'fixture-producer-password'
         accounts.manage(app.auth_db, 'admin', {'username': username, 'name': username, 'password': password})
-        status, headers, _ = request(app, 'POST', '/exactcut/api/login',
+        status, headers, _ = request(app, 'POST', '/home/api/login',
                                     {'username': username, 'password': password}, {'X-Exactcut-Request': '1'})
         assert status == 200
         auth = {'Cookie': headers['Set-Cookie'].split(';')[0], 'X-Exactcut-Request': '1'}
@@ -49,7 +49,7 @@ def test_accounts_receive_independent_defaults_including_admin(app):
         ids.append(batch_id)
         assert enter(app, auth)['batch_id'] == batch_id
         if username == 'bob':
-            assert request(app, 'POST', '/exactcut/api/workspace', {'batch_id': ids[0]}, auth)[0] == 400
+            assert request(app, 'POST', '/home/api/workspace', {'batch_id': ids[0]}, auth)[0] == 400
     admin_id = enter(app, login(app))['batch_id']
     assert accounts.owner(workflow.folder(admin_id)) == 'admin'
     assert len({*ids, admin_id}) == 3
@@ -57,17 +57,17 @@ def test_accounts_receive_independent_defaults_including_admin(app):
 
 def test_existing_projects_last_selection_and_deleted_all_do_not_create_defaults(app):
     headers = login(app)
-    first = json.loads(request(app, 'POST', '/exactcut/api/batches/blank', {}, headers)[2])['id']
+    first = json.loads(request(app, 'POST', '/home/api/batches/blank', {}, headers)[2])['id']
     assert enter(app, headers)['batch_id'] == first
-    second = json.loads(request(app, 'POST', '/exactcut/api/batches/blank', {}, headers)[2])['id']
+    second = json.loads(request(app, 'POST', '/home/api/batches/blank', {}, headers)[2])['id']
     assert enter(app, headers, {'batch_id': second})['batch_id'] == second
     assert enter(app, headers)['batch_id'] == second
     enter(app, headers, {'batch_id': first})
     assert enter(app, headers)['batch_id'] == first
     assert len(workflow.summaries()) == 2
     for batch_id in (first, second):
-        assert request(app, 'POST', f'/exactcut/api/batches/{batch_id}/archive', {}, headers)[0] == 200
-        assert request(app, 'POST', f'/exactcut/api/batches/{batch_id}/delete', {'confirmation': batch_id}, headers)[0] == 200
+        assert request(app, 'POST', f'/home/api/batches/{batch_id}/archive', {}, headers)[0] == 200
+        assert request(app, 'POST', f'/home/api/batches/{batch_id}/delete', {'confirmation': batch_id}, headers)[0] == 200
     assert enter(app, headers)['batch_id'] is None
     assert enter(app, headers)['batch_id'] is None
     assert workflow.summaries() == []

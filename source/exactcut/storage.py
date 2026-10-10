@@ -8,16 +8,136 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
+import threading
 import time
 from functools import partial
 from .runtime import protect_path, data_root
-from .util import load_config
+from .util import load_config, read_json, now_iso
 
 GIB=1024**3
 CACHE_LIMIT=20*GIB
 CACHE_DAYS=7
 RESERVE=5*GIB
 KEY=re.compile(r'[a-f0-9]{64}')
+USAGE_TTL = 45
+USAGE_SCAN_SECONDS = 10
+_usage_lock = threading.Lock()
+_usage_cache = {}
+
+
+class UsageUnavailable(RuntimeError):
+    pass
+
+
+def usage_report(root):
+    """One read-only scan per 45 seconds, outside the workflow's mutation locks.
+
+    A concurrent cold/expired request fails promptly instead of queuing another
+    full scan. Failed scans also cool down; never publish partial byte totals.
+    """
+    root = Path(root).resolve()
+    protect_path(root)
+    if not _usage_lock.acquire(blocking=False):
+        raise UsageUnavailable('用量正在统计，请稍后重试')
+    try:
+        cached = _usage_cache.get(root)
+        if cached and time.monotonic() - cached[0] < USAGE_TTL:
+            if isinstance(cached[1], str): raise UsageUnavailable(cached[1])
+            return cached[1]
+        try:
+            result = _scan_usage(root)
+        except (OSError, ValueError, KeyError, TypeError, UsageUnavailable) as exc:
+            message = str(exc) if isinstance(exc, UsageUnavailable) else '用量统计失败，请稍后重试'
+            _usage_cache[root] = (time.monotonic(), message)
+            raise UsageUnavailable(message) from exc
+        # Only one data root is served in this process; do not retain old roots.
+        _usage_cache.clear()
+        _usage_cache[root] = (time.monotonic(), result)
+        return result
+    finally:
+        _usage_lock.release()
+
+
+def _scan_usage(root):
+    from . import accounts
+
+    deadline = time.monotonic() + USAGE_SCAN_SECONDS
+    total, batches, shared = 0, {}, {}
+
+    def check_time():
+        if time.monotonic() >= deadline:
+            raise UsageUnavailable('用量统计超时，请稍后重试')
+
+    def walk_error(error):
+        # Deletion during a live scan is normal; unreadable trees are not zero.
+        if not isinstance(error, FileNotFoundError): raise error
+
+    def drama_entry(drama_id):
+        return shared.setdefault(drama_id, {'drama_id': drama_id, 'sources_bytes': 0,
+                                 'cache_bytes': 0, 'episodes_bytes': 0, 'referenced_by': set()})
+
+    for directory, dirs, files in os.walk(root, followlinks=False, onerror=walk_error):
+        check_time()
+        path = Path(directory)
+        dirs[:] = [name for name in dirs if not (path / name).is_symlink()]
+        parts = path.relative_to(root).parts
+        batch_parts = parts[1:] if parts[:1] == ('.web-state',) else parts
+        batch_path = None
+        if len(batch_parts) >= 2 and batch_parts[0] == 'batches':
+            prefix = root / '.web-state' if parts[:1] == ('.web-state',) else root
+            batch_path = prefix / 'batches' / batch_parts[1]
+            batches.setdefault(batch_path, 0)
+        field = None
+        if len(parts) >= 2 and parts[0] == 'sources':
+            field = 'sources_bytes'
+        elif len(parts) >= 3 and parts[0] == 'projects':
+            if parts[2] == 'cache': field = 'cache_bytes'
+            elif parts[2:4] == ('data', 'episodes'): field = 'episodes_bytes'
+            elif parts[2:4] == ('source', 'videos'): field = 'sources_bytes'
+        entry = drama_entry(parts[1]) if field else None
+        for name in files:
+            check_time()
+            try:
+                info = (path / name).lstat()
+            except FileNotFoundError:
+                continue
+            if not stat.S_ISREG(info.st_mode): continue
+            total += info.st_size
+            if batch_path is not None: batches[batch_path] += info.st_size
+            if entry is not None: entry[field] += info.st_size
+
+    projects, users = [], {}
+    for path, size in batches.items():
+        check_time()
+        if not path.exists(): continue
+        # Do not follow metadata links even though media links were excluded.
+        for name in ('draft.json', 'runtime.json', 'access.json'):
+            if (path / name).is_symlink(): raise ValueError('用量元数据不能为符号链接')
+        item = read_json(path / 'draft.json') if (path / 'draft.json').exists() else {}
+        runtime = read_json(path / 'runtime.json') if (path / 'runtime.json').exists() else {}
+        if not isinstance(item, dict) or not isinstance(runtime, dict):
+            raise ValueError('用量元数据必须为对象')
+        draft = item.get('draft', {})
+        if not isinstance(draft, dict): raise ValueError('项目草稿必须为对象')
+        owner = accounts.owner(path)
+        drama = draft.get('drama_id', '')
+        projects.append({'batch_id': path.name,
+                         'name': item.get('display_name') or draft.get('drama_title') or item.get('filename') or path.name,
+                         'owner': owner, 'drama_id': drama, 'bytes': size,
+                         'assets': len(draft.get('rows', [])), 'status': runtime.get('status', 'draft')})
+        user = users.setdefault(owner, {'username': owner, 'projects': 0, 'bytes': 0})
+        user['projects'] += 1
+        user['bytes'] += size
+        if drama: drama_entry(drama)['referenced_by'].add(owner)
+    for entry in shared.values(): entry['referenced_by'] = sorted(entry['referenced_by'])
+    disk = shutil.disk_usage(root)
+    check_time()
+    return {'generated_at': now_iso(),
+            'totals': {'bytes': total, 'free_bytes': disk.free, 'total_bytes': disk.total},
+            'projects': sorted(projects, key=lambda p: (-p['bytes'], p['batch_id'])),
+            'users': sorted(users.values(), key=lambda u: (-u['bytes'], u['username'])),
+            'shared': sorted(shared.values(), key=lambda s: (-(s['sources_bytes'] + s['cache_bytes'] + s['episodes_bytes']), s['drama_id']))}
 
 
 def policy():

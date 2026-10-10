@@ -152,10 +152,10 @@ def test_nginx_site_has_independent_port_range_and_forwarded_protocol(ops):
 
 
 def test_nginx_path_snippet_preserves_prefix_without_claiming_existing_server(ops):
-    text = ops.nginx_config({'public_port': 80, 'backend_port': 18792}, base_path='/exactcut')
-    assert 'location = /exactcut {' in text
-    assert 'return 301 /exactcut/;' in text
-    assert 'location /exactcut/ {' in text
+    text = ops.nginx_config({'public_port': 80, 'backend_port': 18792}, base_path='/home')
+    assert 'location = /home {' in text
+    assert 'return 301 /home/;' in text
+    assert 'location /home/ {' in text
     assert 'proxy_pass http://127.0.0.1:18792;' in text
     assert 'listen ' not in text and 'server_name ' not in text
     assert 'client_max_body_size 15m;' in text

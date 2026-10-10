@@ -1,5 +1,7 @@
 # Exact Cut FBBM
 
+> 2026-10-10：本文网页入口示例统一为新默认 `/home`；历史验收记录不代表该路径已经上线。现有生产 runtime 与 nginx 的迁移由部署方处理，本次仅修改开发代码和文档。Cookie Path 改为 `/home/` 后，已登录用户需重新登录一次。
+
 当前开发、发布、备份及回滚以 [开发发布与回滚](docs/开发发布与回滚.md) 为准。生产使用固定发布目录，源码修改必须在独立开发库完成。
 
 轻量化、表格驱动的短剧精确剪辑交付工程：输入填写表和完整物料，按 Excel 时间线精确剪辑，完成格式与时长检查、标准命名、OSS上传、飞书排队以及CF-Ads/Facebook BM同步。
@@ -168,7 +170,7 @@ Hook 文案仍从 Excel 的「标题EN/Hook」列读取，不自动生成或改�
 
 ## Linux 容器部署
 
-Linux 的环境隔离、生产候选配置、字体与文档转换边界见 [Linux 运行说明](../docs/linux-portability.md)。镜像包含素材下载脚本，不需要 macOS、系统字体、textutil 或 Cloudflare Tunnel。首期 nginx 沿用80端口，提供 IP 的 `/exactcut/` 入口，后端仅监听本地 :18792；开发 :8793。首期仅维护开发、生产两份配置，配置与数据独立，生产启用下载、AI、飞书/FBBM 发布。Linux正式版本已上线，公网地址为 http://124.156.228.202/exactcut/ 。登录与工作台、真实多集下载/制作、AI Hook、QC和缓存复用验收通过；真实业务上传与飞书/FBBM最终发布仍需预览确认。版本与证据见[上线记录](../docs/server-deployment-2026-10-09.md)。
+Linux 的环境隔离、生产候选配置、字体与文档转换边界见 [Linux 运行说明](../docs/linux-portability.md)。镜像包含素材下载脚本，不需要 macOS、系统字体、textutil 或 Cloudflare Tunnel。首期 nginx 沿用80端口，提供 IP 的 `/home/` 入口，后端仅监听本地 :18792；开发 :8793。首期仅维护开发、生产两份配置，配置与数据独立，生产启用下载、AI、飞书/FBBM 发布。Linux正式版本已上线，公网地址为 http://124.156.228.202/home/ 。登录与工作台、真实多集下载/制作、AI Hook、QC和缓存复用验收通过；真实业务上传与飞书/FBBM最终发布仍需预览确认。版本与证据见[上线记录](../docs/server-deployment-2026-10-09.md)。
 
 本地开发使用独立配置，不读取旧 `.env`：
 

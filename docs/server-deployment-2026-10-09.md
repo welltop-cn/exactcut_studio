@@ -1,8 +1,10 @@
 # 东京服务器上线记录（2026-10-09）
 
+> 2026-10-10：本文网页入口示例统一为新默认 `/home`；历史验收记录不代表该路径已经上线。现有生产 runtime 与 nginx 的迁移由部署方处理，本次仅修改开发代码和文档。Cookie Path 改为 `/home/` 后，已登录用户需重新登录一次。
+
 **最新版本：**`linux-20261009-3`已上线，增加按账号首次创建默认项目及恢复上次项目，移除网页Excel入口。规则及最新验收见[首次进入与项目恢复](workspace-startup.md)。下文保留初次公网部署版本与媒体验收证据。
 
-公网地址：**http://124.156.228.202/exactcut/**。沿用现有nginx的80端口，以路径区分服务；`/exactcut`自动301到`/exactcut/`。原有`/paypal_dispute/`、`/domain-watch/`在变更前后均从公网验证为200。
+公网地址：**http://124.156.228.202/home/**。沿用现有nginx的80端口，以路径区分服务；`/home`自动301到`/home/`。原有`/paypal_dispute/`、`/domain-watch/`在变更前后均从公网验证为200。
 
 ## 正式版本
 
@@ -19,7 +21,7 @@
 
 部署根`/srv/exactcut`；唯一生产密钥文件`config/production.env`，运行配置`config/runtime.json`，机器参数`config/deployment.json`，均0600。密钥与数据不进入版本目录。应用限制仍为1CPU/2GiB；服务器规格建议见[服务器配置与实测](server-sizing.md)，本次没有修改编码preset或提高资源限制。
 
-生产`runtime.json`增加`web.base_path=/exactcut`，`deployment.json`的`public_port=80`，后端仍为`127.0.0.1:18792`。开发默认`web.base_path`为空，继续用8793和独立数据，不加载生产配置。
+生产`runtime.json`增加`web.base_path=/home`，`deployment.json`的`public_port=80`，后端仍为`127.0.0.1:18792`。开发默认`web.base_path`为 `/home`，继续用8793和独立数据，不加载生产配置。
 
 nginx片段位于`/etc/nginx/snippets/exactcut-production.conf`，由`linux-ops nginx`生成并include到既有`sites-available/domain-watch`的server块中。nginx保留前缀代理给应用，应用处理路径、登录跳转与Cookie作用域；静态资源、模板、API、图片和视频链接均支持前缀。独立8792站点已撤掉，最终无8792监听。
 
