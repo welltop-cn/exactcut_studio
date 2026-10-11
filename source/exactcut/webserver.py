@@ -402,7 +402,40 @@ def resolve_verified_delivery(job, result):
         save(original)
 
 
+def current_managed_verification(job, *, local_failure=False):
+    """Late callbacks cannot finish a replaced managed verification or attempt."""
+    if job.get('action') != 'verify-delivery' or not job.get('batch_id'): return True
+    m = workflow.material_versions
+    child = workflow.BATCHES / job['batch_id']
+    identity = m.internal(child)
+    if not identity: return True  # Legacy verification keeps its existing contract.
+    state = m.read(workflow.BATCHES / identity['parent_batch_id'])
+    event = state['outbox'].get(job['id'])
+    if (identity.get('kind') != 'delivery' or not event or event.get('kind') != 'verification'
+            or event.get('status') == 'superseded' or event.get('child_id') != child.name
+            or event.get('delivery_id') != identity.get('delivery_id')
+            or event.get('asset_id') != job.get('request_id')
+            or event.get('version_id') != identity.get('version_id')
+            or event.get('binding') != job.get('verification_only')):
+        return False
+    file = JOBS / (job['id'] + '.json')
+    if not file.exists(): return False
+    actual = read_json(file)
+    if any(actual.get(key) != job.get(key) for key in
+           ('id', 'batch_id', 'request_id', 'phase', 'action', 'verification_only')):
+        return False
+    if all(actual.get(key) == job.get(key) for key in ('attempt', 'process_token')): return True
+    # Admission increments attempt before opening the log / saving the launch.
+    # A known local failure there has no process; retain normal failure handling
+    # without accepting a callback older than the durable attempt.
+    return (local_failure and actual.get('status') == job.get('status') == 'queued'
+            and job.get('attempt') == actual.get('attempt', 0) + 1)
+
+
 def finish_job(job, code=None, message='执行进程已结束，可查看日志后重试', *, local_failure=False, scheduler=False):
+    # Lock-free authoritative snapshots; do not nest the media lock inside the
+    # scheduler's legacy locks or hold it while validating stage evidence.
+    if not current_managed_verification(job, local_failure=local_failure): return
     verify = stage_results.scheduler_verified if scheduler else stage_results.verified
     result = verify(job, JOBS, workflow.BATCHES, workflow.ROOT) if job.get('attempt') else None
     if result and result['status'] == 'waiting_resource':
