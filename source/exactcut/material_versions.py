@@ -480,6 +480,26 @@ def save_receipt(path, rid, record, video, receipt, *, original=False):
         _write(path, state)
 
 
+def runtime_message(status, *, has_preview=False, pending_changes=False, paused=False):
+    if paused and status in {'queued', 'producing', 'publishing'}:
+        message = '执行已暂停，可继续执行'
+    elif status == 'queued':
+        message = '制作任务已提交，正在排队'
+    elif status == 'producing':
+        message = '成片制作中，可在执行进度查看进展'
+    elif status == 'partial':
+        message = '部分素材制作失败，请在执行进度查看原因并重试'
+    elif status == 'publishing':
+        message = '成片正在上传 FBBM'
+    elif status == 'review' and pending_changes:
+        message = '配置已修改，待确认制作'
+    elif status == 'review':
+        return '成片已就绪，可播放查看；如需修改，可制作新版本'
+    else:
+        return '请检查并编辑制作内容，确认后开始制作'
+    return message + ('；已有成片仍可播放' if has_preview else '')
+
+
 def detail(path):
     from . import workflow as w
     from .intake import validate_draft, download_plan, clip_editor
@@ -574,7 +594,11 @@ def detail(path):
     events.sort(key=lambda event: event['at'])
     runtime = {'status': 'paused' if control['paused'] and status in w.ACTIVE else status,
                'underlying_status': status, 'paused': control['paused'], 'archived': control['archived'] or bool(state['deleted_at']),
-               'message': '当前成片保留；可在本项目编辑并制作新版本' if any(a.get('preview') for a in assets) else '请检查并编辑制作内容，确认后开始制作', 'updated_at': state['updated_at'],
+               'message': runtime_message(status, has_preview=any(a.get('preview') for a in assets),
+                                          pending_changes=any(not a['candidate_version'] and
+                                                              state['versions'].get(a['current_version'], {}).get('generation') != a['desired_generation']
+                                                              for a in state['assets'].values() if not a['deleted_at']),
+                                          paused=control['paused']), 'updated_at': state['updated_at'],
                'events': events, 'request_parallel': True, 'executor_running': 'processing' in candidates,
                'observation': {}, 'error_info': None,
                'download_complete': bool(downloads) and all(downloads)}

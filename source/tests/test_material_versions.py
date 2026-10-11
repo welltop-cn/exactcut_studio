@@ -733,6 +733,49 @@ def test_completed_managed_pair_reports_downloads_ready(workspace):
     assert m.detail(path)['runtime']['download_complete'] is True
 
 
+def test_managed_runtime_message_follows_execution_state(workspace):
+    m, path, state = enrolled()
+    assert '确认后开始制作' in m.detail(path)['runtime']['message']
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    queued = m.detail(path)['runtime']
+    assert queued['status'] == 'queued'
+    assert '排队' in queued['message']
+    assert '确认后开始制作' not in queued['message']
+    version = next(v for v in state['versions'].values() if v['status'] == 'queued')
+    version['status'] = 'processing'
+    m._write(path, state)
+    producing = m.detail(path)['runtime']
+    assert producing['status'] == 'producing'
+    assert '制作中' in producing['message']
+    assert '确认后开始制作' not in producing['message']
+
+
+def test_managed_runtime_message_separates_retained_preview_from_new_work(workspace):
+    m, path, state = enrolled(media=True)
+    ready = m.detail(path)['runtime']
+    assert ready['status'] == 'review'
+    assert '成片已就绪' in ready['message']
+    draft = copy.deepcopy(state['draft'])
+    draft['rows'][0]['hook_text'] += ' changed'
+    state = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    pending = m.detail(path)['runtime']
+    assert pending['status'] == 'review'
+    assert '待确认制作' in pending['message']
+    assert '已有成片仍可播放' in pending['message']
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    queued = m.detail(path)['runtime']
+    assert queued['status'] == 'queued'
+    assert '排队' in queued['message']
+    assert '已有成片仍可播放' in queued['message']
+    version = state['versions'][state['assets'][draft['rows'][0]['request_id']]['candidate_version']]
+    version['status'] = 'processing'
+    m._write(path, state)
+    producing = m.detail(path)['runtime']
+    assert producing['status'] == 'producing'
+    assert '制作中' in producing['message']
+    assert '已有成片仍可播放' in producing['message']
+
+
 def test_candidate_progress_ui_keeps_current_preview_separate():
     import shutil, subprocess
     source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
