@@ -546,6 +546,30 @@ def validate_draft(draft, source=''):
         return None, [str(exc)]
 
 
+
+def clip_editor(manifest):
+    """Read-only editor projection of explicit ranges; never resolve open ends."""
+    result = {}
+    for request in manifest.requests if manifest else []:
+        if not 1 <= len(request.timeline) <= 30:
+            continue
+        clips = []
+        for item in request.timeline:
+            if (item.type != 'episode' or item.full_episode or item.to_end
+                    or item.start_ms is None or item.end_ms is None
+                    or not 0 <= item.start_ms < item.end_ms < 60000000):
+                break
+            clip = {'episode': str(int(item.episode[2:]))}
+            for side, value in [('start', item.start_ms), ('end', item.end_ms)]:
+                minutes, rest = divmod(value, 60000)
+                seconds, milliseconds = divmod(rest, 1000)
+                clip.update({side + '_m': f'{minutes:02d}', side + '_s': f'{seconds:02d}',
+                             side + '_ms': f'{milliseconds:03d}'})
+            clips.append(clip)
+        else:
+            result[request.request_id] = clips
+    return result
+
 def timing_explanation(manifest, project_dir=None, *, wait=True):
     """Explain the parsed timeline without guessing unknown episode endings."""
     if manifest is None:

@@ -829,3 +829,56 @@ def test_production_events_follow_selected_version_without_old_history(workspace
     messages = [e['message'] for e in detail['assets'][0]['production_events']]
     assert messages == ([rid + '：旧成片记录'] if candidate_status is None else [] if candidate_status == 'queued' else [rid + '：本轮制作'])
     assert rid + '：旧成片记录' in [e['message'] for e in detail['runtime']['events']]
+
+
+def test_legacy_text_timeline_has_lossless_clip_editor_without_changing_draft(workspace):
+    from exactcut.intake import compile_clips, validate_draft
+    m, path, state = enrolled()
+    draft = copy.deepcopy(state['draft']); rid = draft['rows'][0]['request_id']
+    draft['rows'][0].pop('clips', None)
+    draft['rows'][0]['timeline_text'] = 'EP1 7s-37s\nEP2 00:01.234-00:03.456'
+    state = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    before = (path / 'media-state.json').read_bytes()
+    detail = m.detail(path)
+    assert detail['draft'] == state['draft']
+    edited = copy.deepcopy(detail['draft'])
+    edited['rows'][0]['clips'] = detail['clip_editor'][rid]
+    compile_clips(edited['rows'][0])
+    original, errors = validate_draft(state['draft'], 'fixture')
+    converted, changed_errors = validate_draft(edited, 'fixture')
+    assert not errors and not changed_errors
+    assert converted.requests[0].timeline == original.requests[0].timeline
+    assert (path / 'media-state.json').read_bytes() == before
+
+
+@pytest.mark.parametrize('timeline', ['EP1 全集', 'EP1 00:07-结尾', '字卡|测试|1.5s'])
+def test_clip_editor_does_not_reinterpret_open_ended_or_title_cards(workspace, timeline):
+    m, path, state = enrolled()
+    draft = copy.deepcopy(state['draft']); draft['rows'][0].pop('clips', None)
+    draft['rows'][0]['timeline_text'] = timeline
+    m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    assert not m.detail(path)['clip_editor']
+
+
+def test_managed_copy_starts_with_configuration_only(workspace):
+    m, path, state = enrolled(media=True)
+    (path / 'logs').mkdir(); (path / 'logs/old.log').write_text('old execution')
+    (path / 'cache').mkdir(); (path / 'cache/old.cache').write_text('old intermediate')
+    before = (path / 'media-state.json').read_bytes()
+    copied = w.clone_batch(path.name)
+    target = w.folder(copied['id'])
+    assert not (target / 'production').exists()
+    assert not (target / 'logs').exists() and not (target / 'cache').exists()
+    assert not (target / 'publications.json').exists()
+    assert copied['runtime']['status'] == 'draft'
+    assert all(not a.get('preview') and not a.get('version_id') and not a.get('candidate') for a in copied['assets'])
+    m.enroll(target)  # The HTTP new-batch handler enrolls a copied project.
+    copied = m.detail(target)
+    assert not m.read(target)['versions'] and not m.read(target)['outbox'] and not m.read(target)['deliveries']
+    assert copied['filename'] == '网页填写'
+    assert '当前成片保留' not in copied['runtime']['message']
+    assert all('开始制作' not in e['message'] for e in copied['runtime']['events'])
+    assert (path / 'media-state.json').read_bytes() == before
+    assert copied['draft']['rows'][0]['timeline_text'] == state['draft']['rows'][0]['timeline_text']
+    assert copied['draft']['rows'][0].get('hook_options') == state['draft']['rows'][0].get('hook_options')
+    assert copied['draft']['rows'][0]['request_id'] != state['draft']['rows'][0]['request_id']

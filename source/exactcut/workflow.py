@@ -654,7 +654,7 @@ def _clone_batch(batch_id, *, purpose='copy'):
         raise ValueError('请等待当前制作结束，再修改后重新制作')
     data = material_versions.detail(source) if managed else read_json(source / 'draft.json')
     if managed:
-        for key in ('assets', 'runtime', 'media_managed', 'deleted_assets', 'deleted_at', 'errors', 'plan', 'feedback', 'feedback_count', 'timing_explanation'):
+        for key in ('assets', 'runtime', 'media_managed', 'deleted_assets', 'deleted_at', 'errors', 'plan', 'feedback', 'feedback_count', 'timing_explanation', 'clip_editor'):
             data.pop(key, None)
         for row in data['draft']['rows']:
             row['request_id'] = 'R' + uuid.uuid4().hex
@@ -683,10 +683,10 @@ def _clone_batch(batch_id, *, purpose='copy'):
                     shutil.copyfileobj(incoming, outgoing); outgoing.flush(); os.fsync(outgoing.fileno())
             if file_sha256(target) != digest or file_sha256(original) != digest: raise ValueError('结尾图片副本校验失败')
             material_versions.sync_directory(target.parent)
-    data.update(id=batch_id, created_at=now_iso(), revision=1)
+    data.update(id=batch_id, filename='网页填写', created_at=now_iso(), revision=1)
     data.update(source_batch_id=source.name, source_revision=source_revision, clone_purpose=purpose)
     data.pop('imported_batches', None)
-    data['draft']['source_author'] = data['draft'].get('author', '')
+    data['draft'].pop('source_author', None)
     data['draft']['creator2'] = 'agent'
     allocate_sequences(data['draft'], batch_id, all_new=True)
     data['warnings'] = ['由原项目创建新草稿，原任务、日志与成片保留；素材序号已重新分配，请确认文件名与内容']

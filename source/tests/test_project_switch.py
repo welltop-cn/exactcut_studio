@@ -138,7 +138,7 @@ const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 let finishList,renders=0;
 const old={id:'a',revision:1,runtime:{updated_at:'2026-10-10T00:00:00Z'}};
 const ctx=vm.createContext({polling:false,selectedId:'a',current:old,
- openingBatchId:null,openingBatchRequest:1,busy:new Set(),dirty:false,
+ openingBatchId:null,openingBatchRequest:1,busy:new Set(),dirty:false,savedDraftBaseline:null,
  refreshBatches:()=>new Promise(r=>finishList=r),refreshQueue:async()=>{},prefetchSources:async()=>{},
  api:async()=>({...old,runtime:{updated_at:'2026-10-10T00:00:01Z'}}),$:()=>({}),
  renderRuntime(){renders++},renderEditor(){},refreshTiming(){},hookPreviews:new Map()});
@@ -151,4 +151,49 @@ vm.runInContext(source.slice(source.indexOf('async function poll('),source.index
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
     result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_rework_opens_editor_without_starting_or_copying_managed_project():
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    handler = next(line for line in source.splitlines() if line.startswith("for(const id of ['cloneButton','reworkButton'])"))
+    script = r'''
+const assert=require('node:assert/strict'),nodes={},calls=[];
+const $=id=>nodes[id]??={id};let dirty=false,selectedId='original',current={id:'original',media_managed:true},tab='progress';
+const operation=async(button,fn)=>fn(),toast=()=>{};
+const api=async(path,data)=>{calls.push({path,data});return {id:data.purpose==='repair'?'original':'copy',media_managed:true}};
+const openBatch=async id=>{selectedId=id;current={id,media_managed:true};tab=id==='original'?'progress':'editor'};
+const setTab=value=>tab=value;
+''' + handler + r'''
+(async()=>{
+ await nodes.reworkButton.onclick();assert.equal(tab,'editor');assert.equal(current.id,'original');
+ assert.equal(calls.length,1);assert.equal(calls[0].data.purpose,'repair');
+ await nodes.cloneButton.onclick();assert.equal(current.id,'copy');assert.equal(tab,'editor');
+ assert.equal(calls[1].data.purpose,'copy');assert.ok(!calls.some(c=>c.path.endsWith('/start')));
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+    result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_runtime_revision_does_not_rebuild_unchanged_editor():
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    code = next(line for line in source.splitlines() if line.startswith('async function refreshSelectedBatch('))
+    script = r'''
+const assert=require('node:assert/strict');let renders=0;
+let current={id:'a',media_managed:true,revision:1,draft:{text:'saved'},runtime:{updated_at:'2026-10-11T00:00:00Z'}};
+let savedDraftBaseline={id:'a',draft:JSON.stringify(current.draft)},selectedId='a',openingBatchId=null,openingBatchRequest=1,dirty=false;
+const busy=new Set(),hookPreviews=new Map();let validationDismissed=false;
+let response=structuredClone(current);response.revision=2;
+const api=async()=>structuredClone(response),renderRuntime=()=>{},refreshTiming=()=>{},renderEditor=()=>renders++;
+const rememberSavedDraft=item=>savedDraftBaseline={id:item.id,draft:JSON.stringify(item.draft)};
+''' + code + r'''
+(async()=>{
+ await refreshSelectedBatch();assert.equal(renders,0);assert.equal(current.revision,2);
+ response.revision=3;response.draft.text='external change';await refreshSelectedBatch();assert.equal(renders,1);
+ dirty=true;current.draft.text='unsaved';response.revision=4;response.draft.text='another edit';await refreshSelectedBatch();
+ assert.equal(current.draft.text,'unsaved');assert.equal(current.revision,3);assert.equal(renders,1);
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+    result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr

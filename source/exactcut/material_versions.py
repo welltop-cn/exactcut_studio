@@ -482,7 +482,7 @@ def save_receipt(path, rid, record, video, receipt, *, original=False):
 
 def detail(path):
     from . import workflow as w
-    from .intake import validate_draft, download_plan
+    from .intake import validate_draft, download_plan, clip_editor
     from .error_guidance import guidance, redact
     from urllib.parse import quote
     state = read(path)
@@ -574,14 +574,14 @@ def detail(path):
     events.sort(key=lambda event: event['at'])
     runtime = {'status': 'paused' if control['paused'] and status in w.ACTIVE else status,
                'underlying_status': status, 'paused': control['paused'], 'archived': control['archived'] or bool(state['deleted_at']),
-               'message': '当前成片保留；可在本项目编辑并制作新版本', 'updated_at': state['updated_at'],
+               'message': '当前成片保留；可在本项目编辑并制作新版本' if any(a.get('preview') for a in assets) else '请检查并编辑制作内容，确认后开始制作', 'updated_at': state['updated_at'],
                'events': events, 'request_parallel': True, 'executor_running': 'processing' in candidates,
                'observation': {}, 'error_info': None,
                'download_complete': bool(downloads) and all(downloads)}
     feedback = sorted([read_json(f) for f in w.FEEDBACK.glob(path.name + '-*.json')], key=lambda e: e['created_at'], reverse=True)
     document.update(revision=state['revision'], draft=copy.deepcopy(state['draft']), assets=assets,
                     media_managed=True, media_delivery_enabled=delivery_enabled(), deleted_at=state['deleted_at'], runtime=runtime, errors=errors,
-                    plan=download_plan(manifest) if manifest else None, timing_explanation=[], feedback=feedback,
+                    plan=download_plan(manifest) if manifest else None, clip_editor=clip_editor(manifest), timing_explanation=[], feedback=feedback,
                     feedback_count=len(feedback), deleted_assets=[{'request_id': a['asset_id'], 'title': a['row'].get('title_cn') or a['asset_id']}
                         for a in state['assets'].values() if a['deleted_at']])
     return document
