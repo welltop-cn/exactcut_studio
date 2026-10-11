@@ -97,6 +97,11 @@ assert.ok(done.includes('总耗时 200 秒，其中制作排队 60 秒'));
 assert.ok(!done.includes('等待 FBBM'));
 assert.ok(!done.includes('stage-track'));
 assert.ok(!done.includes('成片已就绪，可前往预览'));
+const reused=productionProgress({request_id:'r4',preview:'/old',production_scope:'reused',timing:{total_seconds:669,queue_seconds:438,complete:true}},{});
+assert.ok(reused.includes('沿用已有成片'));assert.ok(!reused.includes('669'));assert.ok(!reused.includes('438'));
+const pending=productionProgress({request_id:'r4',preview:'/old',production_scope:'pending',timing:{total_seconds:669}},{});
+assert.ok(pending.includes('配置已修改，待确认制作'));assert.ok(!pending.includes('669'));assert.ok(!pending.includes('制作完成'));
+
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

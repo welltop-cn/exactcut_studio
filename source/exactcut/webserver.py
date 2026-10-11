@@ -181,7 +181,8 @@ def asset_timing(request_id, jobs, *, now=None):
     if start is None:
         return {}
     complete = bool(render and render.get('status') == 'completed')
-    end = (render or {}).get('finished') or now
+    terminal = render or (preparation if preparation and preparation.get('status') in {'failed', 'interrupted'} else {})
+    end = terminal.get('finished') or now
     timing = {'total_seconds': max(0, int(end - start)), 'complete': complete}
     if render and render.get('created') is not None:
         timing['queue_seconds'] = max(0, int((render.get('started') or end) - render['created']))
@@ -194,7 +195,12 @@ def batch_response(batch_id, job=None):
     jobs = [item for item in stored_jobs() if item.get('batch_id') and parent_batch_id(item['batch_id']) == batch_id]
     media_state = workflow.material_versions.read(workflow.folder(batch_id)) if result.get('media_managed') else None
     for asset in result.get('assets', []):
-        asset['timing'] = asset_timing(asset['request_id'], jobs)
+        current_jobs = jobs
+        if media_state:
+            version = media_state['versions'].get(asset.get('version_id'), {})
+            child_id = version.get('child_id') or (batch_id if version.get('legacy') else None)
+            current_jobs = [j for j in jobs if child_id and j.get('batch_id') == child_id]
+        asset['timing'] = asset_timing(asset['request_id'], current_jobs)
         if media_state and asset.get('candidate'):
             candidate = asset['candidate']
             child_id = media_state['versions'][candidate['version_id']]['child_id']

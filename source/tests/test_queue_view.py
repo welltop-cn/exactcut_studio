@@ -96,3 +96,32 @@ def test_queue_endpoint_rejects_non_admin(monkeypatch):
     finally:
         server.shutdown()
         server.server_close()
+
+
+def test_managed_timing_is_bound_to_current_and_candidate_versions(monkeypatch):
+    from exactcut import material_versions as m, material_workers
+    result = {'media_managed': True, 'runtime': {'status': 'producing'}, 'assets': [
+        {'request_id': 'r', 'version_id': 'current', 'candidate': {'version_id': 'new'}}]}
+    state = {'versions': {'current': {'child_id': 'old-child'}, 'new': {'child_id': 'new-child'}}}
+    jobs = [
+        {'id': 'fetch', 'batch_id': 'old-child', 'phase': 'fetch', 'created': 10},
+        {'id': 'render', 'batch_id': 'old-child', 'phase': 'render', 'request_id': 'r',
+         'parent_id': 'fetch', 'created': 20, 'started': 30, 'finished': 50, 'status': 'completed'},
+        {'id': 'stale', 'batch_id': 'superseded-child', 'phase': 'render', 'request_id': 'r',
+         'created': 100, 'started': 150, 'finished': 900, 'status': 'completed'},
+    ]
+    monkeypatch.setattr(web.workflow, 'detail', lambda _: result)
+    monkeypatch.setattr(web.workflow, 'folder', lambda _: None)
+    monkeypatch.setattr(m, 'read', lambda _: state)
+    monkeypatch.setattr(material_workers, 'parent_batch_id', lambda _: 'a' * 32)
+    monkeypatch.setattr(web, 'stored_jobs', lambda: jobs)
+    monkeypatch.setattr(web, 'job_response', lambda _: {'queue_position': None})
+    asset = web.batch_response('a' * 32)['assets'][0]
+    assert asset['timing'] == {'total_seconds': 40, 'queue_seconds': 10, 'complete': True}
+    assert asset['candidate']['timing'] == {'complete': False}
+
+
+def test_failed_preparation_elapsed_time_stops_at_failure():
+    jobs = [{'id': 'fetch', 'phase': 'fetch', 'created': 100, 'finished': 125, 'status': 'failed'}]
+    assert web.asset_timing('r', jobs, now=500) == {'total_seconds': 25, 'complete': False}
+    assert web.asset_timing('r', jobs, now=900) == {'total_seconds': 25, 'complete': False}

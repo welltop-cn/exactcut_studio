@@ -254,6 +254,10 @@ def _mutation(path, data, action, operation):
                    'asset_ids': sorted(set(state['assets']) - before_assets),
                    'version_ids': sorted(set(state['versions']) - before_versions),
                    'delivery_ids': sorted(set(state['deliveries']) - before_deliveries)}
+        if action == 'confirm':
+            receipt['execution_version_ids'] = [a['candidate_version'] for a in state['assets'].values()
+                if not a['deleted_at'] and a['candidate_version']
+                and state['versions'][a['candidate_version']]['status'] in {'queued', 'processing'}]
         state['mutations'][key] = {'payload_sha256': digest, 'result': receipt}
         durable_write(path / 'media-state.json', state)
         return copy.deepcopy({**state, 'mutations': {}, 'mutation': receipt})
@@ -480,6 +484,15 @@ def save_receipt(path, rid, record, video, receipt, *, original=False):
         _write(path, state)
 
 
+def production_versions(state):
+    """Latest effective confirmation, retained across no-op confirms and promotion."""
+    receipts = [m.get('result', {}) for m in state.get('mutations', {}).values()]
+    confirmations = [r for r in receipts if r.get('action') == 'confirm'
+                     and r.get('execution_version_ids', r.get('version_ids'))]
+    latest = max(confirmations, key=lambda r: r['revision'], default={})
+    return set(latest.get('execution_version_ids', latest.get('version_ids', [])))
+
+
 def runtime_message(status, *, has_preview=False, pending_changes=False, paused=False):
     if paused and status in {'queued', 'producing', 'publishing'}:
         message = '执行已暂停，可继续执行'
@@ -512,6 +525,7 @@ def detail(path):
     from .progress import observation
     assets, candidates, downloads = [], [], []
     event_cache = {}
+    run_versions = production_versions(state)
     def runtime_events(history_path):
         if history_path not in event_cache:
             file = history_path / 'runtime.json'
@@ -522,6 +536,8 @@ def detail(path):
         current = state['versions'].get(asset['current_version'], {})
         candidate = state['versions'].get(asset['candidate_version'], {})
         record = current.get('record', {})
+        scope = ('run' if candidate else 'pending' if current.get('generation') != asset['desired_generation']
+                 else 'reused' if run_versions and current.get('version_id') not in run_versions else 'run')
         deliveries = [d for d in state['deliveries'].values() if d['asset_id'] == rid]
         latest = deliveries[-1] if deliveries else {}
         publication = latest.get('publication', {})
@@ -529,7 +545,7 @@ def detail(path):
         filename = current['manifest']['requests'][0]['output_filename'] if current else request.output_filename if request else ''
         item = {'request_id': rid, 'title': row.get('title_cn') or rid, 'filename': filename,
                 'status': record.get('status', 'pending'), 'sha256': record.get('output_sha256'),
-                'version_id': asset['current_version'], 'desired_generation': asset['desired_generation'],
+                'version_id': asset['current_version'], 'desired_generation': asset['desired_generation'], 'production_scope': scope,
                 'duration_ms': record.get('duration_ms'), 'stage_seconds': record.get('stage_seconds', {}),
                 'unit_checks': record.get('unit_checks', []), 'hook_warnings': record.get('hook_warnings', []),
                 'preview_warning': None, 'error': '', 'error_info': None, 'can_continue_fbbm': False,

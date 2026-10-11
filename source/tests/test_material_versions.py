@@ -149,6 +149,8 @@ def test_candidate_pair_freezes_by_copy_and_commit_is_idempotent(workspace):
     worker.stage_finish(job, 0)
     latest = m.read(path); current = latest['assets'][event['asset_id']]['current_version']
     assert current != old
+    assert m.production_versions(latest) == {current}
+    assert m.detail(path)['assets'][0]['production_scope'] == 'run'
     version = latest['versions'][current]
     frozen = Path(version['master_path'])
     assert frozen.read_bytes() == video.read_bytes() and frozen.stat().st_ino != video.stat().st_ino
@@ -787,6 +789,7 @@ let html=productionProgress(asset,{});assert.ok(html.includes('剪辑片段'));a
 asset.candidate={status:'failed',error:'upload failed'};html=productionProgress(asset,{});assert.ok(html.includes('制作失败'));assert.ok(html.includes('upload failed'));assert.ok(!html.includes('制作完成'));
 """
     summary = next(line for line in source.splitlines() if line.startswith("$('progressCount').textContent="))
+    summary = next(line for line in source.splitlines() if line.startswith("const runAssets=")) + summary
     script += "const current={assets:[asset]},r={},assets=current.assets.map(executionAsset),done=assets.filter(a=>a.preview).length;const box={};const $=()=>box;" + summary + "assert.ok(box.textContent.includes('1 条失败'));assert.ok(box.textContent.startsWith('0/1'));"
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
@@ -949,3 +952,53 @@ def test_managed_copy_starts_with_configuration_only(workspace):
     assert copied['draft']['rows'][0]['timeline_text'] == state['draft']['rows'][0]['timeline_text']
     assert copied['draft']['rows'][0].get('hook_options') == state['draft']['rows'][0].get('hook_options')
     assert copied['draft']['rows'][0]['request_id'] != state['draft']['rows'][0]['request_id']
+
+
+def test_production_round_receipts_survive_promotion_retry_and_noop():
+    m = module()
+    state = {'mutations': {
+        'first': {'result': {'action': 'confirm', 'revision': 2, 'version_ids': ['a', 'b']}},
+        'partial': {'result': {'action': 'confirm', 'revision': 4, 'version_ids': ['a2']}},
+        'noop': {'result': {'action': 'confirm', 'revision': 5, 'version_ids': [], 'execution_version_ids': []}},
+    }}
+    assert m.production_versions(state) == {'a2'}
+    state['mutations']['retry'] = {'result': {'action': 'confirm', 'revision': 6,
+                                            'version_ids': [], 'execution_version_ids': ['b']}}
+    assert m.production_versions(state) == {'b'}
+
+
+def test_saved_changes_do_not_report_old_current_as_this_round(workspace):
+    m, path, state = enrolled(media=True)
+    rid = state['draft']['rows'][0]['request_id']
+    draft = copy.deepcopy(state['draft'])
+    draft['rows'][0]['hook_text'] += ' changed'
+    saved = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    item = next(a for a in m.detail(path)['assets'] if a['request_id'] == rid)
+    assert item['production_scope'] == 'pending'
+    assert item['preview']  # Old preview remains available, separate from execution.
+    confirmed = m.confirm(path, {'revision': saved['revision'], 'mutation_id': token()})
+    assert confirmed['mutation']['execution_version_ids']
+    assert m.detail(path)['assets'][0]['production_scope'] == 'run'
+
+
+def test_partial_round_keeps_reused_asset_distinct_after_completion(workspace):
+    m, path, state = enrolled(media=True)
+    first = state['draft']['rows'][0]['request_id']
+    draft = copy.deepcopy(state['draft'])
+    extra = copy.deepcopy(draft['rows'][0]); extra.pop('request_id'); extra['seq'] = 2
+    draft['rows'].append(extra)
+    state = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    worker, child, event, job = candidate_job(path, state)
+    before = {a['request_id']: a for a in m.detail(path)['assets']}
+    assert before[first]['production_scope'] == 'reused'
+    assert before[event['asset_id']]['production_scope'] == 'run'
+    worker.stage_enter(job); rendered(child, event); worker.stage_finish(job, 0)
+    after = {a['request_id']: a for a in m.detail(path)['assets']}
+    assert after[first]['production_scope'] == 'reused'
+    assert after[event['asset_id']]['production_scope'] == 'run'
+    assert all(a['preview'] for a in after.values())
+    latest = m.read(path)
+    m.confirm(path, {'revision': latest['revision'], 'mutation_id': token()})
+    assert {a['request_id']: a['production_scope'] for a in m.detail(path)['assets']} == {
+        first: 'reused', event['asset_id']: 'run'}

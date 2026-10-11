@@ -200,6 +200,8 @@ assert.equal($('reviewCount').textContent,'2 条可预览 · 0 条反馈');
 assert.equal($('previewReadyTitle').textContent,'2 条成片可在线播放');
 assert.equal($('previewReady').hidden,false);
 assert.equal($('progressCount').textContent,'1/2 条制作完成 · 1 条制作中');
+current.assets[1].production_scope='reused';renderRuntime();
+assert.equal($('progressCount').textContent,'0/1 条制作完成 · 1 条沿用已有成片 · 1 条制作中');
 assert.ok($('steps').innerHTML.includes('class="step active">03<b>制作与预览'));
 current.assets=[current.assets[0]];renderRuntime();
 assert.equal($('previewReady').hidden,false);
