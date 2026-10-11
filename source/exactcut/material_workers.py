@@ -449,8 +449,9 @@ def retry_media_upload(batch_id, rid):
 def cancel_invalid_children(parent):
     """Best-effort resource release follows the authoritative invalidation."""
     import signal
-    from . import batch_control as control
+    from . import batch_control as control, workflow as w
     state = m.read(parent)
+    jobs_by_child = None
     for event in state['outbox'].values():
         if event['kind'] != 'candidate': continue
         asset = state['assets'][event['asset_id']]; version = state['versions'][event['version_id']]
@@ -458,4 +459,57 @@ def cancel_invalid_children(parent):
                    or version['child_id'] != event['child_id'])
         if not invalid: continue
         child = parent.parent / event['child_id']
-        if (child / 'draft.json').exists(): control.signal_children(child, signal.SIGKILL)
+        if (child / 'draft.json').exists():
+            if jobs_by_child is None:
+                jobs_by_child = {}
+                for file in (w.ROOT / '.web-state/jobs').glob('*.json'):
+                    jobs_by_child.setdefault(read_json(file).get('batch_id'), []).append(file)
+            control.signal_children(child, signal.SIGKILL)
+            cancel_queued_candidate(parent, event, child, job_files=jobs_by_child.get(child.name, []))
+
+
+def cancel_queued_candidate(parent, event, child, *, job_files=None):
+    """Retire only unlaunched/dead stages of an authoritatively invalid child."""
+    from . import workflow as w, batch_control as control, storage
+    if m.internal(child) != lineage(parent, event): return
+    jobs = w.ROOT / '.web-state/jobs'
+    job_files = list(jobs.glob('*.json')) if job_files is None else job_files
+    message = '候选已取消或被替代；原成片已保留'
+    cancelled = []
+    for file in job_files:
+        job = read_json(file)
+        retired = job.get('status') == 'interrupted' and job.get('error') == message
+        if (job.get('batch_id') != child.name or job.get('phase') not in {'fetch', 'render', 'media-upload'}
+                or (job.get('status') not in {'queued', 'waiting_resource'} and not retired)): continue
+        if retired:
+            runtime = read_json(child / 'runtime.json')
+            if runtime.get('status') not in w.ACTIVE and not runtime.get('executor_running'): continue
+        # Resource waits and recovered launch windows may have had a process.
+        # Unknown ownership or an undiscovered live token must fail closed.
+        if not control.belongs(job): continue
+        token = job.get('process_token')
+        if token and (not control.valid_token(token) or control.PROCESSES.find(token)): continue
+        if job.get('pid') and (not token or control.child_state(job) not in {None, 'Z'}): continue
+        with m.locked(parent):
+            state = m._read(parent)
+            asset = state['assets'][event['asset_id']]; version = state['versions'][event['version_id']]
+            invalid = (state['deleted_at'] or asset['deleted_at'] or version['status'] == 'superseded'
+                       or version['child_id'] != child.name)
+            if not invalid or read_json(file) != job: continue
+            if not retired:
+                job.update(status='interrupted', finished=time.time(), error=message)
+                m.durable_write(file, job)
+        storage.release(job['id'], jobs)
+        cancelled.append(job)
+    if not cancelled: return
+    # No legacy runtime/result lock is acquired while holding the parent lock.
+    # Running stages are still harvested by the existing scheduler exit path.
+    if any(job.get('batch_id') == child.name and job.get('status') == 'running'
+           for job in (read_json(file) for file in job_files)): return
+    for job in cancelled:
+        rid = job.get('request_id')
+        if rid:
+            record = w.result_records(child).get(rid, {})
+            fields = {} if record.get('status') in w.SAFE else {'status': 'failed', 'error': message}
+            w.end_execution(child, rid, **fields)
+    w.end_execution(child, status='interrupted', message=message)

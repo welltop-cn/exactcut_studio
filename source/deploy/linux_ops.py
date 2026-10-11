@@ -155,6 +155,18 @@ class Docker:
                      'web', '-m', 'exactcut.maintenance_verify', batch_id, request_id, sha256, '--once')
         return {'status': 'queried'}
 
+    def retire_candidate(self, root, release, settings, parent_id, child_id, job_id, *, apply=False):
+        # No production.env/config mounts and no network or service entrypoint.
+        require_media_compatibility(root, release, self)
+        command = ['docker', 'run', '--rm', '--network', 'none', '--read-only', '--tmpfs', '/tmp',
+                   '--cpus', '1', '--memory', '2g', '--pids-limit', '64',
+                   '-v', str(root / 'data') + ':/data', '--entrypoint', 'python',
+                   '-e', 'EXACTCUT_DATA_ROOT=/data', '-e', 'EXACTCUT_ENVIRONMENT=production',
+                   '-e', 'EXACTCUT_WORKER_ENABLED=0', '-e', 'EXACTCUT_ALLOW_EXTERNAL_WRITES=0',
+                   release['image'], '-m', 'exactcut.retire_candidate', parent_id, child_id, job_id]
+        if apply: command.append('--apply')
+        return json.loads(output(*command))
+
     def health(self, settings, version, timeout):
         opener = build_opener(ProxyHandler({}))
         deadline = time.monotonic() + timeout
@@ -400,6 +412,67 @@ def maintenance_request_lock(root):
         yield
 
 
+def retire_candidate_in_maintenance(root, version, parent_id, child_id, job_id, *, engine=None):
+    """Recover one stale never-launched candidate with the old worker stopped."""
+    if not all(isinstance(value, str) and re.fullmatch(r'[a-f0-9]{32}', value)
+               for value in (parent_id, child_id, job_id)):
+        raise ValueError('无效恢复身份')
+    engine = engine or Docker()
+    with operation_lock(root):
+        settings = read(root / 'config/deployment.json'); validate_resources(settings)
+        target = verify(root, version, engine)
+        current = verify(root, read(root / 'current.json').get('version'), engine)
+        require_stage_compatibility(root, target, engine)
+        require_media_compatibility(root, target, engine)
+        gate_file = root / 'data/.web-state/maintenance.json'
+        allowed = {f'data/.web-state/jobs/{job_id}.json',
+                   f'data/.web-state/batches/{child_id}/runtime.json'}
+        def exclusive():
+            if set(active_records(root)) - allowed or set(phase_blockers(root)) - {f'data/.web-state/jobs/{job_id}.json'}:
+                raise RuntimeError('仍有其他任务或交付阻断，禁止恢复')
+            for file in (root / 'data/.web-state/jobs').glob('*.json'):
+                job = read(file)
+                if file.name == job_id + '.json':
+                    if job.get('status') not in {'queued', 'interrupted'}:
+                        raise RuntimeError('目标任务已不再是未启动排队任务')
+                elif job.get('status') not in {'completed', 'failed', 'interrupted'}:
+                    raise RuntimeError('仍有其他未结束任务，禁止恢复')
+        exclusive()
+        engine.retire_candidate(root, target, settings, parent_id, child_id, job_id)
+        stopped = False
+        receipt = {'action': 'retire-candidate', 'at': datetime.now(timezone.utc).isoformat(),
+                   'executor_release': version, 'restored': current['version'], 'job_id': job_id}
+        try:
+            with write_barrier(root, 30) as gate:
+                exclusive()
+                # Mark before stop: even a partially failed stop must restore.
+                stopped = True; gate['maintenance'] = True
+                engine.stop(root, current, settings)
+            # The child acquires mutation.lock itself; do not keep the host lock.
+            exclusive()
+            result = engine.retire_candidate(root, target, settings, parent_id, child_id, job_id, apply=True)
+            require_phase_drained(root)
+            await_idle(root, 0)
+            receipt['status'] = 'retired'
+        except Exception:
+            receipt['status'] = 'failed'
+            raise
+        finally:
+            if stopped:
+                try:
+                    engine.apply(root, current, settings)
+                    engine.health(settings, current['version'], 60)
+                except Exception as exc:
+                    receipt['status'] = 'restore_failed'
+                    raise RuntimeError('恢复原服务失败；维护标记保留，请检查后恢复兼容版本') from exc
+                finally:
+                    write(root / 'history' / f'{time.time_ns()}-retire-candidate.json', receipt)
+        require_phase_drained(root)
+        await_idle(root, 0)
+        gate_file.unlink(missing_ok=True)
+        return result
+
+
 def verify_delivery_in_maintenance(root, version, batch_id, request_id, sha256, *, engine=None):
     """Drain saved delivery receipts even if the restored image has no new API."""
     engine = engine or Docker()
@@ -635,9 +708,11 @@ def main():
     sub.add_parser('recover').add_argument('--version', help='维护态下恢复到指定的兼容已封存版本')
     check = sub.add_parser('verify-delivery')
     for field in ('version', 'batch_id', 'request_id', 'sha256'): check.add_argument(field)
+    retire = sub.add_parser('retire-candidate')
+    for field in ('version', 'parent_id', 'child_id', 'job_id'): retire.add_argument(field)
     args = parser.parse_args()
     root = args.root.expanduser().resolve()
-    if args.command in {'build', 'publish', 'rollback', 'recover', 'verify-delivery'} and sys.platform != 'linux':
+    if args.command in {'build', 'publish', 'rollback', 'recover', 'verify-delivery', 'retire-candidate'} and sys.platform != 'linux':
         raise RuntimeError('此运维操作只适用于Linux Docker，不操作Mac历史服务')
     if args.command == 'init':
         result = initialize(root, args.runtime_config, instance=args.instance, backend_port=args.backend_port,
@@ -656,6 +731,8 @@ def main():
         result = transition(root, version, timeout=args.drain_timeout, health_timeout=args.health_timeout)
     elif args.command == 'verify-delivery':
         result = verify_delivery_in_maintenance(root, args.version, args.batch_id, args.request_id, args.sha256)
+    elif args.command == 'retire-candidate':
+        result = retire_candidate_in_maintenance(root, args.version, args.parent_id, args.child_id, args.job_id)
     elif args.command == 'recover':
         result = recover(root, version=args.version)
     elif args.command == 'nginx':
