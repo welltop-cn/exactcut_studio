@@ -38,7 +38,7 @@ for(const linked of ['', '#linked']){
  const ctx=vm.createContext({Promise,location:{hash:linked},$:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)},
  api:path=>{calls.push(path);if(path==='/api/me')return new Promise(r=>resolveMe=r);if(path==='/api/workspace')return new Promise(r=>resolveWorkspace=r);throw Error(path)},
  refreshBatches:async()=>{calls.push('list');return [{id:'linked'}]},openBatch:async(id,opts)=>{opened=[id,opts]},showEmptyWorkspace:()=>calls.push('empty'),toast:()=>{},poll:async()=>calls.push('poll')});
- vm.runInContext('let currentUser,polling=true;'+source.slice(source.indexOf('async function restoreWorkspace('),source.indexOf("$('retryWorkspace').onclick" )).replace(';setInterval(poll,3000);',';'),ctx);
+ vm.runInContext('let currentUser,polling=true;'+source.slice(source.indexOf('async function restoreWorkspace('),source.indexOf(';setInterval(')),ctx);
  assert.deepEqual(calls,['/api/me','/api/workspace']);
  resolveWorkspace({batch_id:null});await new Promise(setImmediate);
  assert(!calls.includes('list'),'list must wait for identity');

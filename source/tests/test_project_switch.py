@@ -19,7 +19,7 @@ const ctx=vm.createContext({
  document:{querySelectorAll:()=>[video]},window:{confirm:()=>true},
  api:(path,data)=>data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({resolve,reject})),
  renderBatches(){},showPage(name){nodes.page=name},renderEditor(){rendered.push(ctx.current.marker)},
- renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
+ controls(){},renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
 });
 vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
@@ -63,7 +63,7 @@ const ctx=vm.createContext({dirty:false,selectedId:null,current:null,batchCache:
  clearTimeout(){},$:id=>nodes[id]||(nodes[id]={querySelectorAll:()=>[]}),window:{confirm:()=>true},
  api:(path,data)=>data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({path,resolve,reject})),
  renderBatches(){},showPage(name){nodes.page=name},renderEditor(){rendered.push(ctx.current.id)},
- renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
+ controls(){},renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
 });
 vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
@@ -163,7 +163,7 @@ const $=id=>nodes[id]??={id};let dirty=false,selectedId='original',current={id:'
 const operation=async(button,fn)=>fn(),toast=()=>{};
 const api=async(path,data)=>{calls.push({path,data});return {id:data.purpose==='repair'?'original':'copy',media_managed:true}};
 const openBatch=async id=>{selectedId=id;current={id,media_managed:true};tab=id==='original'?'progress':'editor'};
-const setTab=value=>tab=value;
+const setTab=value=>tab=value;const controls=()=>{};
 ''' + handler + r'''
 (async()=>{
  await nodes.reworkButton.onclick();assert.equal(tab,'editor');assert.equal(current.id,'original');
@@ -194,6 +194,51 @@ const rememberSavedDraft=item=>savedDraftBaseline={id:item.id,draft:JSON.stringi
  dirty=true;current.draft.text='unsaved';response.revision=4;response.draft.text='another edit';await refreshSelectedBatch();
  assert.equal(current.draft.text,'unsaved');assert.equal(current.revision,3);assert.equal(renders,1);
 })().catch(e=>{console.error(e);process.exit(1)});
+'''
+    result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_detail_poll_retains_sources_until_same_draft_source_refresh_returns():
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    code = next(line for line in source.splitlines() if line.startswith('async function refreshSelectedBatch('))
+    script = r'''
+const assert=require('node:assert/strict');
+let current={id:'a',media_managed:true,revision:1,draft:{drama_id:'101494'},runtime:{updated_at:'2026-10-11T00:00:00Z'},source_prefetch:{episodes:[{episode:'EP1',status:'ready'}]},timing_explanation:[{request_id:'R1'}]};
+let savedDraftBaseline={id:'a',draft:JSON.stringify(current.draft)},selectedId='a',openingBatchId=null,openingBatchRequest=1,dirty=false;
+const busy=new Set(),hookPreviews=new Map();let validationDismissed=false;
+let response={...structuredClone(current),timing_explanation:[]};delete response.source_prefetch;
+const api=async()=>structuredClone(response),seen=[],refreshTiming=()=>{},renderEditor=()=>{};
+const renderRuntime=()=>seen.push(current.source_prefetch?.episodes[0]?.status);
+const rememberSavedDraft=item=>savedDraftBaseline={id:item.id,draft:JSON.stringify(item.draft)};
+''' + code + r'''
+(async()=>{
+ await refreshSelectedBatch();await refreshSelectedBatch();
+ assert.deepEqual(seen,['ready','ready']);assert.equal(current.timing_explanation.length,1);
+ response.revision=2;response.draft.drama_id='101495';await refreshSelectedBatch();
+ assert.equal(current.source_prefetch,undefined);assert.equal(current.timing_explanation.length,0);
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+    result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_scheduled_poll_slows_idle_and_stops_hidden_tabs():
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    code = next((line for line in source.splitlines() if line.startswith('function scheduledPoll(')), '')
+    assert code, 'Adaptive polling is missing'
+    script = r'''
+const assert=require('node:assert/strict');let now=100000,calls=0;const Date={now:()=>now};
+const document={hidden:false};let current={runtime:{status:'review'}},batchCache=[];
+const activeStatuses=['queued','downloading','indexing','producing','publishing'];
+const poll=()=>{calls++};
+''' + code + r'''
+scheduledPoll();assert.equal(calls,1);now+=3000;scheduledPoll();assert.equal(calls,1);
+now+=12000;scheduledPoll();assert.equal(calls,2);
+current.runtime.status='producing';now+=3000;scheduledPoll();assert.equal(calls,3);
+document.hidden=true;now+=60000;scheduledPoll();assert.equal(calls,3);
+document.hidden=false;scheduledPoll(true);assert.equal(calls,4);
+current.runtime.status='review';current.source_prefetch={episodes:[{status:'downloading'}]};now+=3000;scheduledPoll();assert.equal(calls,5);
 '''
     result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
     assert result.returncode == 0, result.stderr

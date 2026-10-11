@@ -250,7 +250,7 @@ for(const role of ['admin','producer']){
  const context=vm.createContext({URL,Date,document:{getElementById:get,baseURI:'http://fixture/home/'},
   api:async path=>{calls.push(path);return {role,name:'Fixture'}},restoreWorkspace:async()=>{},poll:async()=>{},toast:()=>{},showEmptyWorkspace:()=>{}});
  vm.runInContext(source.slice(0,source.indexOf('// Show hundredths')),context);
- const startup=source.slice(source.indexOf('(async()=>{try{'),source.indexOf(';setInterval(poll,3000)'));
+ const startup=source.slice(source.indexOf('(async()=>{try{'),source.indexOf(';setInterval('));
  await vm.runInContext('let currentUser;'+startup,context);
  assert.equal(get('usageNav').hidden,role!=='admin');
  vm.runInContext(source.slice(source.indexOf('function renderUsage(')),context);
