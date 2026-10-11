@@ -13,13 +13,15 @@ def workspace(tmp_path, monkeypatch):
     return tmp_path
 
 
-def test_web_form_compiles_minute_second_millisecond(workspace):
+def test_web_form_compiles_minute_second_millisecond(workspace, monkeypatch):
+    from exactcut import compiler
+    monkeypatch.setattr(compiler, 'production_date', lambda: '20261011')
     item = w.create_blank('马涛')
     path = w.folder(item['id'])
     stored = json.loads((path / 'draft.json').read_text())
     draft = stored['draft']
     assert draft['author'] == ''
-    assert draft['business_date'] == ''
+    assert draft['business_date'] == '20261011'
     assert draft['material_type'] == 'typezxraw'
     row = draft['rows'][0]
     assert 'composition' not in row

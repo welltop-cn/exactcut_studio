@@ -324,6 +324,7 @@ def allocate_sequences(draft, batch_id, *, all_new=False):
 def create_blank(author='', *, display_name=''):
     """Empty copy of the current editor. No spreadsheet and no model call."""
     from .intake import blank_clip
+    from .compiler import production_date
     batch_id = uuid.uuid4().hex
     path = BATCHES / batch_id
     path.mkdir(parents=True)
@@ -331,7 +332,7 @@ def create_blank(author='', *, display_name=''):
            'notes': '', 'timeline_text': '', 'source': '网页填写',
            'hook_options': {'mode': 'ai', 'style': 'auto', 'position': 'auto', 'duration_ms': None, 'manual_ranges': []},
            'clips': [blank_clip()]}
-    draft = {'drama_id': '', 'drama_title': '', 'business_date': '', 'author': '',
+    draft = {'drama_id': '', 'drama_title': '', 'business_date': production_date(), 'author': '',
              'creator2': 'agent', 'material_type': 'typezxraw', 'time_notation': 'seconds', 'rows': [row]}
     write_json_atomic(path / 'draft.json', {'id': batch_id, 'filename': '网页填写', 'display_name': display_name,
                                             'created_at': now_iso(), 'revision': 1,
