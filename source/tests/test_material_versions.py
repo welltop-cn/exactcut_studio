@@ -667,8 +667,32 @@ def test_pause_at_final_commit_can_retry_completed_pair_after_resume(chain, monk
 def test_managed_empty_draft_can_save_last_asset_deletion():
     import json, shutil, subprocess
     source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
-    code = source[source.index('function hasDraftData('):source.index('\nfunction ', source.index('function controls(') + 1)]
-    script = "const assert=require('node:assert/strict');const elements={};const $=id=>elements[id]??={};const busy=new Set();const activeStatuses=[];const document={querySelectorAll:()=>[]};let dirty=true;let current={media_managed:true,draft:{rows:[]},runtime:{status:'review'},assets:[],errors:[]};" + code + "\ncontrols();assert.equal($('saveButton').disabled,false);assert.equal($('confirmButton').disabled,true);"
+    code = source[source.index('function hasDraftIdentity('):source.index('\nfunction ', source.index('function controls(') + 1)]
+    script = "const assert=require('node:assert/strict');const elements={};const $=id=>elements[id]??={};const busy=new Set();const activeStatuses=[];const document={querySelectorAll:()=>[]};let dirty=true;let current={media_managed:true,draft:{drama_id:'101494',author:'编导',business_date:'20261011',rows:[]},runtime:{status:'review'},assets:[],errors:[]};" + code + "\ncontrols();assert.equal($('saveButton').disabled,false);assert.equal($('confirmButton').disabled,true);"
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_new_managed_project_requires_identity_and_clip_time_before_save():
+    import shutil, subprocess
+    source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
+    code = source[source.index('function hasDraftIdentity('):source.index('\nfunction ', source.index('function controls(') + 1)]
+    script = """const assert=require('node:assert/strict');const elements={};const $=id=>elements[id]??={};
+const busy=new Set(),activeStatuses=[],document={querySelectorAll:()=>[]};
+let current={media_managed:true,runtime:{status:'draft'},assets:[],errors:[],draft:{
+  drama_id:'',author:'',business_date:'',rows:[{clips:[{episode:'1',start_m:'00',start_s:'00',start_ms:'000',end_m:'00',end_s:'00',end_ms:'000'}]}]
+}};
+""" + code + """
+controls();assert.equal($('saveButton').disabled,true);
+Object.assign(current.draft,{drama_id:'101494',author:'编导',business_date:'20261011'});
+controls();assert.equal($('saveButton').disabled,true);
+current.draft.rows[0].clips[0].end_s='20';
+controls();assert.equal($('saveButton').disabled,false);
+current.draft.rows[0].clips[0].end_s='00';
+controls();assert.equal($('saveButton').disabled,true);
+current.runtime.status='review';current.draft.rows=[];current.draft.drama_id='';
+controls();assert.equal($('saveButton').disabled,true);
+"""
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 
