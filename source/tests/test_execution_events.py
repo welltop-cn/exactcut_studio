@@ -163,7 +163,7 @@ assert.ok(materialEventDetails({request_id:'r1',status:'failed'},{events:[]}).in
     assert result.returncode == 0, result.stderr
 
 
-def test_readable_history_separates_operations_and_technical_steps():
+def test_readable_history_shows_steps_once_in_one_timeline():
     source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
     helpers = source[source.index('function materialLabel('):source.index('function productionProgress(')]
     script = r'''
@@ -178,10 +178,30 @@ const html=materialEventDetails({request_id:'R1',hook_emphasis:{source:'user_non
 const main=html.split('<details class="technical-events"')[0];
 assert.ok(main.includes('查看制作过程'));assert.ok(main.includes('添加字幕'));
 assert.ok(main.includes('AI 重点：未启用'));assert.ok(!main.includes('素材1：'));
-assert.ok(!main.includes('检查可用空间'));assert.ok(!main.includes('AI 理解重点词'));
-assert.ok(html.includes('技术详情'));assert.ok(html.includes('检查可用空间'));
+assert.ok(main.includes('检查可用空间'));assert.ok(main.includes('AI 理解重点词'));
+assert.ok(!html.includes('技术详情'));assert.equal((html.match(/检查可用空间/g)||[]).length,1);
 assert.equal(emphasisSummary({source:'ai_semantic',highlights:[],cache_reused:true}),'AI 重点：复用已有分析，无需强调');
 assert.equal(emphasisSummary({source:'ai_semantic',highlights:[]}), 'AI 重点：分析完成，无需强调');
+'''
+    result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_current_production_events_do_not_fall_back_to_previous_version():
+    source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
+    helpers = source[source.index('function materialLabel('):source.index('function productionProgress(')]
+    script = r'''
+const assert=require('node:assert/strict');
+const current={id:'b',draft:{rows:[{request_id:'R1',seq:1}]},assets:[]};
+const esc=s=>String(s??'');
+''' + helpers + r'''
+const old={at:'2026-10-11T01:28:48Z',message:'R1：已完成，待预览'};
+const fresh={at:'2026-10-11T01:50:42Z',message:'R1：开始制作'};
+const html=materialEventDetails({request_id:'R1',production_events:[fresh]}, {events:[old,fresh]});
+assert.ok(!html.includes('制作完成，可以预览'));
+assert.ok(!html.includes('技术详情'));
+assert.ok(!materialEventDetails({request_id:'R1',production_events:[]}, {events:[old]}).includes('制作完成，可以预览'));
+assert.ok(materialEventDetails({request_id:'R1'}, {events:[old]}).includes('制作完成，可以预览'));
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr

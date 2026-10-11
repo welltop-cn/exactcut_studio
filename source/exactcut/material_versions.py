@@ -491,6 +491,12 @@ def detail(path):
     requests = {r.request_id: r for r in manifest.requests} if manifest else {}
     from .progress import observation
     assets, candidates, downloads = [], [], []
+    event_cache = {}
+    def runtime_events(history_path):
+        if history_path not in event_cache:
+            file = history_path / 'runtime.json'
+            event_cache[history_path] = read_json(file).get('events', []) if file.exists() else []
+        return event_cache[history_path]
     for row in state['draft']['rows']:
         rid = row['request_id']; asset = state['assets'][rid]
         current = state['versions'].get(asset['current_version'], {})
@@ -508,6 +514,14 @@ def detail(path):
                 'unit_checks': record.get('unit_checks', []), 'hook_warnings': record.get('hook_warnings', []),
                 'preview_warning': None, 'error': '', 'error_info': None, 'can_continue_fbbm': False,
                 'deliveries': [{'delivery_id': d['delivery_id'], 'version_id': d['version_id'], 'status': d['status']} for d in deliveries]}
+        # A stable asset ID survives rerenders; its timeline must follow the
+        # candidate (even before materialization), otherwise the retained current.
+        production = candidate or current
+        history_path = w.BATCHES / production['child_id'] if production.get('child_id') else path if production.get('legacy') else None
+        item['production_events'] = [
+            {**event, 'message': redact(event.get('message'))}
+            for event in (runtime_events(history_path) if history_path else [])
+            if str(event.get('message', '')).startswith((rid + '：', rid + ':', rid + ' '))]
         item['base_cache_reused'] = record.get('base_cache_reused', False)
         item['planned_duration_ms'] = record.get('planned_duration_ms', (record.get('qc') or {}).get('expected_duration_ms'))
         emphasis = record.get('hook_emphasis')
@@ -555,9 +569,7 @@ def detail(path):
     events = list(state.get('events', []))
     history_paths = {path, *(w.BATCHES / v['child_id'] for v in state['versions'].values() if v.get('child_id'))}
     for history_path in history_paths:
-        file = history_path / 'runtime.json'
-        if file.exists():
-            events.extend(read_json(file).get('events', []))
+        events.extend(runtime_events(history_path))
     events = [{**event, 'message': redact(event.get('message'))} for event in events]
     events.sort(key=lambda event: event['at'])
     runtime = {'status': 'paused' if control['paused'] and status in w.ACTIVE else status,

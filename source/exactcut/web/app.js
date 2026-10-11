@@ -135,13 +135,13 @@ function eventMarkup(events){return events.map(e=>{const date=new Date(e.at),tim
 function operationEvents(events){return displayEvents(events).filter(e=>/项目已创建|内容已确认|已请求暂停|已请求继续|已继续执行|已归档|已取消归档|重试/.test(e.message))}
 function emphasisSummary(info){if(!info)return '';if(info.source==='user_none')return 'AI 重点：未启用';if(info.source==='manual')return '字幕重点：手动设置';if(info.source!=='ai_semantic')return 'AI 重点：未获得有效分析结果';return 'AI 重点：'+(info.cache_reused?'复用已有分析':'分析完成')+((info.highlights||[]).length?'，'+info.highlights.map(h=>h.phrase).join('、'):'，无需强调')}
 function materialEventDetails(a,r){
- const events=displayEvents(r.events,a.request_id).map(e=>({...e,message:e.message.slice(a.request_id.length).replace(/^[：:\s]+/,'')}));
+ const events=displayEvents(a.production_events??r.events,a.request_id).map(e=>({...e,message:e.message.slice(a.request_id.length).replace(/^[：:\s]+/,'')}));
  const names={'开始制作':'开始制作','剪辑片段':'剪辑画面','拼接片段':'拼接画面','排版与合成 Hook':'添加字幕','格式与时长检查':'检查成片','生成轻量预览':'生成预览','已完成，待预览':'制作完成，可以预览','waiting_resource':'等待资源，稍后继续'};
- const main=events.filter(e=>names[e.message]||/失败|错误|暂停|恢复|重试/.test(e.message)).map(e=>({...e,message:names[e.message]||e.message}));
+ const main=events.map(e=>({...e,message:names[e.message]||e.message}));
  const emphasis=emphasisSummary(a.hook_emphasis);
- return `<details class="material-events" data-event-request="${esc(a.request_id)}" data-event-batch="${esc(current?.id||'')}" data-failed="${a.status==='failed'}" ${a.status==='failed'?'open':''}><summary>查看制作过程</summary>${eventMarkup(main)}${emphasis?`<p class="hint">${esc(emphasis)}</p>`:''}<details class="technical-events"><summary>技术详情</summary>${eventMarkup(events)}</details></details>`;
+ return `<details class="material-events" data-event-request="${esc(a.request_id)}" data-event-batch="${esc(current?.id||'')}" data-failed="${a.status==='failed'}" ${a.status==='failed'?'open':''}><summary>查看制作过程</summary>${eventMarkup(main)}${emphasis?`<p class="hint">${esc(emphasis)}</p>`:''}</details>`;
 }
-function renderRequestProgress(assets,r){const box=$('requestProgress'),previous=new Map([...box.querySelectorAll('details[data-event-request]')].filter(d=>d.dataset.eventBatch===current.id).map(d=>[d.dataset.eventRequest,{open:d.open,failed:d.dataset.failed,technical:d.querySelector?.('.technical-events')?.open}]));box.innerHTML=assets.map(a=>productionProgress(a,r)).join('');for(const d of box.querySelectorAll('details[data-event-request]')){const old=previous.get(d.dataset.eventRequest);if(old){if(!(d.dataset.failed==='true'&&old.failed!=='true'))d.open=old.open;const technical=d.querySelector?.('.technical-events');if(technical)technical.open=!!old.technical}}}
+function renderRequestProgress(assets,r){const box=$('requestProgress'),previous=new Map([...box.querySelectorAll('details[data-event-request]')].filter(d=>d.dataset.eventBatch===current.id).map(d=>[d.dataset.eventRequest,{open:d.open,failed:d.dataset.failed}]));box.innerHTML=assets.map(a=>productionProgress(a,r)).join('');for(const d of box.querySelectorAll('details[data-event-request]')){const old=previous.get(d.dataset.eventRequest);if(old){if(!(d.dataset.failed==='true'&&old.failed!=='true'))d.open=old.open}}}
 function executionAsset(a){return a.candidate?{...a,...a.candidate,preview:null,candidate:null,timing:a.candidate.timing||{}}:a}
 function productionProgress(a,r){
  a=executionAsset(a);

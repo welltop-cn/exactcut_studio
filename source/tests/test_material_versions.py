@@ -805,3 +805,27 @@ def test_managed_save_allocates_sequences_around_existing_completed_project(work
     assert saved['draft']['rows'][0]['seq'] != original['draft']['rows'][0]['seq']
     confirmed = m.confirm(path, {'revision': saved['revision'], 'mutation_id': token()})
     assert confirmed['assets'][draft['rows'][0]['request_id']]['candidate_version']
+
+
+@pytest.mark.parametrize('candidate_status', ['queued', 'processing', 'failed', 'current', None])
+def test_production_events_follow_selected_version_without_old_history(workspace, candidate_status):
+    m, path, state = enrolled(media=True)
+    rid = state['draft']['rows'][0]['request_id']
+    write_json_atomic(path / 'runtime.json', {'events': [{'at': '2026-10-11T01:28:48+00:00', 'message': rid + '：旧成片记录'}]})
+    if candidate_status is not None:
+        draft = copy.deepcopy(state['draft']); draft['drama_title'] += '新版'
+        state = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+        state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+        vid = state['assets'][rid]['candidate_version']
+        version = state['versions'][vid]
+        child = w.BATCHES / version['child_id']; child.mkdir(exist_ok=True)
+        if candidate_status != 'queued':
+            write_json_atomic(child / 'runtime.json', {'events': [{'at': '2026-10-11T01:50:42+00:00', 'message': rid + '：本轮制作'}]})
+        version['status'] = candidate_status
+        if candidate_status == 'current':
+            state['assets'][rid].update(current_version=vid, candidate_version=None)
+        m._write(path, state)
+    detail = m.detail(path)
+    messages = [e['message'] for e in detail['assets'][0]['production_events']]
+    assert messages == ([rid + '：旧成片记录'] if candidate_status is None else [] if candidate_status == 'queued' else [rid + '：本轮制作'])
+    assert rid + '：旧成片记录' in [e['message'] for e in detail['runtime']['events']]
