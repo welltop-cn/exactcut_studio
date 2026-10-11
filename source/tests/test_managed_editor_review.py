@@ -207,4 +207,6 @@ current.assets=[current.assets[0]];renderRuntime();
 assert.equal($('previewReady').hidden,false);
 assert.equal($('reviewTab').textContent,'成片预览 (1)');
 assert.equal($('progressCount').textContent,'0/1 条制作完成 · 1 条制作中');
+current.assets=[{request_id:'r2',preview:'/old',production_scope:'reused'}];renderRuntime();
+assert.equal($('progressCount').textContent,'1 条沿用已有成片，本轮无需制作');
 """)

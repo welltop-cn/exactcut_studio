@@ -101,6 +101,12 @@ const reused=productionProgress({request_id:'r4',preview:'/old',production_scope
 assert.ok(reused.includes('沿用已有成片'));assert.ok(!reused.includes('669'));assert.ok(!reused.includes('438'));
 const pending=productionProgress({request_id:'r4',preview:'/old',production_scope:'pending',timing:{total_seconds:669}},{});
 assert.ok(pending.includes('配置已修改，待确认制作'));assert.ok(!pending.includes('669'));assert.ok(!pending.includes('制作完成'));
+assert.ok(!pending.includes('查看制作过程'));
+const fresh=productionProgress({request_id:'new',production_scope:'pending',hook_emphasis:{source:'ai_semantic',highlights:[{phrase:'旧重点'}]}},{});
+assert.ok(fresh.includes('待确认制作'));assert.ok(!fresh.includes('配置已修改'));assert.ok(!fresh.includes('仍可预览'));assert.ok(!fresh.includes('旧重点'));assert.ok(!fresh.includes('查看制作过程'));
+const rerender=productionProgress({request_id:'r1',hook_emphasis:{source:'ai_semantic',highlights:[{phrase:'旧重点'}]},candidate:{status:'processing',stage:'base_cut'}},{});
+assert.ok(!rerender.includes('旧重点'));
+
 
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
