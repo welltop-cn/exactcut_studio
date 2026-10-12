@@ -28,7 +28,9 @@ def guidance(message, stage=None, *, continuation=False):
         return None
     lower = str(message).lower()
     code, title, action = 'unknown', '本次执行未完成', '查看技术详情；制作失败可重试，需修改内容时请创建新草稿。'
-    if stage == 'fbbm' and str(message).startswith('待核实：'):
+    if stage == 'fbbm' and str(message).startswith('状态查询暂时失败，将自动重试：'):
+        code, title, action = 'delivery_read_retry', '状态查询暂时不可用', '系统将自动查询原交付记录，无需重新上传；超过查询期限后会提示人工核实。'
+    elif stage == 'fbbm' and str(message).startswith('待核实：'):
         code, title, action = 'delivery_unverified', '交付结果待核实', '请联系管理员核实原交付记录；已有成片可继续播放和下载。'
     elif any(s in lower for s in ('空间', 'no space', 'disk full')):
         code, title, action = 'disk_space', '可用磁盘空间不足', '在空间管理中预览并清理可回收缓存，或释放磁盘空间后重试。'

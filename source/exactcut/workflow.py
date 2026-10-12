@@ -1216,7 +1216,7 @@ def upload(batch_id, request_id):
 def poll(batch_id, request_id):
     material_versions.reject_legacy_write(folder(batch_id))
     """One guarded sync (which may ingest/resync/write), then release the lane."""
-    from .publish import sync_record_once, verify_record_once, guarded_delivery
+    from .publish import sync_record_once, verify_record_once, guarded_delivery, TransientDeliveryReadError
     path = folder(batch_id)
     with execution(path, request_id, phase='poll'):
         manifest, request = request_for(path, request_id)
@@ -1247,6 +1247,7 @@ def poll(batch_id, request_id):
             if result.get('record_id') != record_id:
                 raise ValueError('同步返回记录与交付意图不一致')
             entry['intent'].update(status='verified', verified_at=now_iso())
+            entry.pop('error', None)
             previous = entry.get('fbbm') or {}
             changed = any(result.get(key) != previous.get(key) for key in ('action', 'video_id', 'material_id', 'fb_status'))
             entry['fbbm'] = result
@@ -1262,10 +1263,29 @@ def poll(batch_id, request_id):
                 raise RuntimeError('FBBM 同步失败，请查看平台原因后继续查询原记录')
             else: entry['status'] = 'fbbm_queued'
         except Exception as exc:
-            unknown = attempted or delivery_blocked(entry) or bool(entry.get('verification_only') or entry.get('verification_history'))
-            entry.update(status='unverified' if unknown else 'publish_failed', error=('待核实：' if unknown else '') + str(exc))
-            diag.event('fbbm.failed', level='error', batch_id=batch_id, request_id=request_id,
-                       unknown_delivery=unknown, error=exc)
+            retry_binding = None
+            if isinstance(exc, TransientDeliveryReadError):
+                try:
+                    retry_binding = verification_binding(entry)
+                    if entry.get('verification_only') and retry_binding != entry['verification_only']:
+                        retry_binding = None
+                except ValueError:
+                    pass
+            if retry_binding:
+                # Preserve the original write intent. All subsequent attempts use
+                # only its saved identities, never ingest/resync/update again.
+                if not entry.get('verification_only'):
+                    entry.setdefault('verification_history', []).append(copy.deepcopy(entry['intent']))
+                entry.update(verification_only=retry_binding, status='fbbm_queued',
+                             error='状态查询暂时失败，将自动重试：' + str(exc))
+                entry['intent'] = {'phase': 'verification', 'status': 'verified',
+                                   **retry_binding, 'created_at': now_iso()}
+                diag.event('fbbm.read_deferred', level='warning', batch_id=batch_id, request_id=request_id, error=exc)
+            else:
+                unknown = attempted or delivery_blocked(entry) or bool(entry.get('verification_only') or entry.get('verification_history'))
+                entry.update(status='unverified' if unknown else 'publish_failed', error=('待核实：' if unknown else '') + str(exc))
+                diag.event('fbbm.failed', level='error', batch_id=batch_id, request_id=request_id,
+                           unknown_delivery=unknown, error=exc)
         metrics = entry.setdefault('stage_seconds', {})
         metrics['fbbm'] = round(metrics.get('fbbm', 0) + time.monotonic() - started, 3)
         publication_state(path, manifest, request_id, entry)
