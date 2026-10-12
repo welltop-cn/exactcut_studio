@@ -508,6 +508,8 @@ def runtime_message(status, *, has_preview=False, pending_changes=False, paused=
         message = '交付结果待核实，已停止上传；请联系管理员核实后继续'
     elif status == 'publish_failed':
         message = '上传失败，请查看原因后重试上传 FBBM'
+    elif status == 'complete':
+        return '全部素材已入库，可在 FBBM 使用'
     elif status == 'review' and pending_changes:
         message = '配置已修改，待确认制作'
     elif status == 'review':
@@ -604,6 +606,9 @@ def detail(path):
                 item['error_info'] = guidance(publication['error'], 'fbbm')
         assets.append(item)
     status = 'producing' if 'processing' in candidates else 'queued' if 'queued' in candidates else 'partial' if 'failed' in candidates else 'review' if any(a.get('preview') for a in assets) else 'draft'
+    pending_changes = any(not a['candidate_version'] and
+                          state['versions'].get(a['current_version'], {}).get('generation') != a['desired_generation']
+                          for a in state['assets'].values() if not a['deleted_at'])
     delivery_statuses = {a['status'] for a in assets}
     if any(d['status'] in {'pending', 'upload_queued', 'uploading', 'fbbm_queued'} for d in state['deliveries'].values()):
         status = 'publishing'
@@ -612,6 +617,8 @@ def detail(path):
         status = 'unverified'
     elif 'publish_failed' in delivery_statuses and status not in {'producing', 'queued', 'partial'}:
         status = 'publish_failed'
+    elif status == 'review' and not candidates and not pending_changes and delivery_statuses == {'fbbm_ready'}:
+        status = 'complete'
     control = state['control']
     events = list(state.get('events', []))
     history_paths = {path, *(w.BATCHES / v['child_id'] for v in state['versions'].values() if v.get('child_id'))}
@@ -622,9 +629,7 @@ def detail(path):
     runtime = {'status': 'paused' if control['paused'] and status in w.ACTIVE else status,
                'underlying_status': status, 'paused': control['paused'], 'archived': control['archived'] or bool(state['deleted_at']),
                'message': runtime_message(status, has_preview=any(a.get('preview') for a in assets),
-                                          pending_changes=any(not a['candidate_version'] and
-                                                              state['versions'].get(a['current_version'], {}).get('generation') != a['desired_generation']
-                                                              for a in state['assets'].values() if not a['deleted_at']),
+                                          pending_changes=pending_changes,
                                           paused=control['paused']), 'updated_at': state['updated_at'],
                'events': events, 'request_parallel': True, 'executor_running': 'processing' in candidates,
                'observation': {}, 'error_info': None,
