@@ -121,7 +121,7 @@ def base_render(tmp_path, monkeypatch):
         return renderer.render_request(project, request, timeline, tmp_path / f'{name}.mp4',
                                        config, progress=progress)
 
-    return SimpleNamespace(project=project, root=tmp_path, render=render, cuts=cuts)
+    return SimpleNamespace(project=project, root=tmp_path, render=render, cuts=cuts, config=config)
 
 
 def test_same_cut_different_hook_overlays_overlap_and_generate_base_once(base_render, monkeypatch):
@@ -193,3 +193,14 @@ def test_cleanup_can_evict_base_without_deleting_active_overlay_input(base_rende
     assert result['base_cache_reused'] is cached
     assert len(base_render.cuts) == 1
     assert len(inputs) == 1 and not inputs[0].exists()
+
+
+def test_encoder_threads_change_reuses_base_cache(base_render):
+    base_render.config['media'] = {'encoder_threads': 4}
+    first = base_render.render('first')
+    base_render.config['media']['encoder_threads'] = 8
+    second = base_render.render('second')
+    assert first['base_cache_reused'] is False
+    assert second['base_cache_reused'] is True
+    assert second['base_cache_key'] == first['base_cache_key']
+    assert len(base_render.cuts) == 1

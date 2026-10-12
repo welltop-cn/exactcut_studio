@@ -17,6 +17,9 @@
     "source_evict_below_gib": 20,
     "episode_budget_gib": 2
   },
+  "media": {
+    "encoder_threads": 4
+  },
   "render": {
     "width": 1080,
     "height": 1920,

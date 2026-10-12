@@ -24,6 +24,50 @@ def test_ffmpeg_caps_each_input_and_output_without_changing_source_command(monke
         assert emitted[emitted.index(flag)+1] == '1'
 
 
+@pytest.mark.parametrize('config,threads', [({}, 4), ({'media': {}}, 4),
+                                         ({'media': {'encoder_threads': 1}}, 1),
+                                         ({'media': {'encoder_threads': 8}}, 8)])
+def test_ffmpeg_encoder_config_preserves_decoder_filter_caps(monkeypatch, config, threads):
+    monkeypatch.setattr(media, 'load_config', lambda: config)
+    command = ['ffmpeg', '-y', '-i', 'one.mp4', '-i', 'two.mp4', '-c:v', 'libx264', 'out.mp4']
+    original = command.copy()
+    emitted = media.bounded_ffmpeg(command)
+    assert command == original
+    assert emitted == ['ffmpeg', '-filter_threads', '1', '-filter_complex_threads', '1',
+                       '-y', '-threads', '1', '-i', 'one.mp4', '-threads', '1', '-i', 'two.mp4',
+                       '-c:v', 'libx264', '-threads', str(threads), 'out.mp4']
+
+
+@pytest.mark.parametrize('value', [0, -1, 9, True, False, 4.0, '4', None, [], {}])
+def test_ffmpeg_rejects_invalid_encoder_threads(monkeypatch, value):
+    monkeypatch.setattr(media, 'load_config', lambda: {'media': {'encoder_threads': value}})
+    with pytest.raises(ValueError, match='media.encoder_threads'):
+        media.bounded_ffmpeg(['ffmpeg', '-i', 'in.mp4', 'out.mp4'])
+
+
+@pytest.mark.parametrize('section', [None, [], 'invalid', 4, True])
+def test_ffmpeg_rejects_invalid_media_section(monkeypatch, section):
+    monkeypatch.setattr(media, 'load_config', lambda: {'media': section})
+    with pytest.raises(ValueError, match='media'):
+        media.bounded_ffmpeg(['ffmpeg', '-i', 'in.mp4', 'out.mp4'])
+
+
+@pytest.mark.parametrize('command', [[], ['ffprobe', 'in.mp4'], ['other', 'out.mp4']])
+def test_non_ffmpeg_commands_do_not_load_media_config(monkeypatch, command):
+    monkeypatch.setattr(media, 'load_config', lambda: pytest.fail('non-ffmpeg must not load config'))
+    assert media.bounded_ffmpeg(command) is command
+
+
+def test_encoder_threads_uses_central_config_override(tmp_path, monkeypatch):
+    monkeypatch.delenv('EXACTCUT_CONFIG_FILE', raising=False)
+    from exactcut.util import load_config
+    assert load_config()['media']['encoder_threads'] == 4
+    path = tmp_path / 'config.json'
+    path.write_text(json.dumps({'media': {'encoder_threads': 8}}))
+    monkeypatch.setenv('EXACTCUT_CONFIG_FILE', str(path))
+    assert media.bounded_ffmpeg(['ffmpeg', '-i', 'in.mp4', 'out.mp4'])[-3:] == ['-threads', '8', 'out.mp4']
+
+
 def test_real_multiinput_media_transcode_with_caps(tmp_path):
     output = tmp_path / 'test.mp4'
     media.run_checked(['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=96x96:r=12:d=0.5',
