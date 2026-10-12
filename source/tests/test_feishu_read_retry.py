@@ -137,3 +137,23 @@ def test_read_retry_guidance_does_not_request_reupload():
     result = guidance('状态查询暂时失败，将自动重试：1255001', 'fbbm')
     assert result['code'] == 'delivery_read_retry'
     assert '无需重新上传' in result['action']
+
+
+@pytest.mark.parametrize("paused", [False, True])
+def test_managed_read_retry_banner_matches_query_state(workspace, monkeypatch, paused):
+    from test_material_versions import enrolled, token
+    from exactcut import material_versions as m
+    monkeypatch.setattr(m, 'delivery_enabled', lambda: True)
+    m, path, state = enrolled(media=True)
+    rid = state['draft']['rows'][0]['request_id']; vid = state['assets'][rid]['current_version']
+    state = m.queue_delivery(path, dict(revision=state['revision'], mutation_id=token(), request_id=rid,
+                                       version_id=vid, sha256=state['versions'][vid]['record']['output_sha256']))
+    delivery = next(iter(state['deliveries'].values()))
+    delivery.update(status='fbbm_queued', publication={'error': '状态查询暂时失败，将自动重试：1255001'})
+    state['control']['paused'] = paused
+    m._write(path, state)
+    detail = m.detail(path)
+    assert detail['runtime']['status'] == ('paused' if paused else 'publishing')
+    assert ('自动重试' in detail['runtime']['message']) is not paused
+    assert '正在上传' not in detail['runtime']['message']
+    assert m._blocked(m.read(path))
