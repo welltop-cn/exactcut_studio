@@ -48,6 +48,11 @@ def _request_fingerprint(project_dir: Path, request: Any, config: dict[str, Any]
                 if source_cache is not None:
                     source_cache[str(source)] = {'identity': identity, 'sha256': digest}
             sources.append({"path": str(source), "sha256": digest})
+    ending = getattr(request, 'ending', None)
+    if ending is not None and ending.mode == 'image':
+        from .ending import image_file
+        image = image_file(project_dir, ending)
+        sources.append({'path': str(image), 'sha256': file_sha256(image)})
     # Operational log retention does not change media bytes or cache identity.
     media_config = {key: value for key, value in config.items() if key not in {'logging', 'preview'}}
     return json_sha256({"pipeline": "exact_timeline_v3_unit_qc", "request": request.model_dump(mode="json"), "sources": sources, "config": media_config})

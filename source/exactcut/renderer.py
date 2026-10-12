@@ -75,11 +75,16 @@ def _render_episode_unit(source: Path, start_ms: int, end_ms: int, output: Path,
 def _render_card_unit(text: str, duration_ms: int, output: Path, render: dict[str, Any], work: Path) -> None:
     png = work / f"{output.stem}.png"
     _make_card_png(png, text, int(render["width"]), int(render["height"]))
+    _render_still_unit(png, duration_ms, output, render)
+
+
+def _render_still_unit(png: Path, duration_ms: int, output: Path, render: dict[str, Any], *, sar: str | None = None) -> None:
     duration = duration_ms / 1000
+    vf = (f'setsar={sar},' if sar else '') + 'format=yuv420p'
     run_checked([
         "ffmpeg", "-y", "-v", "error", "-loop", "1", "-framerate", str(render["fps"]), "-i", str(png),
         "-f", "lavfi", "-i", f"anullsrc=r={render['audio_rate']}:cl=stereo", "-t", f"{duration:.3f}",
-        "-map", "0:v:0", "-map", "1:a:0", "-vf", "format=yuv420p", "-c:v", render["video_codec"],
+        "-map", "0:v:0", "-map", "1:a:0", "-vf", vf, "-c:v", render["video_codec"],
         "-preset", render["preset"], "-crf", str(render["crf"]), "-c:a", render["audio_codec"],
         "-ar", str(render["audio_rate"]), "-ac", str(render["audio_channels"]), str(output),
     ])
@@ -340,13 +345,44 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
             timings['frame_sampling'] = round(time.monotonic()-started,3)
         started = time.monotonic()
         step('hook_overlay', base_cache_reused=reused)
-        hook_visual = _apply_hook(request_base,request.hook_text,output,render,work,emphasis=emphasis,
+        ending = getattr(request, 'ending', None)
+        has_ending = ending is not None and ending.mode != 'none'
+        hook_output = work/'hooked.mp4' if has_ending else output
+        hook_visual = _apply_hook(request_base,request.hook_text,hook_output,render,work,emphasis=emphasis,
                                  options=options,frames=frames,cache_dir=project_dir/'cache/hook-placement',
                                  preview_decision=preview_decision, normalized_input=True)
         timings['hook_overlay'] = round(time.monotonic()-started,3)
         if hook_visual and coverage:hook_visual['sampling']=coverage
+        expected_ms = meta['expected_duration_ms']
+        boundaries = list(meta['edit_boundaries_ms'])
+        checks = list(meta['unit_checks'])
+        ending_visual = None
+        if has_ending:
+            from .ending import still_image
+            started = time.monotonic()
+            step('ending_overlay')
+            png = still_image(project_dir, request_base, ending, render, work)
+            unit = work/'ending.mp4'
+            from fractions import Fraction
+            video = next(s for s in ffprobe(hook_output)['streams'] if s['codec_type'] == 'video')
+            sar = video.get('sample_aspect_ratio')
+            sar = str(Fraction(sar.replace(':', '/'))) if sar and sar != 'N/A' else None
+            _render_still_unit(png, ending.duration_ms, unit, render, sar=sar)
+            actual_ms = duration_ms(unit)
+            if abs(actual_ms-ending.duration_ms) > max(50, round(2000/float(render['fps']))):
+                raise ValidationError('结尾时长不符，未进入拼接')
+            boundaries.append(expected_ms)
+            expected_ms += ending.duration_ms
+            checks.append({'segment': len(safe_timeline)+1, 'type': 'ending',
+                           'expected_ms': ending.duration_ms, 'actual_ms': actual_ms})
+            _concat_units([hook_output, unit], output, render, expected_ms)
+            if abs(duration_ms(output)-expected_ms) > int(render['duration_tolerance_ms']):
+                raise ValidationError('追加结尾后的计划与实际时长不一致')
+            ending_visual = {**ending.model_dump(mode='json'), 'start_ms': meta['expected_duration_ms'],
+                             'image_sha256': file_sha256(png)}
+            timings['ending_overlay'] = round(time.monotonic()-started, 3)
     from .storage import cleanup, data_root
     if project_dir.is_relative_to(data_root()):cleanup(data_root())
-    return {'expected_duration_ms':meta['expected_duration_ms'],'edit_boundaries_ms':meta['edit_boundaries_ms'],
-            'unit_checks':meta['unit_checks'],'timeline':safe_timeline,'hook_visual':hook_visual,
+    return {'expected_duration_ms':expected_ms,'edit_boundaries_ms':boundaries,
+            'unit_checks':checks,'timeline':safe_timeline,'hook_visual':hook_visual,'ending_visual':ending_visual,
             'base_cache_reused':reused,'base_cache_key':key,'stage_seconds':timings}

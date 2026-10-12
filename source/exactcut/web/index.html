@@ -137,6 +137,30 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 .batch-actions{bottom:10px}
 .batch-card:has(.batch-actions button:nth-child(2)) .batch{padding-bottom:39px}
 .batch-card:has(.batch-actions button:nth-child(2)) .batch-actions{bottom:8px}
+
+/* Keep each material's opening, story and ending as three clear peer groups. */
+.material-flow,.compact-request .requestbody.material-flow{display:grid;grid-template-columns:minmax(0,1fr);gap:12px;padding:14px;background:#f7f9f9}
+.material-section{min-width:0;border:1px solid #d7e3e4;border-radius:10px;background:#fff;overflow:hidden}
+.material-section-head{display:flex;align-items:center;gap:10px;padding:10px 14px;background:#edf5f4;border-bottom:1px solid #dce8e6}
+.material-step{display:flex;align-items:center;justify-content:center;width:26px;height:26px;flex-shrink:0;border-radius:8px;background:#d8ebe7;color:#086b64;font-size:12px;font-weight:700}
+.material-section-head h3{margin:0;font-size:15px}.material-section-head p{margin:3px 0 0;font-size:12px;line-height:1.5}
+.material-section-body{padding:14px}.material-section-body>label:not(:first-child){margin-top:16px}
+.material-section .compact-hook{height:72px;min-height:72px}
+.material-section .hook-settings{margin:12px 0 0;padding:0;border:0}
+.hook-display{border:1px solid var(--line);border-radius:8px;background:#f9fbfb;margin-bottom:0}
+.hook-display>summary{padding:10px 12px;cursor:pointer;font-size:13px;font-weight:600}
+.hook-display>summary .hint{font-weight:400;margin-left:10px}
+.hook-display-body{padding:4px 16px 16px}.hook-display-body>.fields{grid-template-columns:repeat(3,minmax(0,1fr))}
+.hook-display-body .hook-typography{background:white}.hook-display-body>p{margin:10px 0}
+.material-section .timing-explanation{margin-top:12px;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:#f9fbfb}
+.material-section .timing-explanation>summary{cursor:pointer;font-size:13px}
+.ending-settings .material-section-body>select{max-width:480px}.ending-settings input[type=number]{max-width:180px}
+.ending-settings textarea{max-width:800px;min-height:88px;height:88px}.ending-settings .ending-preview{max-width:min(240px,100%);max-height:300px;object-fit:contain}
+.material-section-head>div{display:flex;align-items:baseline;flex-wrap:wrap;gap:4px 12px}.material-section-head h3,.composition-card .material-section-head h3{margin:0}.material-section-head p{margin:0}
+.material-section .hook-settings{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:10px;align-items:start}
+.material-section .hook-settings>button{padding:10px 14px}.material-section .hook-preview-result{grid-column:1/-1;max-width:none}.material-section .hook-preview-result>p:first-child{margin:0}.material-section .hook-preview-result:has(.hook-preview-image){max-width:420px}
+.ending-main-fields{display:grid;grid-template-columns:minmax(0,480px) 180px;gap:14px}.ending-main-fields label{margin-top:0}
+@media(max-width:700px){.material-section .hook-settings{grid-template-columns:1fr}.material-section .hook-settings>button{justify-self:start}.ending-main-fields{grid-template-columns:1fr}.material-flow,.compact-request .requestbody.material-flow{padding:10px;gap:12px}.material-section-head,.material-section-body{padding:14px}.hook-display>summary .hint{display:block;margin:4px 0 0 16px}.hook-display-body>.fields{grid-template-columns:1fr}}
 </style></head><body><header><div><strong>素材工作台</strong></div><div class="actions"><div class="header-group"><button id="helpNav" class="helper-nav-btn" type="button" title="制作流程与疑难解答">🤖 制作助手</button><button id="feedbackNav" class="header-btn" title="查看成片反馈汇总">📊 反馈汇总</button></div><span id="connection" class="header-connection">正在连接</span><span class="header-divider" aria-hidden="true"></span><div class="header-group"><span id="accountName" class="account-pill"></span><button id="usageNav" class="header-btn" hidden>用量</button><button id="storageNav" class="header-btn" hidden>磁盘与缓存</button><button id="accountsNav" class="header-btn" hidden>账户管理</button><button id="logoutButton" class="header-btn logout-btn">退出登录</button></div></div></header><div class="shell"><aside><button id="newBatch">＋ 新建项目</button><div class="eyebrow">制作批次</div><nav class="tabs"><button class="tab active" id="currentBatches">当前项目</button><button class="tab" id="archivedBatches">已归档</button></nav><div id="batchList"><p class="hint">正在加载…</p></div></aside><main>
 <section id="emptyWorkspace"><h1 id="emptyWorkspaceTitle">正在打开项目…</h1><p id="emptyWorkspaceHint" class="hint">正在恢复你的工作台。</p><button id="retryWorkspace" class="secondary" hidden>重试</button></section>
 <section id="workspace" hidden><div class="topline"><div><div class="eyebrow" id="batchName"></div><h1 id="batchTitle"></h1></div><div class="workspace-header-right"><span id="batchStatus" class="badge"></span><div class="actions project-actions"><button id="pauseButton" class="secondary" hidden>暂停执行</button><button id="resumeButton" hidden>继续执行</button><button id="archiveButton" class="secondary">归档项目</button><button id="unarchiveButton" class="secondary" hidden>复原项目</button><span class="hint" id="controlHint" hidden></span></div></div></div><div id="steps" class="flow"></div><div id="statusBanner" class="status-banner"><div id="liveMessage" class="notice" role="status"></div><div id="previewReady" class="preview-actions" hidden><span id="previewReadyTitle" hidden></span><button id="previewButton" class="secondary" hidden>生成轻量预览</button><button id="openPreview">▶ 播放成片</button></div></div><nav class="tabs"><button class="tab active" data-tab="editor">标准化内容</button><button class="tab" data-tab="progress">执行进度</button><button class="tab" data-tab="review">成片预览</button></nav>

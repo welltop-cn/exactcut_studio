@@ -374,6 +374,7 @@ def save_ending_image(batch_id, request_id, payload):
 
 
 def ending_image_file(batch_id, request_id):
+    from .ending import row_ending
     if not re.fullmatch(r'[\w-]{1,80}', request_id or ''):
         raise ValueError('需求编号无效')
     parent = folder(batch_id)
@@ -381,13 +382,13 @@ def ending_image_file(batch_id, request_id):
         state = material_versions.read(parent)
         asset = state['assets'].get(request_id)
         if state['deleted_at'] or not asset or asset['deleted_at']: raise ValueError('素材不存在')
-        name = (asset['row'].get('composition') or {}).get('ending', {}).get('image', '')
+        name = row_ending(asset['row']).get('image', '')
     else:
         rows = read_json(parent / 'draft.json')['draft']['rows']
         row = next((row for row in rows if row['request_id'] == request_id), {})
-        name = (row.get('composition') or {}).get('ending', {}).get('image', '')
+        name = row_ending(row).get('image', '')
     if name:
-        if not re.fullmatch(r'[\w.-]{1,75}\.(png|jpg|webp)', name): raise ValueError('结尾图片路径无效')
+        if not re.fullmatch(r'[\w.-]{1,80}\.(png|jpg|webp)', name): raise ValueError('结尾图片路径无效')
         target = parent / 'endings' / name
         if target.is_symlink() or not target.resolve().is_relative_to(parent.resolve()) or not target.is_file():
             raise ValueError('结尾图片不存在或路径无效')
@@ -666,13 +667,14 @@ def _clone_batch(batch_id, *, purpose='copy'):
     source_xlsx = source / 'source.xlsx'
     if source_xlsx.is_file():
         (path / 'source.xlsx').write_bytes(source_xlsx.read_bytes())
-    if managed:
+    if (source / 'endings').is_dir():
         # Only referenced inputs enter the copy; historical images stay with
         # their original project. Exclusive creation never overwrites a file.
         for row in data['draft']['rows']:
-            name = (row.get('composition') or {}).get('ending', {}).get('image', '')
+            from .ending import row_ending
+            name = row_ending(row).get('image', '')
             if not name: continue
-            if not re.fullmatch(r'[\w.-]{1,75}\.(png|jpg|webp)', name): raise ValueError('结尾图片路径无效')
+            if not re.fullmatch(r'[\w.-]{1,80}\.(png|jpg|webp)', name): raise ValueError('结尾图片路径无效')
             original = source / 'endings' / name
             if original.is_symlink() or not original.resolve().is_relative_to(source.resolve()): raise ValueError('结尾图片路径无效')
             digest = file_sha256(original)
@@ -757,6 +759,8 @@ def _start_batch(batch_id, revision):
     if errors:raise ValueError('\n'.join(errors))
     initialize_project(project, manifest)
     if not (path / 'confirmed.json').exists():
+        from .ending import snapshot_images
+        snapshot_images(path, project, manifest)
         write_json_atomic(path / 'confirmed.json', manifest.model_dump(mode='json'))
         write_json_atomic(path / 'confirmation.json', {'at': now_iso(), 'revision': revision})
     update(path, 'queued', '内容已确认，等待下载与制作', plan=download_plan(manifest),

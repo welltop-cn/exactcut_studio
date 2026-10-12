@@ -5,7 +5,7 @@ STAGES = {'source_check': '校验原片', 'storage_check': '检查可用空间',
           'rendering': '准备渲染', 'ai_emphasis': 'AI 理解重点词',
           'base_cache_check': '校验剪辑缓存', 'base_cut': '剪辑片段',
           'concat': '拼接片段', 'frame_sampling': '抽样检查 Hook 遮挡',
-          'hook_overlay': '排版与合成 Hook', 'qc': '格式与时长检查',
+          'hook_overlay': '排版与合成 Hook', 'ending_overlay': '合成静态片尾', 'qc': '格式与时长检查',
           'preview': '生成轻量预览', 'upload': '上传文件',
           'fbbm': '等待 FBBM 处理', 'download': '获取正片',
           'qc_passed': '已完成，待预览', 'failed': '制作失败', 'reused': '复用已检查成片'}

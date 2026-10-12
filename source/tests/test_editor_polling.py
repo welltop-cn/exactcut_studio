@@ -72,3 +72,35 @@ def test_text_timeline_opens_as_editable_clip_fields_without_implicit_draft_chan
             assert page.locator("#sourcePrefetch").is_hidden()
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize('failure', ['error', 'download'])
+def test_new_timing_error_opens_previously_collapsed_review(failure):
+    playwright = pytest.importorskip('playwright.sync_api')
+    source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
+    helpers = '\n'.join(line for line in source.splitlines() if line.startswith((
+        'function refreshClipTiming(', 'function timingTable(', 'function seconds(',
+        'function clock(', 'function esc(')))
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        try:
+            page = browser.new_page()
+            page.set_content('<div data-timing-index="0"></div>')
+            page.evaluate("globalThis.esc=String;\n" + helpers + '''
+                globalThis.timing={segments:[{segment:1,type:'episode',episode:'EP1',
+                  start_ms:0,end_ms:2000,duration_ms:2000,error:'',source_status:'missing'}],
+                  planned_duration_ms:2000};
+                function timingMarkup(i){return `<div data-timing-index="${i}">${timingTable(timing,'')}</div>`;}
+                refreshClipTiming(0);
+            ''')
+            assert page.locator('details').get_attribute('open') is None
+            assert '待核对' in page.locator('summary').inner_text()
+            if failure == 'error':
+                page.evaluate("timing.segments[0].error='终点超出原片时长';refreshClipTiming(0)")
+                assert page.get_by_role('cell', name='终点超出原片时长').is_visible()
+            else:
+                page.evaluate("timing.segments[0].source_status='failed';refreshClipTiming(0)")
+                assert page.get_by_role('cell', name='下载失败，可重试').is_visible()
+                assert '下载失败' in page.locator('summary').inner_text()
+        finally:
+            browser.close()

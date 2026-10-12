@@ -375,6 +375,8 @@ def confirm(path, data):
     snapshot = read(path)
     manifest, errors = validate_draft(snapshot['draft'], str(path / 'source.xlsx'))
     if errors or manifest is None: raise ValueError('\n'.join(errors))
+    from .ending import snapshot_images
+    snapshot_images(path, w.ROOT / 'projects' / manifest.drama_id, manifest)
     serialized = manifest.model_dump(mode='json')
     from .material_workers import local_pair_valid
     retryable = {rid for rid, asset in snapshot['assets'].items()

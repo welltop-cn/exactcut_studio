@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 from .hook_options import HookOptions
 from .hook_emphasis import plain_hook
+from .ending import EndingOptions
 
 
 class TimelineItem(BaseModel):
@@ -46,6 +47,7 @@ class CutRequest(BaseModel):
     title_cn: str = ""
     hook_text: str = ""
     hook_options: HookOptions = Field(default_factory=HookOptions)
+    ending: EndingOptions | None = None
     structure: str = "顺叙"
     notes: str = ""
     seq: int = Field(gt=0)

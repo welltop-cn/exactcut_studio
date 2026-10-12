@@ -343,7 +343,7 @@ def blank_composition():
 def compile_composition(row):
     """Turn the step-2 form into the hook and timeline the current cutter already reads.
 
-    Size, length, and the ending image stay on the row. They are not added to the timeline.
+    The ending stays separate from the episode timeline and its base-cut cache.
     """
     composition = row.get('composition')
     if not isinstance(composition, dict):
@@ -386,7 +386,7 @@ def compile_composition(row):
         'opening': {'text': text, 'style': style, 'size': size, 'length': length, 'position': position,
                     'duration_s': duration_s},
         'plots': clean_plots or [{'episode': '', 'start': '', 'end': ''}],
-        'ending': {'guide': str(ending.get('guide') or '').replace('\r', '').strip()[:200], 'image': image},
+        'ending': {**ending, 'guide': str(ending.get('guide') or '').replace('\r', '').strip(), 'image': image},
     }
     row['hook_text'] = text
     typography = {key: value for key, value in (row.get('hook_options') or {}).items()
@@ -532,6 +532,7 @@ def validate_draft(draft, source=''):
             filename = build_material_filename(business_date, str(draft.get('material_type') or 'typezxraw'), str(draft.get('author', '')), 'agent', seq, drama_id)
             requests.append(CutRequest(request_id=request_id, seq=seq, output_filename=filename, timeline=timeline,
                                        hook_options=row.get('hook_options') or {},
+                                       ending=row.get('ending') or (row.get('composition') or {}).get('ending') or None,
                                        **{k: str(row.get(k, '')) for k in ('title_cn', 'hook_text', 'structure', 'notes')}))
         except (ValueError, TypeError, RuntimeError) as exc:
             errors.append(f'素材 {i}：{exc}')
@@ -592,7 +593,10 @@ def timing_explanation(manifest, project_dir=None, *, wait=True):
             segments.append({'segment': index, 'type': item['type'], 'episode': item['episode'],
                              'start_ms': item['start_ms'], 'end_ms': item['end_ms'],
                              'text': item['text'], 'duration_ms': duration, **state})
-        result.append({'request_id': request.request_id, 'segments': segments,
+        ending = getattr(request, 'ending', None)  # Prefetch also passes timeline-only projections.
+        ending_ms = ending.duration_ms if ending and ending.mode != 'none' else 0
+        known += ending_ms
+        result.append({'request_id': request.request_id, 'segments': segments, 'ending_duration_ms': ending_ms,
                        'known_duration_ms': known, 'pending_endings': pending,
                        'planned_duration_ms': None if pending else known})
     return result
