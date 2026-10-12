@@ -84,6 +84,10 @@ const encoding=productionProgress({request_id:'r1',status:'processing',stage:'ho
 assert.ok(encoding.includes('已用时'));
 assert.ok(encoding.includes('<progress aria-label='));
 assert.ok(!encoding.includes('value='));
+const ending=productionProgress({request_id:'r1',status:'processing',stage:'ending_overlay'},{});
+assert.ok(ending.includes('<span class="current" aria-current="step">静态片尾</span>'));
+assert.ok(ending.includes('<span class="reached" >字幕合成</span>'));
+assert.ok(ending.includes('<span class="" >质检</span>'));
 const queued=productionProgress({request_id:'r2',status:'pending'},{});
 assert.ok(queued.includes('等待制作位置'));
 assert.ok(!queued.includes('<progress'));

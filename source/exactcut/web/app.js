@@ -179,7 +179,7 @@ function productionProgress(a,r){
  a=executionAsset(a);
  const done=!!a.preview,failed=a.status==='failed',paused=!!(r.paused||r.archived||r.status==='resume_queued'),running=a.status==='processing'&&!paused&&!done;
  const o=a.observation||{},d=o.details||{},stage=a.stage;
- const groups=[['准备',['source_check','storage_check','rendering','ai_emphasis','base_cache_check']],['剪辑拼接',['base_cut','concat']],['字幕合成',['frame_sampling','hook_overlay']],['质检',['qc']],['生成预览',['preview']]];
+ const groups=[['准备',['source_check','storage_check','rendering','ai_emphasis','base_cache_check']],['剪辑拼接',['base_cut','concat']],['字幕合成',['frame_sampling','hook_overlay']],['静态片尾',['ending_overlay']],['质检',['qc']],['生成预览',['preview']]];
  const active=done?groups.length:groups.findIndex(g=>g[1].includes(stage));
  const label=a.production_scope==='pending'?(a.retainedPreview?'配置已修改，待确认制作':'待确认制作'):done&&a.production_scope==='reused'?'沿用已有成片':done?'制作完成':failed?'制作失败':paused?'已暂停':running?(stageNames[stage]||'制作中'):'等待制作位置';
  const segment=running&&stage==='base_cut'&&d.total>0;
