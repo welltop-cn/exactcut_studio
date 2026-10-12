@@ -9,6 +9,7 @@ from typing import Any
 
 from .errors import ValidationError
 from .runtime import source_root
+from .util import load_config
 from . import diagnostics as diag
 
 
@@ -16,12 +17,18 @@ def bounded_ffmpeg(command: list[str]) -> list[str]:
     """Our media commands have one output; decoder options belong to each input."""
     if not command or Path(command[0]).name != 'ffmpeg':
         return command
+    section = load_config().get('media', {})
+    if not isinstance(section, dict):
+        raise ValueError('media 必须为对象')
+    encoder_threads = section.get('encoder_threads', 4)
+    if isinstance(encoder_threads, bool) or not isinstance(encoder_threads, int) or not 1 <= encoder_threads <= 8:
+        raise ValueError('media.encoder_threads 必须为 1 到 8 的整数')
     bounded = [command[0], '-filter_threads', '1', '-filter_complex_threads', '1']
     for value in command[1:-1]:
         if value == '-i':
             bounded.extend(['-threads', '1'])
         bounded.append(value)
-    return [*bounded, '-threads', '4', command[-1]]
+    return [*bounded, '-threads', str(encoder_threads), command[-1]]
 
 
 def run_checked(command: list[str], *, capture: bool = True, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
