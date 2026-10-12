@@ -152,7 +152,7 @@ def _concat_units_encoded(inputs: list[Path], output: Path, render: dict[str, An
 def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[str, Any], work: Path,
                 emphasis: dict[str, Any] | None = None, options: HookOptions | None = None,
                 frames: list[bytes] | None = None, cache_dir: Path | None = None,
-                preview_decision: dict | None = None) -> dict[str, Any] | None:
+                preview_decision: dict | None = None, normalized_input: bool = False) -> dict[str, Any] | None:
     if not hook_text.strip():
         shutil.copy2(input_video, output)
         return None
@@ -181,7 +181,7 @@ def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[st
     if fade_s:
         overlay_filter += f",fade=t=out:st={end_s - fade_s:.3f}:d={fade_s:.3f}:alpha=1"
     overlay_filter += "[ov];"
-    run_checked([
+    command = [
         "ffmpeg", "-y", "-v", "error", "-i", str(input_video),
         # Invisible PNG frames otherwise keep decoding and fading for the entire film.
         # The existing eof_action=pass retains all main-video frames after the Hook.
@@ -190,7 +190,10 @@ def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[st
         "-map", "[v]", "-map", "0:a:0?", "-r", str(render["fps"]), "-t", f"{total_s:.3f}",
         "-c:v", render["video_codec"], "-preset", render["preset"],
         "-crf", str(render["crf"]), "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output),
-    ])
+    ]
+    from .hook_splice import try_hook_splice
+    if not normalized_input or not try_hook_splice(input_video, output, render, end_s, command):
+        run_checked(command)
     return {**decision, "duration_ms": round(end_s * 1000), "fade_out_ms": round(fade_s * 1000)}
 
 
@@ -339,7 +342,7 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
         step('hook_overlay', base_cache_reused=reused)
         hook_visual = _apply_hook(request_base,request.hook_text,output,render,work,emphasis=emphasis,
                                  options=options,frames=frames,cache_dir=project_dir/'cache/hook-placement',
-                                 preview_decision=preview_decision)
+                                 preview_decision=preview_decision, normalized_input=True)
         timings['hook_overlay'] = round(time.monotonic()-started,3)
         if hook_visual and coverage:hook_visual['sampling']=coverage
     from .storage import cleanup, data_root
