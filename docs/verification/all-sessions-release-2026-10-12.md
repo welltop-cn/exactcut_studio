@@ -31,7 +31,7 @@
 
 一次性发布适配器在现有linux_ops.transition操作锁与维护屏障内、旧服务停止后、候选apply前保存runtime配置并更新这一字段。原版本发生漂移/配置值发生变化则拒绝。健康失败时，由同一发布管理器恢复旧镜像及原运行配置；不恢复业务数据库。适配器使用隔离假引擎验证成功切换和健康失败回退，2项通过。
 
-尚待记录：最终Grok结论、最终提交、Linux完整回归、发布ID、健康检查和线上只读验收。此段不构成已发布声明。
+最终发布记录见下文。
 
 ## 本机真实制作补充验收
 
@@ -54,3 +54,17 @@
 | release/all-sessions-20261012 | 汇总上述代码及 Grok 唯一问题修复、审查记录 |
 
 私有环境目录、账号、视频、日志、凭据均不是发布代码，不纳入 Git 或镜像。所有旧分支和工作区保留供核对。最终合并还需验证所有分支 HEAD 都是 main 的祖先，并核对构建归档与 main 的树一致。
+
+## 最终发布结果
+
+- 所有本地分支 HEAD 均通过 `git merge-base --is-ancestor <branch> main`；主工作区切换到 main，代码提交干净。被冻结的未提交内容在纳入提交后，另保留私有 stash 与文件哈希备份。
+- 发布代码：`14734fb5da56617e4fcba7dbf12db8e8bc151764`；本记录是发布后的文档补充，不修改发布代码。
+- Grok 整体审查及补充复审均正常 end_turn 并通过；唯一已证实问题为片尾进度步骤缺失，已修复，回归先复现失败后通过。完整结论见 all-sessions-grok-review-2026-10-12.md。
+- 最终本机全量：1145 passed in 183.87s；相关进度/编辑器回归14通过，发布配置适配器成功与回退2通过。
+- Linux 隔离全量：1131 passed, 14 skipped in 225.44s；镜像通过发布管理器封存。
+- 发布：`us-east-20261012-all-main-14734fb`，2026-10-12 20:05（Asia/Shanghai），由发布管理器切换成功。
+- 镜像：`sha256:c331eac68d2d06b50bfa08e5af97fb58feea44746182b3c67a59fa2b30e04284`。
+- 核对封存归档210个源码文件SHA256与main全部相同；运行容器镜像ID与发布记录相同。
+- 运行配置与发布前备份逐字段比较，唯一差异 hook_previews:1→3。render仍为3；encoder_threads未显式配置，保持已验证代码默认4。
+- 公网 `/home/healthz`：status=ok，release为新版本，maintenance=false，worker_alive=true。管理器status无活动任务、无阶段阻塞。
+- 原任务2b49b3f61ee64c88bcaa889110bfdd12：两条素材最新交付均fbbm_ready；历史publish_failed记录保留。本次没有重传素材或改写业务记录。
