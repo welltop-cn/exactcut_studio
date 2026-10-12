@@ -697,6 +697,19 @@ def _clone_batch(batch_id, *, purpose='copy'):
     return detail(batch_id)
 
 
+def initialize_project(project, manifest):
+    """Prepare shared drama state for both legacy and managed execution."""
+    if project.is_symlink():
+        raise ValueError('无效项目目录')
+    project.mkdir(parents=True, exist_ok=True)
+    with (project / 'initialization.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for directory in ('requests', 'source/videos', 'data/episodes', 'outputs'):
+            (project / directory).mkdir(parents=True, exist_ok=True)
+        if not (project / 'project.json').exists():
+            write_json_atomic(project / 'project.json', {'project_id': manifest.drama_id, 'title': manifest.drama_title, 'excluded_episodes': []})
+
+
 def start_batch(batch_id, revision):
     with naming_lock():
         return _start_batch(batch_id, revision)
@@ -742,10 +755,7 @@ def _start_batch(batch_id, revision):
     timing=timing_explanation(manifest,project)
     errors=[s['error'] for t in timing for s in t['segments'] if s.get('error')]
     if errors:raise ValueError('\n'.join(errors))
-    for directory in ('requests', 'source/videos', 'data/episodes', 'outputs'):
-        (project / directory).mkdir(parents=True, exist_ok=True)
-    if not (project / 'project.json').exists():
-        write_json_atomic(project / 'project.json', {'project_id': manifest.drama_id, 'title': manifest.drama_title, 'excluded_episodes': []})
+    initialize_project(project, manifest)
     if not (path / 'confirmed.json').exists():
         write_json_atomic(path / 'confirmed.json', manifest.model_dump(mode='json'))
         write_json_atomic(path / 'confirmation.json', {'at': now_iso(), 'revision': revision})
@@ -982,6 +992,7 @@ def feedback_summary(can_access=None):
 
 
 def download(path, manifest, project):
+    initialize_project(project, manifest)
     plan = download_plan(manifest)
     update(path, 'downloading', f"准备正片：本批需要 {'、'.join(plan['required'])}", plan=plan,
            download_current_episode=None, download_current_received=0,
