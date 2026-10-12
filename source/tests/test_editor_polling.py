@@ -93,8 +93,11 @@ def test_new_timing_error_opens_previously_collapsed_review(failure):
                 function timingMarkup(i){return `<div data-timing-index="${i}">${timingTable(timing,'')}</div>`;}
                 refreshClipTiming(0);
             ''')
-            assert page.locator('details').get_attribute('open') is None
+            assert page.locator('details').get_attribute('open') is not None
             assert '待核对' in page.locator('summary').inner_text()
+            page.locator('summary').click()
+            page.evaluate("timing.planned_duration_ms=3000;refreshClipTiming(0)")
+            assert page.locator('details').get_attribute('open') is None
             if failure == 'error':
                 page.evaluate("timing.segments[0].error='终点超出原片时长';refreshClipTiming(0)")
                 assert page.get_by_role('cell', name='终点超出原片时长').is_visible()
