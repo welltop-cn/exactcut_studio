@@ -1690,6 +1690,9 @@ class Handler(BaseHTTPRequestHandler):
                 diag.event('auth.login_succeeded', actor=user['username'])
                 self.cookie(accounts.login(self.server.auth_db, user))
                 return self.respond(200, user)
+            if self.path == '/api/clip-text':
+                from .llm_intake import read_clip_text
+                return self.respond(200, read_clip_text(data.get('text')))
             if self.path == '/api/help':
                 batch_id = data.get('batch_id')
                 detail = None
