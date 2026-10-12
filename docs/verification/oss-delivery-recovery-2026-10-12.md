@@ -29,5 +29,5 @@
 - 原两条任务在维护屏障及停止 worker 后备份并恢复为 preparation_failed/publish_failed。check-switch 确认 active_tasks=[]、phase_blockers=[]、allowed=true；保留维护标记防止旧代码接到重试，然后由 linux-ops recover --version 启用已封存合并版本。最终 healthz=ok、production、worker_alive=true、maintenance=false。
 - 容器实际可导入 hook_splice；集中配置 media.encoder_threads=4。
 - 公网页面显示“上传失败，请查看原因后重试上传 FBBM”；两条按钮均为“重试上传 FBBM”，勾选确认后 disabled=false。
-- 沿用用户此前确认的原版本与 SHA，通过原 publish HTTP 入口逐条重试。两条均保存 oss_existed=true 和独立飞书记录，进入 fbbm_queued；未重新上传视频文件或重新渲染。平台终态随后补充。
+- 沿用用户此前确认的原版本与 SHA，通过原 publish HTTP 入口逐条重试。两条均保存 oss_existed=true 和独立飞书记录，进入 fbbm_queued；未重新上传视频文件或重新渲染。验收结束时两条均已取得 material_id 与 video_id，平台状态 syncing、error 为空；尚未确认 fbbm_ready，不将平台接收等同于处理完成。
 - 私有备份：/srv/exactcut/data/.web-state/acceptance/oss-preparation-20261012。原阶段结果和历史失败交付保留；发布与恢复记录位于 /srv/exactcut/history/。
