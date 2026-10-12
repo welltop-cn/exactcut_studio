@@ -717,12 +717,12 @@ def job_response(job):
 
 
 def resource_usage(owned=None):
+    """Background job budgets exclude the independently bounded HTTP previews."""
     owned = owned or {}
     counts = {key: 0 for key in concurrency.LANES}
-    counts['render'] = len(INLINE_RENDERS)
     batches = set()
     legacy_projects = {job.get('project') for job, _, _ in owned.values() if not job.get('batch_id') and job.get('project')}
-    residents = {(None, token) for token in INLINE_RENDERS}
+    residents = set()
     for job, process, _ in owned.values():
         identity = batch_control.resident_identity(job, process)
         if identity not in residents:
@@ -765,14 +765,11 @@ def project_render_usage(owned=None):
 
 
 def admit_hook_preview(project):
-    """Inline frame work shares render/memory slots and reserves its temporary peak."""
+    """Bound interactive previews independently and reserve their temporary disk peak."""
     from .util import load_config
     with LOCK, batch_control.LOCK:
         limits = concurrency.settings()
-        counts, tokens, _, _ = resource_usage()
-        if (len(INLINE_RENDERS) >= limits['hook_previews'] or counts['render'] >= limits['render']
-                or len(tokens) >= limits['max_active_children']
-                or (not limits['enabled'] and sum(counts.values()))):
+        if len(INLINE_RENDERS) >= limits['hook_previews']:
             raise stage_results.ResourceDeferred(time.time() + 1, '制作或预览资源繁忙，请稍后重试')
         token = 'inline-' + uuid.uuid4().hex
         # Up to sixteen sampled frames, full-resolution overlays and copied JSON decisions.
@@ -830,7 +827,6 @@ def worker_tick(pending, owned):
         # Adoption must register crash-window roots before any SIGCONT decision.
         evidence_waiting = recover_jobs(owned=owned, scheduler=True)
         external_active = {key: 0 for key in concurrency.LANES}
-        external_active['render'] = len(INLINE_RENDERS)
         external_identities = set()
         for job, process, _ in owned.values():
             if not job.get('batch_id'):

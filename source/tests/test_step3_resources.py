@@ -231,10 +231,11 @@ def test_direct_frame_extractors_use_scoped_ffmpeg_caps(monkeypatch, tmp_path):
         assert '-filter_threads' in command and '-filter_complex_threads' in command
 
 
-def test_inline_preview_shares_render_and_resident_budget_and_disk_reservation(runner, monkeypatch):
+def test_inline_preview_has_independent_budget_and_keeps_disk_reservation(runner, monkeypatch):
     from exactcut import storage
     from test_concurrency import queued, close_logs
     monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 1, 'max_active_children': 2}})
+    monkeypatch.setattr(web, 'INLINE_RENDERS', set())
     token = web.admit_hook_preview(runner/'project')
     with storage.reservation_lock(web.JOBS) as ledger:
         assert token in ledger['jobs']
@@ -243,7 +244,7 @@ def test_inline_preview_shares_render_and_resident_budget_and_disk_reservation(r
     owned = {}
     try:
         web.worker_tick([], owned)
-        assert set(owned) == {'b'*32}
+        assert set(owned) == {'a'*32, 'b'*32}
         with storage.reservation_lock(web.JOBS) as ledger:
             assert token in ledger['jobs'], 'recovery must not discard live HTTP reservations'
         with pytest.raises(ResourceDeferred): web.admit_hook_preview(runner/'project')
@@ -257,6 +258,27 @@ def test_inline_preview_denies_overcommitted_disk_before_compute(runner, monkeyp
     from exactcut import storage
     monkeypatch.setattr(storage.shutil, 'disk_usage', lambda *a: Mock(free=storage.policy()['reserve_bytes']))
     with pytest.raises(ResourceDeferred): web.admit_hook_preview(runner/'project')
+
+
+def test_inline_preview_does_not_block_resuming_background_render(runner, monkeypatch):
+    from exactcut import batch_control as control, workflow
+    from exactcut.runtime import instance_marker
+    from exactcut.util import write_json_atomic
+    import signal
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'max_active_children': 1}})
+    monkeypatch.setattr(web, 'INLINE_RENDERS', set())
+    token = web.admit_hook_preview(runner/'project')
+    path = workflow.BATCHES/('d'*32); path.mkdir()
+    write_json_atomic(path/'runtime.json', {'status':'producing'})
+    child = dict(pid=123,pgid=123,process_token='a'*32,lane='render',instance=instance_marker())
+    write_json_atomic(path/'control.json', {'children':[child],'suspended':[child]})
+    control.PROCESSES.rows[123] = dict(pgid=123,state='T',arguments=['python','-X','exactcut_process_token='+'a'*32])
+    kill = Mock(); monkeypatch.setattr(control.os,'killpg',kill)
+    try:
+        web.worker_tick([], {})
+        kill.assert_called_once_with(123, signal.SIGCONT)
+    finally:
+        web.release_hook_preview(token)
 
 
 def test_resuming_resident_at_global_cap_does_not_require_an_extra_slot(runner, monkeypatch):
