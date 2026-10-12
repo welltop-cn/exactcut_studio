@@ -10,6 +10,7 @@ from functools import wraps
 import fcntl
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -25,6 +26,8 @@ _settings = {}
 _lock = threading.Lock()
 _last_failure = 0.0
 _throttled = {}
+_browser_budgets = {}
+_browser_lock = threading.Lock()
 _sensitive = re.compile(r'password|secret|token|cookie|authorization|api.?key|signature', re.I)
 
 
@@ -54,9 +57,9 @@ def configure(root=None, settings=None):
     from .runtime import data_root
     from .util import load_config
     _settings = {'retention_days': 14, 'max_file_bytes': 20 * 1024**2,
-                 'max_total_bytes': 1024**3, 'enabled': True}
+                 'max_total_bytes': 1024**3, 'browser_events_per_minute': 240, 'enabled': True}
     _settings.update(settings if settings is not None else load_config().get('logging', {}))
-    for key in ('retention_days', 'max_file_bytes', 'max_total_bytes'):
+    for key in ('retention_days', 'max_file_bytes', 'max_total_bytes', 'browser_events_per_minute'):
         if not isinstance(_settings[key], int) or isinstance(_settings[key], bool) or _settings[key] <= 0:
             raise ValueError('logging.' + key + ' must be a positive integer')
     if _settings['max_file_bytes'] > _settings['max_total_bytes']:
@@ -76,6 +79,53 @@ def current():
 def bind(**fields):
     """Enrich an already scoped request/worker context."""
     _context.set({**current(), **{k: v for k, v in fields.items() if v is not None}})
+
+
+def browser_fields(data):
+    """Untrusted browser reports: only bounded identifiers and numeric metadata."""
+    names = ('event', 'source', 'line', 'column', 'error_type', 'http_trace_id',
+             'status', 'duration_ms', 'action', 'route', 'method', 'batch_id',
+             'request_id', 'row_index', 'page_id', 'client_request_id', 'frontend_build',
+             'ready_state', 'network_state', 'media_error', 'current_ms', 'visibility', 'disabled')
+    fields = {key: data[key] for key in names if key in data}
+    numeric = {'line', 'column', 'status', 'duration_ms', 'row_index', 'ready_state',
+               'network_state', 'media_error', 'current_ms', 'disabled'}
+    for key, value in fields.items():
+        if key in numeric:
+            valid = (not isinstance(value, bool) and isinstance(value, (int, float))
+                     and math.isfinite(value) and 0 <= value <= 10**12)
+        else:
+            valid = isinstance(value, str) and re.fullmatch(r'[a-zA-Z0-9_.-]{0,100}', value)
+        if not valid:
+            raise ValueError('无效诊断字段')
+    return fields
+
+
+def allow_browser_event(actor):
+    """Server-side per-account cap; changing page/request IDs cannot evade it."""
+    now = time.monotonic()
+    limit = _settings.get('browser_events_per_minute', 240)
+    if not _browser_lock.acquire(timeout=.05):
+        return False
+    first_drop = False
+    try:
+        if len(_browser_budgets) >= 1024:
+            for key, (start, _) in list(_browser_budgets.items()):
+                if now - start >= 60:
+                    del _browser_budgets[key]
+            if actor not in _browser_budgets and len(_browser_budgets) >= 1024:
+                return False
+        start, count = _browser_budgets.get(actor, (now, 0))
+        if now - start >= 60:
+            start, count = now, 0
+        first_drop = count == limit
+        _browser_budgets[actor] = (start, min(count + 1, limit + 1))
+        allowed = count < limit
+    finally:
+        _browser_lock.release()
+    if first_drop:
+        event('browser.rate_limited', level='warning', actor=actor, events_per_minute=limit)
+    return allowed
 
 
 @contextmanager
@@ -226,7 +276,7 @@ def main():
     from .runtime import data_root
     parser = argparse.ArgumentParser(description='Query persistent diagnostic JSONL')
     parser.add_argument('--root', type=Path, default=None, help='data root (not logs directory)')
-    for field in ('batch', 'job', 'trace', 'request'):
+    for field in ('batch', 'job', 'trace', 'request', 'actor', 'event', 'client', 'page'):
         parser.add_argument('--' + field)
     parser.add_argument('--hours', type=float, default=24)
     parser.add_argument('--limit', type=int, default=100)
@@ -245,8 +295,13 @@ def main():
                     except ValueError: continue
                     if not isinstance(row, dict) or row.get('at', '') < cutoff: continue
                     if args.errors and row.get('level') not in {'warning', 'error', 'critical'}: continue
-                    if any(value and row.get(field + '_id') != value for field, value in
-                           (('batch', args.batch), ('job', args.job), ('trace', args.trace), ('request', args.request))): continue
+                    browser = row.get('browser') if isinstance(row.get('browser'), dict) else {}
+                    filters = {'batch_id': args.batch, 'job_id': args.job, 'trace_id': args.trace,
+                               'request_id': args.request, 'actor': args.actor, 'event': args.event,
+                               'client_request_id': args.client, 'page_id': args.page}
+                    if any(value and value not in (row.get(field), browser.get(field),
+                           browser.get('http_trace_id') if field == 'trace_id' else None)
+                           for field, value in filters.items()): continue
                     matches.append(row)
         except FileNotFoundError:
             continue  # A concurrent writer may rotate/delete between listing and open.

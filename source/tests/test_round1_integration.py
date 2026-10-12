@@ -21,7 +21,7 @@ def chain(workspace, monkeypatch):
     monkeypatch.setattr(web, 'JOBS', workspace / '.web-state/jobs')
     web.JOBS.mkdir(parents=True)
     monkeypatch.setattr(web, 'WORK', queue.Queue())
-    monkeypatch.setattr(web, 'INLINE_RENDERS', {})
+    monkeypatch.setattr(web, 'INLINE_RENDERS', set())
     table = control.FakeProcessTable({})
     monkeypatch.setattr(control, 'PROCESSES', table)
     limits = {'enabled': True, 'fetch': 2, 'render': 2, 'upload': 2, 'poll': 2, 'max_active_children': 4}

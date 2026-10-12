@@ -102,6 +102,75 @@ def test_http_trace_errors_no_passwords(diag, app):
     assert 'query-secret' not in json.dumps(rows) and 'wrong-secret' not in json.dumps(rows)
 
 
+def test_error_screenshot_id_and_client_id_correlate_to_server(diag, app):
+    from test_web_base_path import request
+    d, root = diag
+    client_id = 'c' * 32
+    status, headers, raw = request(app, 'POST', '/home/api/login',
+        {'username': 'admin', 'password': 'wrong'},
+        {'X-Exactcut-Request': '1', 'X-Client-Request-ID': client_id})
+    body = json.loads(raw)
+    assert status == 401
+    assert body['trace_id'] == headers['X-Request-ID']
+    assert body['trace_id'] in body['error_info']['detail']
+    row = next(r for r in records(root) if r['event'] == 'http.rejected')
+    assert row['client_request_id'] == client_id
+
+
+def test_browser_events_keep_distinct_actions_and_context(diag, app):
+    from test_web_base_path import request, login
+    d, root = diag
+    headers = login(app)
+    for action in ('saveButton', 'confirmButton'):
+        assert request(app, 'POST', '/home/api/client-events', {
+            'event': 'action', 'action': action, 'batch_id': 'a' * 32,
+            'page_id': 'b' * 32, 'frontend_build': 'c' * 20, 'row_index': 0,
+            'route': 'batches.hook-preview'}, headers)[0] == 200
+    actions = [r['browser'] for r in records(root) if r['event'] == 'browser.event']
+    assert {r['action'] for r in actions} == {'saveButton', 'confirmButton'}
+    assert all(r['batch_id'] == 'a' * 32 and r['page_id'] == 'b' * 32 for r in actions)
+    assert request(app, 'POST', '/home/api/client-events', {
+        'event': 'action', 'duration_ms': float('nan')}, headers)[0] == 400
+    assert request(app, 'POST', '/home/api/client-events', {
+        'event': 'action', 'status': 'not_a_number'}, headers)[0] == 400
+
+
+def test_browser_budget_cannot_be_bypassed_by_new_client_ids(diag, app, monkeypatch):
+    from test_web_base_path import request, login
+    d, root = diag
+    d.configure(root, {'browser_events_per_minute': 2})
+    monkeypatch.setattr(d, '_browser_budgets', {})
+    headers = login(app)
+    for number in range(3):
+        assert request(app, 'POST', '/home/api/client-events', {
+            'event': 'request_started', 'client_request_id': f'{number:032x}'}, headers)[0] == 200
+    assert len([r for r in records(root) if r['event'] == 'browser.event']) == 2
+    assert len([r for r in records(root) if r['event'] == 'browser.rate_limited']) == 1
+
+
+def test_browser_budget_renews_and_accounts_are_independent(diag, monkeypatch):
+    d, root = diag
+    d.configure(root, {'browser_events_per_minute': 2})
+    monkeypatch.setattr(d, '_browser_budgets', {})
+    clock = [0.]
+    monkeypatch.setattr(d.time, 'monotonic', lambda: clock[0])
+    assert d.allow_browser_event('alice') and d.allow_browser_event('alice')
+    assert not d.allow_browser_event('alice')
+    assert d.allow_browser_event('bob')
+    clock[0] = 61.
+    assert d.allow_browser_event('alice')
+
+
+def test_query_can_find_browser_trace_and_actor(diag):
+    d, root = diag
+    d.event('browser.event', actor='producer03', browser={'http_trace_id': 'a' * 32})
+    d.event('browser.event', actor='someone_else', browser={'http_trace_id': 'a' * 32})
+    result = subprocess.run([sys.executable, '-m', 'exactcut.diagnostics', '--root', str(root),
+        '--actor', 'producer03', '--trace', 'a' * 32], capture_output=True, text=True, check=True)
+    rows = [json.loads(line) for line in result.stdout.splitlines()]
+    assert len(rows) == 1 and rows[0]['actor'] == 'producer03'
+
+
 from test_web_base_path import app
 
 
@@ -139,6 +208,92 @@ def test_scheduler_wait_has_identifiers_reason_and_is_throttled(diag):
     rows = [r for r in records(root) if r['event'] == 'job.waiting']
     assert len(rows) == 1 and rows[0]['reason'] == 'pool_full'
     assert rows[0]['queue_seconds'] >= 60 and rows[0]['batch_id'] == 'batch-test'
+
+
+def test_preview_admission_logs_exact_budget_and_release(diag, monkeypatch):
+    from exactcut import webserver as web, concurrency, storage
+    from exactcut.stage_results import ResourceDeferred
+    d, root = diag
+    monkeypatch.setattr(web, 'JOBS', root / 'jobs')
+    monkeypatch.setattr(web, 'INLINE_RENDERS', set())
+    monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'hook_previews': 1}})
+    with d.context(trace_id='a' * 32, batch_id='b' * 32, actor='producer03'):
+        token = web.admit_hook_preview(root / 'project')
+        try:
+            with pytest.raises(ResourceDeferred): web.admit_hook_preview(root / 'project')
+        finally:
+            web.release_hook_preview(token)
+    rows = records(root)
+    denial = next(r for r in rows if r['event'] == 'hook_preview.admission_denied')
+    assert denial['reason'] == 'preview_pool_full'
+    assert denial['active_previews'] == 1 and denial['preview_limit'] == 1
+    assert denial['actor'] == 'producer03' and denial['batch_id'] == 'b' * 32
+    assert next(r for r in rows if r['event'] == 'hook_preview.released')['active_previews'] == 0
+    monkeypatch.setattr(storage, 'reserve', lambda *args: False)
+    with pytest.raises(ResourceDeferred): web.admit_hook_preview(root / 'project')
+    assert records(root)[-1]['reason'] == 'disk_reservation'
+
+
+def test_preview_stage_logs_real_layout_without_recording_text(diag, fixture):
+    from exactcut import hook_preview
+    from exactcut.intake import validate_draft
+    d, root = diag
+    manifest, errors = validate_draft(fixture['draft'])
+    assert not errors
+    work = root / 'preview-work'; work.mkdir()
+    result, _, _ = hook_preview.compute(root / 'projects' / manifest.drama_id, manifest.requests[0], work)
+    rows = records(root)
+    assert result['image'].startswith('data:image/png')
+    events = {r['event'] for r in rows}
+    assert {'hook_preview.emphasis.completed', 'hook_preview.sampling.completed',
+            'hook_preview.presentation.completed', 'hook_preview.result'} <= events
+    text = json.dumps(rows)
+    assert manifest.requests[0].hook_text not in text and 'data:image' not in text
+
+
+from test_phase2_preview_api import fixture
+
+
+@pytest.mark.parametrize('outcome,status', [('success', 200), ('error', 400), ('deferred', 429), ('cleanup_error', 200)])
+def test_preview_http_cleanup_and_compute_deferral_are_observable(diag, fixture, monkeypatch, outcome, status):
+    from exactcut import hook_preview, storage, webserver as web
+    from exactcut.stage_results import ResourceDeferred
+    from test_phase2_preview_api import call, serve
+    d, root = diag
+    monkeypatch.setattr(web, 'JOBS', root / 'jobs'); web.JOBS.mkdir()
+    monkeypatch.setattr(web, 'INLINE_RENDERS', set())
+    def compute(project, request, work):
+        cache = work / 'cache'; cache.mkdir()
+        if outcome == 'error': raise RuntimeError('fixture failure')
+        if outcome == 'deferred': raise ResourceDeferred(time.time() + 10, 'AI 请求预算已用完，请稍后重试')
+        return {'preview_key': 'a' * 64}, {'decision': {}}, cache
+    monkeypatch.setattr(hook_preview, 'compute', compute)
+    if outcome == 'cleanup_error':
+        monkeypatch.setattr(storage, 'release', lambda *args: (_ for _ in ()).throw(OSError('fixture cleanup failure')))
+    app = serve()
+    try:
+        assert call(app, 'POST', f"/api/batches/{fixture['id']}/hook-preview", {
+            'index': 0, 'revision': fixture['revision']})[0] == status
+        assert not web.INLINE_RENDERS
+        if outcome != 'cleanup_error':
+            with storage.reservation_lock(web.JOBS) as ledger:
+                assert not ledger['jobs']
+        if outcome == 'deferred':
+            assert any(r['event'] == 'hook_preview.deferred' and r['phase'] == 'compute' for r in records(root))
+        if outcome == 'cleanup_error':
+            assert any(r['event'] == 'hook_preview.cleanup_failed' for r in records(root))
+    finally:
+        app.shutdown(); app.server_close()
+
+
+def test_error_diagnostic_number_tolerates_partial_error_info(diag, app, monkeypatch):
+    from exactcut.webserver import Handler
+    from test_web_base_path import request
+    monkeypatch.setattr(Handler, 'do_GET', lambda self: self.respond(400, {
+        'error': 'fixture error', 'error_info': {'title': 'fixture', 'action': 'retry'}}))
+    status, headers, raw = request(app, 'GET', '/home/')
+    body = json.loads(raw)
+    assert status == 400 and headers['X-Request-ID'] in body['error_info']['detail']
 
 
 def test_browser_events_require_auth_and_accept_only_metadata(diag, app):
@@ -198,6 +353,64 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{window,document,URL,
   assert(sent.some(x=>x.event==='network_error'));
   assert(sent.some(x=>x.source==='app.js' && x.line===12));
   assert(!JSON.stringify(sent).includes('private'));
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+    path = Path(__file__).resolve().parents[1] / 'exactcut/web/diagnostics.js'
+    subprocess.run([node, '-e', script, str(path)], check=True, capture_output=True, text=True)
+
+
+def test_browser_context_current_buttons_media_and_renewable_budget():
+    import shutil
+    node = shutil.which('node')
+    if not node: pytest.skip('Node unavailable')
+    script = r'''
+const vm=require('vm'), fs=require('fs'), assert=require('assert');
+const events={}, sent=[], calls=[]; let now=0;
+class Clock extends Date {static now(){return now;}}
+const response={ok:false,status:429,headers:new Headers({'X-Request-ID':'a'.repeat(32)})};
+const window={addEventListener:(n,fn)=>events['window.'+n]=fn,fetch:async(url,options)=>{
+  if(String(url).endsWith('client-events')){sent.push(JSON.parse(options.body));return {ok:true};}
+  calls.push([url,options]); return response;
+}};
+const document={baseURI:'http://localhost/home/',visibilityState:'visible',
+  currentScript:{src:'http://localhost/home/diagnostics.js?v='+'d'.repeat(20)},
+  querySelector:()=>({dataset:{batch:'b'.repeat(32)}}),
+  addEventListener:(n,fn)=>events[n]=fn};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),
+  {window,document,URL,performance,Headers,Request,crypto:require('crypto').webcrypto,Date:Clock});
+(async()=>{
+  const button={id:'saveButton',dataset:{},disabled:false};
+  events.click({target:{closest:()=>button}});
+  assert(sent.some(x=>x.event==='action'&&x.action==='saveButton'&&x.batch_id==='b'.repeat(32)));
+  events.click({target:{closest:()=>({...button,id:'startNow'})}});
+  assert(sent.some(x=>x.event==='action'&&x.action==='startNow'));
+  const req=new Request('http://localhost/home/api/batches/'+'b'.repeat(32)+'/hook-preview?secret=private-query',
+    {method:'POST',headers:{'X-Exactcut-Request':'1'},body:'private-form'});
+  assert.strictEqual(await window.fetch(req),response);
+  const hdr=new Headers(calls[0][1].headers);
+  assert.strictEqual(hdr.get('X-Exactcut-Request'),'1');
+  const id=hdr.get('X-Client-Request-ID');assert(/^[a-f0-9]{32}$/.test(id));
+  assert(sent.some(x=>x.http_trace_id==='a'.repeat(32)&&x.client_request_id===id&&x.route==='batches.hook-preview'));
+  assert.strictEqual(req.bodyUsed,false);
+  assert.strictEqual(calls[0][0],req);
+  const reconstructed=new Request(calls[0][0],calls[0][1]);
+  assert.strictEqual(reconstructed.method,'POST');
+  assert.strictEqual(await reconstructed.text(),'private-form');
+  const controller=new AbortController(), body='private-second-body';
+  await window.fetch('api/batches/'+ 'b'.repeat(32) +'/save',{method:'POST',body,signal:controller.signal});
+  assert.strictEqual(calls[1][1].body,body);
+  assert.strictEqual(calls[1][1].signal,controller.signal);
+  assert.strictEqual(calls[1][1].method,'POST');
+  events.error({target:{tagName:'VIDEO',dataset:{previewRequest:'R123'},readyState:0,networkState:3,error:{code:4},currentTime:0}});
+  assert(sent.some(x=>x.event==='media_error'&&x.request_id==='R123'&&x.media_error===4));
+  for(let i=0;i<50;i++)events.click({target:{closest:()=>button}});
+  const count=sent.length;now=61000;
+  events.click({target:{closest:()=>button}});
+  assert(sent.length>count,'reports must resume after the minute budget resets');
+  assert(!JSON.stringify(sent).includes('private'));
+  assert(sent.every(x=>x.page_id&&x.frontend_build==='d'.repeat(20)));
+  const before=sent.length;await window.fetch('https://external.invalid/api/private');
+  assert.strictEqual(sent.length,before);
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
     path = Path(__file__).resolve().parents[1] / 'exactcut/web/diagnostics.js'

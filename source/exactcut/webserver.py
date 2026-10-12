@@ -770,6 +770,8 @@ def admit_hook_preview(project):
     with LOCK, batch_control.LOCK:
         limits = concurrency.settings()
         if len(INLINE_RENDERS) >= limits['hook_previews']:
+            diag.event('hook_preview.admission_denied', level='warning', reason='preview_pool_full',
+                       active_previews=len(INLINE_RENDERS), preview_limit=limits['hook_previews'])
             raise stage_results.ResourceDeferred(time.time() + 1, '制作或预览资源繁忙，请稍后重试')
         token = 'inline-' + uuid.uuid4().hex
         # Up to sixteen sampled frames, full-resolution overlays and copied JSON decisions.
@@ -779,15 +781,24 @@ def admit_hook_preview(project):
                           for p in (project / 'cache' / name).glob('*.json') if not p.is_symlink())
         paths = {str(project): peak, str(Path(tempfile.gettempdir())): peak + cache_bytes}
         if not storage.reserve(token, paths, JOBS):
+            diag.event('hook_preview.admission_denied', level='warning', reason='disk_reservation',
+                       active_previews=len(INLINE_RENDERS), preview_limit=limits['hook_previews'])
             raise stage_results.ResourceDeferred(time.time() + 1, '预览磁盘资源不足，请稍后重试')
         INLINE_RENDERS.add(token)
+        diag.event('hook_preview.admitted', active_previews=len(INLINE_RENDERS),
+                   preview_limit=limits['hook_previews'])
         return token
 
 
 def release_hook_preview(token):
     with LOCK:
         INLINE_RENDERS.discard(token)
-        storage.release(token, JOBS)
+        try:
+            storage.release(token, JOBS)
+        except (OSError, ValueError, RuntimeError) as exc:
+            # Recovery drops orphaned inline reservations on the next worker tick.
+            diag.event('hook_preview.cleanup_failed', level='warning', error=exc)
+        diag.event('hook_preview.released', active_previews=len(INLINE_RENDERS))
 
 
 def worker_tick(pending, owned):
@@ -861,7 +872,7 @@ def worker_tick(pending, owned):
         limits = concurrency.settings()
         counts, tokens, batches, legacy_projects = resource_usage(owned)
         diag.throttled('scheduler.snapshot', 'worker', pending=len(pending), running=len(owned),
-                       pools=counts, limits=limits, resident_count=len(tokens),
+                       pools=counts, limits=limits, resident_count=len(tokens), active_previews=len(INLINE_RENDERS),
                        oldest_wait_seconds=round(max((time.time()-e[0].get('created', time.time()) for e in pending), default=0)))
         batches.update(evidence_waiting)
         for owner, entry in fair_pending(pending):
@@ -987,7 +998,8 @@ class Handler(BaseHTTPRequestHandler):
                 diag.event('http.failed', level='error', route=self.diagnostic_route, error=exc)
                 raise
             finally:
-                if self.diagnostic_route and self.diagnostic_route != '/healthz':
+                if (self.diagnostic_route and self.diagnostic_route != '/healthz'
+                        and not (self.diagnostic_route == '/api/client-events' and (self.diagnostic_status or 500) < 400)):
                     fields = dict(route=self.diagnostic_route, method=self.command, status=self.diagnostic_status,
                                   actor=(self.user or {}).get('username'), duration_ms=round((time.monotonic()-started)*1000))
                     # Polls are sampled; failures, writes and slow responses always retained.
@@ -1004,10 +1016,13 @@ class Handler(BaseHTTPRequestHandler):
             if prefix and route.startswith(prefix + '/'):
                 route = route[len(prefix):]
             self.diagnostic_route = route if re.fullmatch(r'/[a-zA-Z0-9_./-]{0,240}', route) else '/unrecognized'
+            client_id = self.headers.get('X-Client-Request-ID', '')
+            if re.fullmatch(r'[0-9a-f]{32}', client_id):
+                diag.bind(client_request_id=client_id)
             batch = re.match(r'/api/batches/([0-9a-f]{32})(?:/|$)', route)
             if batch:
                 diag.bind(batch_id=batch[1])
-            if self.command != 'GET':
+            if self.command != 'GET' and self.diagnostic_route != '/api/client-events':
                 diag.event('http.started', route=self.diagnostic_route, method=self.command)
         return valid
 
@@ -1035,6 +1050,9 @@ class Handler(BaseHTTPRequestHandler):
             for script in ('app.js', 'helper.js', 'diagnostics.js'):
                 version = hashlib.sha256((CODE_ROOT / 'exactcut/web' / script).read_bytes()).hexdigest()[:20]
                 body = body.replace(f'src="{script}"'.encode(), f'src="{script}?v={version}"'.encode())
+            app_version = hashlib.sha256((CODE_ROOT / 'exactcut/web/app.js').read_bytes()).hexdigest()[:20]
+            body = body.replace(b'<script src="diagnostics.js',
+                                f'<script data-app-version="{app_version}" src="diagnostics.js'.encode())
         base = f'<base href="{self.public_url("/")}">'.encode()
         return body.replace(b'<meta', base + b'<meta', 1)
 
@@ -1061,6 +1079,12 @@ class Handler(BaseHTTPRequestHandler):
             from .error_guidance import guidance, redact
             body = {**body, 'error': redact(body['error']),
                     'error_info': body.get('error_info') or guidance(body['error'])}
+            if getattr(self, 'trace_id', None):
+                body['trace_id'] = self.trace_id
+                if not isinstance(body['error_info'], dict):
+                    body['error_info'] = guidance(body['error'])
+                body['error_info'] = {**body['error_info'],
+                    'detail': str(body['error_info'].get('detail') or body['error']) + '\n诊断编号：' + self.trace_id}
         if not isinstance(body, bytes):
             body = json.dumps(body, ensure_ascii=False).encode()
         self.send_response(code)
@@ -1552,6 +1576,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.can_access(batch_id):
                     return self.respond(404,{'error':'项目不存在或无权访问'})
                 snapshot = workflow.detail(batch_id)
+                diag.event('hook_preview.request', revision=snapshot['revision'],
+                           requested_revision=data.get('revision') if type(data.get('revision')) is int else None,
+                           row_index=data.get('index') if type(data.get('index')) is int else None,
+                           project_status=snapshot['runtime']['status'], media_managed=bool(snapshot.get('media_managed')),
+                           archived=bool(snapshot['runtime'].get('archived')))
                 if (not snapshot.get('media_managed') and snapshot['runtime']['status'] != 'draft') or snapshot['runtime'].get('archived'):
                     raise ValueError('请复制为新草稿后调整 Hook')
                 if data.get('revision') != snapshot['revision']:
@@ -1569,14 +1598,18 @@ class Handler(BaseHTTPRequestHandler):
                     raise ValueError('无效项目目录')
                 protect_path(project)
                 request = manifest.requests[index]
+                diag.bind(request_id=request.request_id, drama_id=manifest.drama_id, revision=snapshot['revision'])
                 fingerprint = json_sha256(snapshot['draft'])
             admission = admit_hook_preview(project)
             # Network/model calls and media reads use temporary files, outside the write barrier.
             with tempfile.TemporaryDirectory(prefix='exactcut-hook-preview-') as temp:
                 deferred = None
                 try:
-                    result, doc, cache = compute(project,request,Path(temp))
+                    with diag.span('hook_preview.compute'):
+                        result, doc, cache = compute(project,request,Path(temp))
                 except stage_results.ResourceDeferred as exc:
+                    diag.event('hook_preview.deferred', level='warning', phase='compute',
+                               reason=str(exc), not_before=exc.not_before)
                     deferred = exc
                     cache = Path(temp) / 'cache'
                 with mutation_lock(), LOCK:
@@ -1599,7 +1632,12 @@ class Handler(BaseHTTPRequestHandler):
                             else:
                                 write_json_atomic(project/'cache/hook-previews'/f"{result['preview_key']}.json",doc)
                                 response = (200, result)
+                    if response and response[0] != 200:
+                        diag.event('hook_preview.result_rejected', level='warning', status=response[0],
+                                   reason=response[1]['error'])
         except stage_results.ResourceDeferred as exc:
+            diag.event('hook_preview.deferred', level='warning', phase='admission',
+                       reason=str(exc), not_before=exc.not_before)
             response = (429, {'error': str(exc), 'not_before': exc.not_before})
         except (ValueError,KeyError,TypeError,RuntimeError,OSError) as exc:
             diag.event('http.hook_preview_failed', level='warning', batch_id=batch_id, error=exc)
@@ -1629,15 +1667,18 @@ class Handler(BaseHTTPRequestHandler):
             if not isinstance(data, dict):
                 raise ValueError('无效请求')
             if self.path == '/api/client-events':
-                allowed = {'page_error', 'unhandled_rejection', 'network_error', 'slow_request', 'action'}
+                allowed = {'page_error', 'unhandled_rejection', 'network_error', 'slow_request', 'action',
+                           'request_started', 'request_completed', 'media_error', 'media_stalled',
+                           'media_waiting', 'media_playing', 'page_ready', 'visibility'}
                 if data.get('event') not in allowed or size > 4096:
                     return self.respond(400, {'error': '无效诊断事件'})
-                fields = {key: data[key] for key in ('event', 'source', 'line', 'column', 'error_type',
-                          'http_trace_id', 'status', 'duration_ms', 'action') if key in data}
-                # Only fixed identifiers/numbers, never free text or user content.
-                if any(not isinstance(v, (int, float, str)) or (isinstance(v, str) and not re.fullmatch(r'[a-zA-Z0-9_.-]{0,100}', v)) for v in fields.values()):
-                    return self.respond(400, {'error': '无效诊断字段'})
-                diag.throttled('browser.event', (self.user['username'], data['event']), interval=10,
+                fields = diag.browser_fields(data)
+                if not diag.allow_browser_event(self.user['username']):
+                    return self.respond(200, {'ok': True})
+                key = tuple(fields.get(name) for name in ('event', 'page_id', 'route', 'batch_id', 'action',
+                            'status', 'request_id', 'client_request_id', 'source', 'line', 'error_type', 'visibility'))
+                diag.throttled('browser.event', (self.user['username'], key), interval=10,
+                               level='warning' if fields['event'] in {'page_error', 'unhandled_rejection', 'network_error', 'media_error'} or fields.get('status', 0) >= 400 else 'info',
                                actor=self.user['username'], browser=fields)
                 return self.respond(200, {'ok': True})
             if self.path == '/api/login':

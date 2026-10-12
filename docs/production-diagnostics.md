@@ -6,7 +6,7 @@
 
 应用 JSONL：宿主 `/srv/exactcut/data/logs/events-YYYYMMDD-*.jsonl`，容器 `/data/logs/`。Web、阶段任务、预下载进程共同写入，进程间锁保护整条写入与轮转；目录 0700，文件 0600。UTC 日期分文件，单文件 20 MiB，默认最多保留 14 天，应用日志总量 1 GiB，先达到容量上限时会提前淘汰最旧文件。清理由写入触发，空闲 worker 每分钟记录一次状态；服务完全停止时不执行清理。
 
-集中配置 `config/runtime.json` 的 `logging` 段覆盖 `config/default.json`：`enabled`、`retention_days`、`max_file_bytes`、`max_total_bytes`。修改后重启生效。日志策略不参与成片缓存指纹。原有任务日志/审计 JSON 保留，**不受新日志的容量上限管理**。
+集中配置 `config/runtime.json` 的 `logging` 段覆盖 `config/default.json`：`enabled`、`retention_days`、`max_file_bytes`、`max_total_bytes`；本轮新增 `browser_events_per_minute`（默认240，按账号统计，与客户端ID无关）。修改后重启生效。日志策略不参与成片缓存指纹。原有任务日志/审计 JSON 保留，**不受新日志的容量上限管理**。
 
 反向代理补充 JSON 日志：`nginx-access.log`，记录不带 query 的路径、HTTP 状态、总耗时、upstream 耗时/状态、应用 trace ID。单独 logrotate：每日/20 MiB 轮转，最多 14 份、14 天，小时检查；高流量时实际保留时间缩短。应用日志和代理日志是两套限额。
 
@@ -19,7 +19,26 @@ docker exec <容器名> python -m exactcut.diagnostics --batch <项目ID> --hour
 docker exec <容器名> python -m exactcut.diagnostics --job <任务ID> --hours 24
 docker exec <容器名> python -m exactcut.diagnostics --trace <X-Request-ID> --hours 24
 docker exec <容器名> python -m exactcut.diagnostics --batch <项目ID> --request R001
+docker exec <容器名> python -m exactcut.diagnostics --actor producer03 --hours 2 --limit 300
+docker exec <容器名> python -m exactcut.diagnostics --client <浏览器请求ID> --hours 2
+docker exec <容器名> python -m exactcut.diagnostics --page <浏览器页面ID> --hours 2
+docker exec <容器名> python -m exactcut.diagnostics --event hook_preview.admission_denied --hours 2
 ```
+
+## 2026-10-12 诊断补全（本地，尚未上线）
+
+收到错误截图先查弹窗底部的“诊断编号”：它等于错误JSON的trace_id和HTTP响应X-Request-ID。现有前端显示error_info.detail，因此无需浏览器开发者工具即可提供编号。`--trace`同时检索服务器trace_id与browser.http_trace_id；再沿batch_id/request_id/job_id查任务阶段。没有编号时按账号和反馈时间查询，日志使用UTC，北京时间须减8小时。
+
+| 用户现象 | 新增证据 | 用法 |
+| --- | --- | --- |
+| 保存、确认、复制、字幕预览或上传点击后无响应 | browser.event/action、request_started、request_completed、network_error | 真实按钮ID或固定动作名、项目ID、素材行号、禁用状态；通过client_request_id区分请求未到服务端、处理未结束和响应丢失 |
+| 字幕预览资源繁忙 | hook_preview.admission_denied | reason区分preview_pool_full与disk_reservation，记录active_previews/preview_limit；不再只能依赖相邻一分钟的调度快照 |
+| 字幕预览慢或AI服务繁忙 | hook_preview.compute/emphasis/sampling/presentation、ai.deferred | 分别定位整体计算、重点分析、抽帧、画面排版的耗时；原有AI预算、HTTP状态、重试日志沿用 |
+| 预览计算完却没显示 | hook_preview.result_rejected、http.rejected | 区分计算期间草稿变化、归档、维护、权限变化或AI延期；记录保存的revision与请求revision |
+| 视频无法播放/卡住 | browser.event/media_error、media_waiting、media_stalled、media_playing | 素材request_id、media_error代码、readyState/networkState、播放时间及前后台状态；与preview.stream/OSS/代理日志对照，不采集视频URL |
+| 页面版本过旧、同账号开多个标签页 | browser.page_id、frontend_build、page_ready/visibility | 页面实例ID区别标签页，frontend_build对应app.js文件内容哈希；服务端release仍记录实际代码版本 |
+
+日志新增不改变重试策略：第4个并发字幕预览仍需稍后重试，网络完全断开时浏览器上报同样可能失败。客户端事件是线索，不能单独证明操作已执行或素材已交付。用户界面里没有服务端请求的本地校验错误不自动获得服务端诊断编号。
 
 每行包含时间、版本、环境、PID、事件类型；按适用范围携带 actor、batch_id、request_id（素材编号）、job_id、attempt、trace_id。HTTP 返回 `X-Request-ID`；提交产生的任务和后续阶段保留同一个 trace_id。重试看 attempt，跨 HTTP 操作看 batch_id，不要把一个 trace 当成项目的全部历史。
 
@@ -40,7 +59,8 @@ docker exec <容器名> python -m exactcut.diagnostics --batch <项目ID> --requ
 
 ## 边界与安全
 
-- 正常健康探测不逐条写应用日志；常规 GET 轮询每路由/用户 30 秒采样；排队原因每任务/原因 60 秒采样。HTTP 错误、修改请求、慢请求完整记录。浏览器单页面最多 20 次报告，服务器同用户/事件 10 秒限频；刷新页面重置客户端额度。
+- 正常健康探测不逐条写应用日志；常规 GET 轮询每路由/用户 30 秒采样；排队原因每任务/原因 60 秒采样。业务HTTP错误、修改请求、慢请求完整记录。成功的client-events只记录browser.event，避免上报本身重复制造HTTP日志。
+- 浏览器每分钟常规事件最多40条、错误事件独立最多40条，时间窗到期自动恢复，避免旧版累计20条后长期开页完全失去日志。服务器先按登录账号执行每分钟240条硬上限，再按账号/页面/动作/项目/路由/状态/客户端请求等维度10秒去重；不同请求或操作不会被同一个粗粒度键合并，伪造不同客户端ID不能绕过账号上限。超过上限时返回成功回执但丢弃上报，每窗口只记录一次browser.rate_limited，避免限流本身制造海量HTTP错误。page_id、client_request_id都是诊断标识，不用于授权。
 - 浏览器报告只含枚举、数字和受限标识，不含错误正文、页面内容或表单；它是不可信客户端证据，必须对照服务器事件。浏览器完全离线时无法上传报告；不能用“没日志”直接认定没有点击。
 - 不记录请求/响应正文、AI prompt、Cookie、认证 header、完整命令行或带签名的 URL；异常记录类型、脱敏消息与栈位置，不包含局部变量和源码行。下载错误只保留有界尾部。
 - 日志写入失败或锁等待超时不会让制作失败；stderr 每分钟至多报告一次 diagnostic_write_failed。监控此信息：日志系统故障时不能保证证据齐全。追加已 flush，但不逐行 fsync；机器突然断电可能丢失最后部分日志。
