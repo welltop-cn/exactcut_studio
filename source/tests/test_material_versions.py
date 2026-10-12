@@ -1002,3 +1002,74 @@ def test_partial_round_keeps_reused_asset_distinct_after_completion(workspace):
     m.confirm(path, {'revision': latest['revision'], 'mutation_id': token()})
     assert {a['request_id']: a['production_scope'] for a in m.detail(path)['assets']} == {
         first: 'reused', event['asset_id']: 'run'}
+
+
+@pytest.mark.parametrize('delivery_status,expected', [('unverified', '待核实'), ('publish_failed', '上传失败'), ('uploading', '正在上传')])
+def test_delivery_banner_matches_actual_delivery_state(workspace, delivery_status, expected):
+    m, path, state = enrolled(media=True)
+    rid = state['draft']['rows'][0]['request_id']
+    version = state['assets'][rid]['current_version']
+    state = m.queue_delivery(path, {'revision': state['revision'], 'mutation_id': token(), 'request_id': rid,
+                                   'version_id': version, 'sha256': state['versions'][version]['record']['output_sha256']})
+    delivery = next(iter(state['deliveries'].values()))
+    delivery['status'] = delivery_status
+    m._write(path, state)
+    runtime = m.detail(path)['runtime']
+    assert expected in runtime['message']
+    assert '已有成片仍可播放' in runtime['message']
+    if delivery_status != 'uploading':
+        assert runtime['status'] != 'publishing'
+        assert '正在上传' not in runtime['message']
+    if delivery_status == 'unverified':
+        assert m._blocked(m.read(path))  # Presentation never releases the safety fence.
+
+
+def test_managed_preparation_failure_can_queue_retry(workspace, monkeypatch):
+    from exactcut import publish, material_workers, webserver as web
+    m, path, state = enrolled(media=True)
+    rid = state['draft']['rows'][0]['request_id']; vid = state['assets'][rid]['current_version']
+    sha = state['versions'][vid]['record']['output_sha256']
+    state = m.queue_delivery(path, {'revision': state['revision'], 'mutation_id': token(),
+                                   'request_id': rid, 'version_id': vid, 'sha256': sha})
+    m.recover_outbox()
+    event = next(e for e in state['outbox'].values() if e['kind'] == 'delivery')
+    observed = {}
+    def fail_preparation(*args, **kwargs):
+        m.recover_outbox()  # Reconcile while the upload intent is pending.
+        observed['delivery'] = m.read(path)['deliveries'][event['delivery_id']]['status']
+        observed['runtime'] = m.detail(path)['runtime']['status']
+        raise RuntimeError('OSS暂时不可用')
+    monkeypatch.setattr(publish.OssPublisher, 'upload', fail_preparation)
+    monkeypatch.setattr(publish, 'FeishuClient', lambda: pytest.fail('must not reach Feishu'))
+    assert w.upload(event['child_id'], rid) == 2
+    assert observed == {'delivery': 'uploading', 'runtime': 'publishing'}
+    jobs = w.ROOT / '.web-state/jobs'
+    monkeypatch.setattr(web, 'JOBS', jobs)
+    job = read_json(jobs / (event['job_id'] + '.json'))
+    web.finish_job(job, 2)
+    m.recover_outbox()
+    failed = m.read(path)
+    assert failed['deliveries'][event['delivery_id']]['status'] == 'publish_failed'
+    assert not m._blocked(failed)
+    assert m.detail(path)['runtime']['status'] == 'publish_failed'
+    retried = m.queue_delivery(path, {'revision': failed['revision'], 'mutation_id': token(),
+                                     'request_id': rid, 'version_id': vid, 'sha256': sha})
+    assert len(retried['deliveries']) == 2
+    assert sum(d['status'] == 'pending' for d in retried['deliveries'].values()) == 1
+
+
+@pytest.mark.parametrize('delivery_status', ['publish_failed', 'unverified'])
+@pytest.mark.parametrize('candidate_status,expected', [('queued', 'queued'), ('processing', 'producing'), ('failed', 'partial')])
+def test_old_delivery_failure_does_not_mask_new_production(workspace, candidate_status, expected, delivery_status):
+    m, path, state = enrolled(media=True)
+    rid = state['draft']['rows'][0]['request_id']; vid = state['assets'][rid]['current_version']
+    state = m.queue_delivery(path, {'revision': state['revision'], 'mutation_id': token(), 'request_id': rid,
+                                   'version_id': vid, 'sha256': state['versions'][vid]['record']['output_sha256']})
+    next(iter(state['deliveries'].values()))['status'] = delivery_status
+    draft = copy.deepcopy(state['draft']); draft['rows'][0]['hook_text'] += ' changed'
+    m._write(path, state)
+    state = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    state['versions'][state['assets'][rid]['candidate_version']]['status'] = candidate_status
+    m._write(path, state)
+    assert m.detail(path)['runtime']['status'] == expected

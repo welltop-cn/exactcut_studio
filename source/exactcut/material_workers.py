@@ -85,8 +85,17 @@ def _merge_delivery(parent, event, entry, *, verification_job_id=None):
             if not verification or verification['status'] == 'superseded': return
         delivery = state['deliveries'][event['delivery_id']]
         status = entry.get('status', delivery['status'])
-        if delivery['status'] == 'unverified' and status != 'fbbm_ready': status = 'unverified'
-        if entry.get('intent', {}).get('status') == 'pending': status = 'unverified'
+        intent = entry.get('intent', {})
+        preparation_failed = (status == 'publish_failed' and intent.get('phase') == 'upload'
+                              and intent.get('status') == 'preparation_failed'
+                              and not any(entry.get(k) for k in ('publication', 'fbbm', 'verification_only', 'verification_history'))
+                              and not intent.get('receipt') and not intent.get('feishu_record_id'))
+        if delivery['status'] == 'unverified' and status != 'fbbm_ready' and not preparation_failed:
+            status = 'unverified'
+        # Active uploads/polls already fence mutations; pending intent alone is
+        # not a failure. The scheduler classifies an executor loss as unverified.
+        if intent.get('status') == 'pending' and status not in {'uploading', 'fbbm_queued'}:
+            status = 'unverified'
         if delivery['status'] == status and delivery.get('publication') == entry: return
         delivery.update(status=status, publication=copy.deepcopy(entry))
         state['revision'] += 1; m._write(parent, state)

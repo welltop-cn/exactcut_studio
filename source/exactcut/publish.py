@@ -22,6 +22,10 @@ from .util import env, file_sha256, now_iso
 from . import diagnostics as diag
 
 
+class DeliveryPreparationError(PublishError):
+    """OSS preparation failed before any Feishu/FBBM submission was attempted."""
+
+
 GUARDED_DELIVERY = ContextVar('guarded_delivery', default=False)
 DELIVERY_RECEIPT = ContextVar('delivery_receipt', default=None)
 OSS_COPY_SOURCE = ContextVar('oss_copy_source', default=None)
@@ -126,7 +130,7 @@ class OssPublisher:
             bucket = self.connect()
             existed = bucket.object_exists(key)
             if existed:
-                meta = bucket.get_object_meta(key)
+                meta = bucket.head_object(key)
                 remote_hash = meta.headers.get("x-oss-meta-sha256") or meta.headers.get("X-Oss-Meta-Sha256")
                 if not remote_hash:
                     raise PublishError(f"OSS已有同名对象但缺少SHA-256元数据，禁止复用：{key}")
@@ -159,7 +163,7 @@ class OssPublisher:
                     raise PublishError(f"OSS上传失败：status={result.status}")
             bucket.put_object_acl(key, "public-read")
             if GUARDED_DELIVERY.get():
-                meta = bucket.get_object_meta(key)
+                meta = bucket.head_object(key)
                 remote_hash = meta.headers.get("x-oss-meta-sha256") or meta.headers.get("X-Oss-Meta-Sha256")
                 if remote_hash != digest:
                     raise PublishError(f"OSS上传后校验失败，待核实：{key}")
@@ -359,7 +363,10 @@ def feishu_url(url: str, text: str | None = None) -> dict[str, str]:
 
 @diag.traced('publication.enqueue')
 def publish_to_queue(video: Path, manifest: Any, request: Any, *, dry_run: bool = False) -> dict[str, Any]:
-    upload = OssPublisher().upload(video, dry_run=dry_run)
+    try:
+        upload = OssPublisher().upload(video, dry_run=dry_run)
+    except Exception as exc:
+        raise DeliveryPreparationError(str(exc)) from exc
     if dry_run:
         return {"stage": "dry_run", **upload, "feishu_record_id": None}
     source = os.getenv("OPENCLAW_SOURCE_USER") or manifest.author

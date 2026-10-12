@@ -150,7 +150,8 @@ def test_fbbm_reuses_private_master_by_server_side_copy(tmp_path,monkeypatch):
     bucket=Mock();bucket.object_exists.return_value=False
     bucket.head_object.return_value=SimpleNamespace(content_length=6,headers={'x-oss-meta-sha256':digest,'ETag':'"etag"'})
     bucket.copy_object.return_value.status=200
-    bucket.get_object_meta.return_value=SimpleNamespace(headers={'x-oss-meta-sha256':digest})
+    # OSS GetObjectMeta returns basic metadata, not custom SHA headers.
+    bucket.get_object_meta.return_value=SimpleNamespace(content_length=6,headers={})
     monkeypatch.setattr(publisher,'connect',lambda:bucket)
     receipt={'bucket':'fixture','endpoint':'https://oss.invalid','key':f'exactcut-previews/production/{"a"*32}/R1/{digest}.mp4','sha256':digest,'bytes':6}
     with guarded_delivery(oss_source=receipt):
@@ -162,3 +163,21 @@ def test_fbbm_reuses_private_master_by_server_side_copy(tmp_path,monkeypatch):
     assert args[2].startswith('fb-bm-assets/')
     assert kw['headers']['x-oss-forbid-overwrite']=='true'
     assert kw['headers']['x-oss-copy-source-if-match']=='"etag"'
+
+
+def test_fbbm_reuses_existing_copy_with_head_metadata(tmp_path, monkeypatch):
+    from exactcut.publish import OssPublisher, guarded_delivery
+    from unittest.mock import Mock
+    video = tmp_path / '20260902_typezxraw_张三_AGENT_12_#101460#.mp4'
+    video.write_bytes(b'master')
+    digest = hashlib.sha256(b'master').hexdigest()
+    publisher = OssPublisher()
+    bucket = Mock(); bucket.object_exists.return_value = True
+    bucket.get_object_meta.return_value = SimpleNamespace(content_length=6, headers={})
+    bucket.head_object.return_value = SimpleNamespace(content_length=6, headers={'x-oss-meta-sha256': digest})
+    monkeypatch.setattr(publisher, 'connect', lambda: bucket)
+    with guarded_delivery():
+        result = publisher.upload(video)
+    assert result['oss_existed'] is True
+    bucket.copy_object.assert_not_called()
+    bucket.put_object_from_file.assert_not_called()

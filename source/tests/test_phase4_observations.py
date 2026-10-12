@@ -126,3 +126,10 @@ def test_api_errors_are_actionable_and_redacted(workspace,monkeypatch):
         assert 'private-test-key' not in str(body)
     finally:
         app.shutdown();app.server_close()
+
+
+def test_unverified_delivery_guidance_does_not_offer_blind_retry():
+    result = guidance('待核实：交付阶段中断，只能核实原回执', 'fbbm')
+    assert result['title'] == '交付结果待核实'
+    assert '管理员' in result['action']
+    assert '重试' not in result['action']

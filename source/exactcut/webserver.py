@@ -487,7 +487,7 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
             rid = job.get('request_id')
             entry = publications.get(rid, {})
             if workflow.delivery_blocked(entry) or entry.get('verification_only') or entry.get('verification_history'):
-                entry.update(status='unverified', error='待核实：交付阶段中断，只能核实原回执')
+                entry.update(status='unverified', error=entry.get('error') or '待核实：交付阶段中断，只能核实原回执')
                 publications = workflow.store_publication(path, rid, entry)
                 job.update(status='unverified'); save(job)
             elif entry.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'}:

@@ -28,7 +28,9 @@ def guidance(message, stage=None, *, continuation=False):
         return None
     lower = str(message).lower()
     code, title, action = 'unknown', '本次执行未完成', '查看技术详情；制作失败可重试，需修改内容时请创建新草稿。'
-    if any(s in lower for s in ('空间', 'no space', 'disk full')):
+    if stage == 'fbbm' and str(message).startswith('待核实：'):
+        code, title, action = 'delivery_unverified', '交付结果待核实', '请联系管理员核实原交付记录；已有成片可继续播放和下载。'
+    elif any(s in lower for s in ('空间', 'no space', 'disk full')):
         code, title, action = 'disk_space', '可用磁盘空间不足', '在空间管理中预览并清理可回收缓存，或释放磁盘空间后重试。'
     elif any(s in lower for s in ('已变化', 'sha256', 'hash mismatch')):
         code, title, action = 'integrity', '文件版本发生变化', '重新预览并确认当前成片；不要沿用旧版本确认。'

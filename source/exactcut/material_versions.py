@@ -504,6 +504,10 @@ def runtime_message(status, *, has_preview=False, pending_changes=False, paused=
         message = '部分素材制作失败，请在执行进度查看原因并重试'
     elif status == 'publishing':
         message = '成片正在上传 FBBM'
+    elif status == 'unverified':
+        message = '交付结果待核实，已停止上传；请联系管理员核实后继续'
+    elif status == 'publish_failed':
+        message = '上传失败，请查看原因后重试上传 FBBM'
     elif status == 'review' and pending_changes:
         message = '配置已修改，待确认制作'
     elif status == 'review':
@@ -600,7 +604,14 @@ def detail(path):
                 item['error_info'] = guidance(publication['error'], 'fbbm')
         assets.append(item)
     status = 'producing' if 'processing' in candidates else 'queued' if 'queued' in candidates else 'partial' if 'failed' in candidates else 'review' if any(a.get('preview') for a in assets) else 'draft'
-    if _blocked(state): status = 'publishing'
+    delivery_statuses = {a['status'] for a in assets}
+    if any(d['status'] in {'pending', 'upload_queued', 'uploading', 'fbbm_queued'} for d in state['deliveries'].values()):
+        status = 'publishing'
+    elif status not in {'producing', 'queued', 'partial'} and (
+            'unverified' in delivery_statuses or any(d['status'] == 'unverified' for d in state['deliveries'].values())):
+        status = 'unverified'
+    elif 'publish_failed' in delivery_statuses and status not in {'producing', 'queued', 'partial'}:
+        status = 'publish_failed'
     control = state['control']
     events = list(state.get('events', []))
     history_paths = {path, *(w.BATCHES / v['child_id'] for v in state['versions'].values() if v.get('child_id'))}

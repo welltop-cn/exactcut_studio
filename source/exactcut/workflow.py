@@ -1165,7 +1165,7 @@ def delivery_intent(path, request_id, entry, phase, video=None):
 def upload(batch_id, request_id):
     material_versions.reject_legacy_write(folder(batch_id))
     """Persist intent before remote writes; ambiguous writes are never replayed."""
-    from .publish import publish_to_queue, guarded_delivery
+    from .publish import publish_to_queue, guarded_delivery, DeliveryPreparationError
     path = folder(batch_id)
     with execution(path, request_id, phase='upload'):
         manifest, request = request_for(path, request_id)
@@ -1200,6 +1200,9 @@ def upload(batch_id, request_id):
             entry.setdefault('poll_started', time.time())
             entry.pop('error', None)
         except Exception as exc:
+            if isinstance(exc, DeliveryPreparationError) and attempted:
+                entry['intent'].update(status='preparation_failed', failed_at=now_iso())
+                attempted = False
             unknown = attempted or delivery_blocked(entry) or bool(entry.get('verification_only') or entry.get('verification_history'))
             diag.event('publication.failed', level='error', batch_id=batch_id, request_id=request_id,
                        unknown_delivery=unknown, error=exc)

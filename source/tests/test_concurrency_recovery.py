@@ -177,10 +177,10 @@ def test_guarded_oss_checks_remote_sha_after_write(tmp_path):
     video = tmp_path / '123456_fbbm_1_20261009.mp4'; video.write_bytes(b'fixture')
     publisher = publish.OssPublisher(); bucket = Mock(); bucket.object_exists.return_value = False
     bucket.put_object_from_file.return_value.status = 200
-    bucket.get_object_meta.return_value.headers = {'x-oss-meta-sha256': 'wrong'}
+    bucket.head_object.return_value.headers = {'x-oss-meta-sha256': 'wrong'}
     with patch.object(publisher, 'connect', return_value=bucket), patch.object(publisher, 'key_for', return_value=('key', {})):
         with publish.guarded_delivery(), pytest.raises(publish.PublishError, match='校验'): publisher.upload(video)
-    bucket.put_object_from_file.assert_called_once(); bucket.get_object_meta.assert_called_once_with('key')
+    bucket.put_object_from_file.assert_called_once(); bucket.head_object.assert_called_once_with('key')
 
 
 def test_legacy_publish_uses_same_delivery_insurance(workspace):
@@ -347,3 +347,29 @@ def test_guarded_sync_accepts_persisted_material_retry_video_and_status(workspac
     assert entry['status'] == expected and entry['intent']['status'] == 'verified'
     assert remote['ADS素材ID'] == '1' and remote['重试次数'] == retries
     if expected == 'fbbm_ready': assert remote['视频ID'] == 'video-1' and remote['状态'] == '已完成'
+
+
+def test_finish_delivery_preserves_specific_error(runner):
+    batch = 'd' * 32; path = workflow.BATCHES / batch; path.mkdir()
+    write_json_atomic(path / 'draft.json', {})
+    write_json_atomic(path / 'runtime.json', {'status': 'publishing', 'events': []})
+    error = '待核实：OSS上传后校验失败，待核实：fixture.mp4'
+    write_json_atomic(path / 'publications.json', {'R1': {'status': 'unverified', 'error': error, 'intent': {'status': 'pending'}}})
+    job = queued('a', 'upload', batch=batch)
+    job.update(phase='upload', request_id='R1')
+    web.finish_job(job, 2)
+    assert read_json(path / 'publications.json')['R1']['error'] == error
+
+
+def test_oss_preparation_failure_is_retryable_without_feishu_write(workspace):
+    from exactcut import publish
+    batch = imported(); path, request, video, record = complete_asset(batch)
+    rid = request['request_id']; workflow.queue_publish(batch['id'], rid, record['output_sha256'])
+    with patch.object(publish.OssPublisher, 'upload', side_effect=RuntimeError('OSS校验失败')), patch.object(publish, 'FeishuClient') as feishu:
+        assert workflow.upload(batch['id'], rid) == 2
+        feishu.assert_not_called()
+    entry = read_json(path / 'publications.json')[rid]
+    assert entry['status'] == 'publish_failed'
+    assert entry['intent']['status'] == 'preparation_failed'
+    assert not workflow.delivery_blocked(entry)
+    workflow.queue_publish(batch['id'], rid, record['output_sha256'])
