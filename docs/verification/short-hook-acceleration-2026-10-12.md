@@ -21,12 +21,12 @@
 
 - 约 524 秒视频：旧版完整合成 500.288 秒，新版 22.911 秒；仅编码开头 13.2 秒，复制 15326 帧，总帧数 15722。此处约 21.8 倍仅是 Hook 阶段，不能当作端到端制作倍数。
 - 第一条全片解码无错误，15722 帧完整；第396帧起所有尾部解码像素与基础视频完全一致，完整解码音频一致。
-- 第二条约628秒视频：新版18.123秒，仅编码开头7.3秒，复制18624帧，总18843帧。第二条全片核验仍待完成。
+- 第二条约628秒视频：新版18.123秒，仅编码开头7.3秒，复制18624帧，总18843帧。全片解码无错误，第219帧起所有尾部解码像素与基础视频完全一致，完整解码音频一致。
 
 私有证据目录：服务器 `/srv/exactcut/acceptance/render-performance-20261012/`。
 
 ## 发布协调
 
-用户告知另一个 session 正在发布，本 session 不再发起构建、发布、维护、重启或处理线上交付状态。已上传候选 bundle `/srv/exactcut/preparation/exactcut-render-release.bundle`，包含提交 `0869d68`；尚未启动 Linux release-manager build，尚未发布。该分支尚未合入主工作区。发布执行者需完成 Linux 完整回归、两条长片核验与健康检查，不能将本地通过等同于已上线。
+用户告知另一个 session 正在发布，本 session 不再发起构建、发布、维护、重启或处理线上交付状态。已上传候选 bundle `/srv/exactcut/preparation/exactcut-render-release.bundle`，包含提交 `0869d68`；尚未启动 Linux release-manager build，尚未发布。该分支尚未合入主工作区。两条长片隔离核验现已通过；发布执行者仍需完成 Linux 完整回归与健康检查，不能将本地通过等同于已上线。
 
 切换前只读检查曾发现两个 upload job 为 unverified：`5df5f02fcc3752fbb22a3a6479f19bff`、`6efa5e5d12e15a2fbe20ce242707d3b1`，对应原测试两条素材后续交付；本 session 未发起交付或修改其状态。第一条 verification_binding 报 record_id 缺失或冲突，需发布执行者核对回执，不能直接清除阻挡记录。
