@@ -29,3 +29,5 @@
 - 初版完整本机回归 1094 项通过。新增横幅及暂停优先级后，针对性 102 项通过（read-retry、managed scheduler verification、material versions）；最终完整回归结果另附。
 - dev 发现顶部横幅原先仍写“正在上传”，补充只读查询延期提示；暂停状态保留原暂停文案。两种状态均有先失败再通过的回归。
 - 浏览器证据：`/tmp/exactcut-feishu-dev-retrying-final.png`、`/tmp/exactcut-feishu-dev-ready.png`；运行回执 `result.json` 保存在上述独立 dev 数据目录。
+
+本机完整回归（核心恢复及活动横幅版本）：1095 passed in 172.32s。其后暂停文案优先级的最终增量已由上述 102 项针对性回归验证。提交 f34d8e3 为核心修复，5b81031 为本机发现的横幅修复及验收记录；均在独立 fix/feishu-read-retry 分支，未合入正在被另一会话修改的主工作区，未发布生产。
