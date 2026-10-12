@@ -26,6 +26,10 @@ class DeliveryPreparationError(PublishError):
     """OSS preparation failed before any Feishu/FBBM submission was attempted."""
 
 
+class TransientDeliveryReadError(PublishError):
+    """A known read failed temporarily; never authorizes replaying a write."""
+
+
 GUARDED_DELIVERY = ContextVar('guarded_delivery', default=False)
 DELIVERY_RECEIPT = ContextVar('delivery_receipt', default=None)
 OSS_COPY_SOURCE = ContextVar('oss_copy_source', default=None)
@@ -268,8 +272,23 @@ class FeishuClient:
 
     @diag.traced('feishu.get_record')
     def get_record(self, record_id: str) -> dict[str, Any]:
-        response = requests.get(self._url(record_id), headers=self.headers, timeout=30)
-        return _response_json(response, "读取飞书记录").get("data", {}).get("record") or {}
+        for attempt in range(3):
+            try:
+                response = requests.get(self._url(record_id), headers=self.headers, timeout=30)
+                try:
+                    payload = _response_json(response, "读取飞书记录")
+                except PublishError as exc:
+                    try: code = response.json().get('code')
+                    except ValueError: code = None
+                    if code == 1255001 or response.status_code == 429 or 500 <= response.status_code < 600:
+                        raise TransientDeliveryReadError(str(exc)) from exc
+                    raise
+                return payload.get("data", {}).get("record") or {}
+            except (requests.Timeout, requests.ConnectionError, TransientDeliveryReadError) as exc:
+                if attempt == 2:
+                    raise TransientDeliveryReadError(f'读取飞书记录暂时失败：{exc}') from exc
+                diag.event('feishu.read_retry', level='warning', record_id=record_id, attempt=attempt+1)
+                time.sleep(2**attempt)
 
     @diag.traced('feishu.update')
     def update(self, record_id: str, fields: dict[str, Any]) -> None:
@@ -303,7 +322,13 @@ class CfAdsClient:
             headers = dict(custom_headers)
             if self.token:
                 headers = {**headers, "Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
-            response = requests.request(method, f"{self.base}{path}", headers=headers, timeout=self.timeout, **kwargs)
+            try:
+                response = requests.request(method, f"{self.base}{path}", headers=headers, timeout=self.timeout, **kwargs)
+            except (requests.Timeout, requests.ConnectionError) as exc:
+                if safe_read: raise TransientDeliveryReadError(f'FBBM 状态读取暂时失败：{exc}') from exc
+                raise
+            if safe_read and isinstance(response.status_code, int) and (response.status_code == 429 or 500 <= response.status_code < 600):
+                raise TransientDeliveryReadError(f'FBBM 状态读取暂时失败：HTTP {response.status_code}')
             diag.event('fbbm.http', method=method, route=path.partition('?')[0], status=response.status_code, attempt=attempt+1)
             try:
                 payload = response.json()

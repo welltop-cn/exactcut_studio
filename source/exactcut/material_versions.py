@@ -636,6 +636,8 @@ def detail(path):
                'events': events, 'request_parallel': True, 'executor_running': 'processing' in candidates,
                'observation': {}, 'error_info': None,
                'download_complete': bool(downloads) and all(downloads)}
+    if runtime['status'] == 'publishing' and any((a.get('error_info') or {}).get('code') == 'delivery_read_retry' for a in assets):
+        runtime['message'] = '交付状态查询暂时不可用，系统将自动重试；已有成片仍可播放'
     feedback = sorted([read_json(f) for f in w.FEEDBACK.glob(path.name + '-*.json')], key=lambda e: e['created_at'], reverse=True)
     document.update(revision=state['revision'], draft=copy.deepcopy(state['draft']), assets=assets,
                     media_managed=True, media_delivery_enabled=delivery_enabled(), deleted_at=state['deleted_at'], runtime=runtime, errors=errors,
