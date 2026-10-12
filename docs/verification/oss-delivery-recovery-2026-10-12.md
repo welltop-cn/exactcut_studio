@@ -19,4 +19,15 @@
 
 事故恢复限定原两条 job，核对不可变阶段结果、原 intent、批准 SHA、当前版本、无活进程、目标 OSS HEAD 及飞书无对应 URL。apply 要求维护标记并独占 worker.lock；宿主通过发布管理器 operation_lock/write_barrier 停止旧 web 后运行一次性容器。先备份，再恢复为 preparation_failed/publish_failed，不删除 OSS 对象、不改阶段原始证据、不自动创建新的外部记录。
 
-发布与线上结果待完成后补充。
+## 合并发布与线上验证
+
+用户要求同时发布另一会话的渲染加速。主工作区已合入 7a24e22（短 Hook 安全拼接）、cd46255（集中线程配置，默认4）与 f41d5f3（本修复），合并提交 d544eae88b903cab28369b5615212b3bd571a5c6。
+
+- 合并版本本地完整回归：1080 passed，173.20 秒。Linux：1073 passed、7 skipped，211.43 秒。独立审查无阻断项。
+- 加速两条长样本均通过完整解码、尾部逐帧像素、完整音频和总帧数验证；详见短 Hook 验收记录。
+- 发布：us-east-20261012-combined-d544eae，镜像 sha256:925251aebae5293a0445fd416072c65c6745a9710d808a346bae34eb3ffeb2d4。单独的 OSS 候选只构建未上线。
+- 原两条任务在维护屏障及停止 worker 后备份并恢复为 preparation_failed/publish_failed。check-switch 确认 active_tasks=[]、phase_blockers=[]、allowed=true；保留维护标记防止旧代码接到重试，然后由 linux-ops recover --version 启用已封存合并版本。最终 healthz=ok、production、worker_alive=true、maintenance=false。
+- 容器实际可导入 hook_splice；集中配置 media.encoder_threads=4。
+- 公网页面显示“上传失败，请查看原因后重试上传 FBBM”；两条按钮均为“重试上传 FBBM”，勾选确认后 disabled=false。
+- 沿用用户此前确认的原版本与 SHA，通过原 publish HTTP 入口逐条重试。两条均保存 oss_existed=true 和独立飞书记录，进入 fbbm_queued；未重新上传视频文件或重新渲染。平台终态随后补充。
+- 私有备份：/srv/exactcut/data/.web-state/acceptance/oss-preparation-20261012。原阶段结果和历史失败交付保留；发布与恢复记录位于 /srv/exactcut/history/。
