@@ -3,7 +3,7 @@ from copy import deepcopy
 from pathlib import Path
 
 from exactcut import intake, source_prefetch, workflow as w
-from test_source_picker import source, make_video
+from test_source_frames import source, make_video
 from test_web_base_path import app
 
 
@@ -48,11 +48,11 @@ def test_legacy_milliseconds_keep_original_meaning():
 
 
 def test_actual_source_frame_mapping_and_source_replacement(source):
-    from exactcut import source_picker
+    from exactcut import source_frames
     _, item, _, video = source
     path = w.folder(item['id'])
     data = draft(frame_clip())
-    meta = source_picker.prepare(path, data, 'EP1')
+    meta = source_frames.prepare(path, data, 'EP1')
     manifest, errors = intake.validate_draft(data, str(path / 'source.xlsx'))
     assert not errors, errors
     segment = manifest.requests[0].timeline[0]
@@ -64,12 +64,12 @@ def test_actual_source_frame_mapping_and_source_replacement(source):
 
 
 def test_vfr_invalid_frame_and_unknown_format_block_execution(source):
-    from exactcut import source_picker
+    from exactcut import source_frames
     _, item, _, video = source
     make_video(video, vfr=True)
     path = w.folder(item['id'])
     data = draft(frame_clip(start_f='003', end_f='006'))
-    meta = source_picker.prepare(path, data, 'EP1')
+    meta = source_frames.prepare(path, data, 'EP1')
     manifest, errors = intake.validate_draft(data, str(path / 'source.xlsx'))
     assert not errors, errors
     assert manifest.requests[0].timeline[0].start_ms == meta['times_ms'][3]
@@ -102,12 +102,12 @@ def test_save_without_source_preserves_frames_legacy_and_managed(source):
 
 
 def test_last_frame_maps_to_source_duration_and_does_not_modify_draft(source):
-    from exactcut import source_picker
+    from exactcut import source_frames
     _, item, _, _ = source
     path = w.folder(item['id'])
     data = draft(frame_clip(start_s='03', start_f='029', end_s='03', end_f='029'))
     before = deepcopy(data)
-    meta = source_picker.prepare(path, data, 'EP1')
+    meta = source_frames.prepare(path, data, 'EP1')
     manifest, errors = intake.validate_draft(data, str(path / 'source.xlsx'))
     assert not errors, errors
     assert manifest.requests[0].timeline[0].end_ms == meta['duration_ms']
@@ -149,19 +149,19 @@ def test_blank_api_rejects_invalid_format_without_creating_project(app):
 
 
 def test_frame_bucket_lookup_does_not_scan_entire_source_index(source, monkeypatch):
-    from exactcut import source_picker
+    from exactcut import source_frames
     _, item, _, _ = source
     path = w.folder(item['id'])
     data = draft(frame_clip(start_s='01', start_f='002', end_s='02', end_f='003'))
-    meta = source_picker.prepare(path, data, 'EP1')
-    original_load = source_picker._load
+    meta = source_frames.prepare(path, data, 'EP1')
+    original_load = source_frames._load
     class IndexedOnly(list):
         def __iter__(self):
             raise AssertionError('frame lookup must not scan entire source timestamps')
     def indexed_load(*args):
         doc, video, directory = original_load(*args)
         return {**doc, 'times_ms': IndexedOnly(doc['times_ms'])}, video, directory
-    monkeypatch.setattr(source_picker, '_load', indexed_load)
+    monkeypatch.setattr(source_frames, '_load', indexed_load)
     manifest, errors = intake.validate_draft(data, str(path / 'source.xlsx'))
     assert not errors, errors
     assert manifest.requests[0].timeline[0].start_ms == meta['times_ms'][32]

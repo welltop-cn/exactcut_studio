@@ -101,7 +101,7 @@ def cached(drama, episode):
 
 
 def frame_index_ready(path, drama, episode):
-    from .source_picker import _video, _fingerprint, _load
+    from .source_frames import _video, _fingerprint, _load
     from .util import json_sha256
     try:
         key = json_sha256({'version': 1, 'drama': drama, 'episode': episode,
@@ -204,7 +204,7 @@ def run(batch_id, job_id):
             if not needs_frames or signature(job['project'], episode) is None:
                 source_cache.ensure(job['project'], [episode], on_progress=progress)
             if needs_frames:
-                from .source_picker import prepare
+                from .source_frames import prepare
                 prepare(path, {'drama_id': job['project'], 'rows': [{'clips': [
                     {'episode': episode, 'time_format': 'source_frames_v1'}]}]}, episode)
             state.update(status='ready', signature=signature(job['project'], episode))

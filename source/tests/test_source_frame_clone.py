@@ -1,8 +1,8 @@
 from copy import deepcopy
 import pytest
-from exactcut import workflow as w, source_picker, intake, material_versions
+from exactcut import workflow as w, source_frames, intake, material_versions
 from exactcut.util import read_json, write_json_atomic
-from test_source_picker import source, make_video
+from test_source_frames import source, make_video
 from test_web_base_path import app
 from test_source_frame_timecode import frame_clip
 
@@ -13,7 +13,7 @@ def indexed_project(source, managed=False):
     draft.update(drama_id='101573', author='clone-test')
     draft['rows'][0]['clips'] = [frame_clip()]
     path = w.folder(item['id'])
-    meta = source_picker.prepare(path, draft, 'EP1')
+    meta = source_frames.prepare(path, draft, 'EP1')
     saved = w.save_draft(item['id'], {'revision': item['revision'], 'draft': draft})
     if managed:
         material_versions.enroll(path)

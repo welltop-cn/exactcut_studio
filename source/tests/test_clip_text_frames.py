@@ -6,7 +6,7 @@ from pydantic import ValidationError
 
 from exactcut import llm_intake as m
 from test_blank_batch_api import app, call
-from test_source_picker import make_video
+from test_source_frames import make_video
 
 
 def frame(episode=4, **changes):
@@ -110,7 +110,7 @@ def test_http_requires_auth_csrf_and_passes_explicit_format(app, monkeypatch):
 def test_local_paste_saves_prepares_and_confirms_actual_source_frame_boundaries(app, monkeypatch):
     from copy import deepcopy
     import uuid
-    from exactcut import source_picker, workflow as w, material_versions, material_workers
+    from exactcut import source_frames, workflow as w, material_versions, material_workers
     monkeypatch.setattr(m, 'interpret', lambda *a, **k: pytest.fail('standard paste must stay local'))
     monkeypatch.setenv('EXACTCUT_ALLOW_AI', '0')
     make_video(w.ROOT / 'projects/101573/source/videos/EP1.mp4')
@@ -124,7 +124,7 @@ def test_local_paste_saves_prepares_and_confirms_actual_source_frame_boundaries(
     saved = w.save_draft(path.name, {'revision': item['revision'], 'draft': draft})
     assert saved['draft']['rows'][0]['clips'][0]['start_f'] == '019'
     assert saved['errors']  # Save is allowed; execution still needs the original index.
-    index = source_picker.prepare(path, saved['draft'], 'EP1')
+    index = source_frames.prepare(path, saved['draft'], 'EP1')
     ready = w.detail(path.name)
     assert ready['errors'] == []
     material_versions.enroll(path)
@@ -142,14 +142,14 @@ def test_local_paste_saves_prepares_and_confirms_actual_source_frame_boundaries(
 @pytest.mark.parametrize('field', ['start_m', 'start_s', 'start_f', 'end_m', 'end_s', 'end_f'])
 def test_source_frame_confirmation_requires_every_explicit_time_field(app, field):
     from copy import deepcopy
-    from exactcut import intake, source_picker, workflow as w
+    from exactcut import intake, source_frames, workflow as w
     make_video(w.ROOT / 'projects/101573/source/videos/EP1.mp4')
     item = w.create_blank(time_format='source_frames_v1')
     path = w.folder(item['id'])
     draft = deepcopy(item['draft'])
     draft.update(drama_id='101573', author='paste-test')
     draft['rows'][0]['clips'] = m.read_clip_text('EP1 00:00:019-00:01:012', time_format='source_frames_v1')['clips']
-    source_picker.prepare(path, draft, 'EP1')
+    source_frames.prepare(path, draft, 'EP1')
     draft['rows'][0]['clips'][0][field] = ''
     manifest, errors = intake.validate_draft(draft, str(path / 'source.xlsx'))
     assert manifest is None and errors

@@ -7,9 +7,9 @@ import uuid
 import pytest
 
 from exactcut import workflow as w, material_versions as versions, material_workers
-from exactcut import source_picker, renderer, qc
+from exactcut import source_frames, renderer, qc
 from exactcut.util import load_config, read_json, write_json_atomic
-from test_source_picker import source
+from test_source_frames import source
 from test_web_base_path import app
 from test_source_frame_timecode import frame_clip
 
@@ -41,7 +41,7 @@ def test_managed_frame_draft_renders_confirmed_milliseconds_with_hook_ending_and
         recognized = read_clip_text('EP1 00:00:019-00:02:012', time_format='source_frames_v1')
         assert not recognized['errors'], recognized
         row['clips'] = recognized['clips']
-    index = source_picker.prepare(parent, draft, 'EP1')
+    index = source_frames.prepare(parent, draft, 'EP1')
     saved = w.save_draft(parent.name, {'revision': item['revision'], 'draft': draft})
     assert saved['draft']['rows'][0]['clips'][0]['start_f'] == '019'
     versions.enroll(parent)

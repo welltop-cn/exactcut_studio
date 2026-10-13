@@ -692,7 +692,7 @@ def _clone_batch(batch_id, *, purpose='copy'):
                     shutil.copyfileobj(incoming, outgoing); outgoing.flush(); os.fsync(outgoing.fileno())
             if file_sha256(target) != digest or file_sha256(original) != digest: raise ValueError('结尾图片副本校验失败')
             material_versions.sync_directory(target.parent)
-    from .source_picker import copy_frame_indexes
+    from .source_frames import copy_frame_indexes
     copy_frame_indexes(source, path, data['draft'])
     data.update(id=batch_id, filename='网页填写', created_at=now_iso(), revision=1)
     data.update(source_batch_id=source.name, source_revision=source_revision, clone_purpose=purpose)

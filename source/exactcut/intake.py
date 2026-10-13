@@ -573,7 +573,7 @@ def validate_draft(draft, source=''):
                 raise ValueError('需求编号只能包含文字、数字、下划线或连字符，最多 80 字')
             clips = row.get('clips')
             if isinstance(clips, list) and any(isinstance(clip, dict) and clip.get('time_format') for clip in clips):
-                from .source_picker import resolve_frame_clips
+                from .source_frames import resolve_frame_clips
                 row = resolve_frame_clips(row, drama_id, Path(source).parent if source else None)
             structured_timeline = _structured_timeline(row)
             timeline = [] if structured_timeline is None else structured_timeline

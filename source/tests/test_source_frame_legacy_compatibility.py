@@ -3,7 +3,7 @@ from copy import deepcopy
 
 import pytest
 
-from exactcut import intake, material_versions as versions, source_picker, workflow as w
+from exactcut import intake, material_versions as versions, source_frames, workflow as w
 from exactcut.util import read_json, write_json_atomic
 from test_workflow import workspace, complete_asset
 from test_material_versions import candidate_job, token
@@ -17,7 +17,7 @@ def forbid_frame_resolution(monkeypatch, workspace):
     def forbidden(*args, **kwargs):
         pytest.fail('legacy millisecond project must not need a source-frame index')
     for name in ('prepare', '_load', 'resolve_frame_clips'):
-        monkeypatch.setattr(source_picker, name, forbidden)
+        monkeypatch.setattr(source_frames, name, forbidden)
 
 
 def legacy_project():

@@ -1,7 +1,7 @@
 """Combined frame-editor and segment-effect contract across feature branches."""
 from copy import deepcopy
-from exactcut import intake,source_picker,workflow as w
-from test_source_picker import source
+from exactcut import intake,source_frames,workflow as w
+from test_source_frames import source
 from test_web_base_path import app
 from test_source_frame_timecode import draft,frame_clip
 
@@ -14,7 +14,7 @@ def test_frame_confirmation_keeps_caption_and_transition(source):
     data['rows'][0]['clips'].append(frame_clip(start_s='01',start_f='000',end_s='01',end_f='029',
         segment_caption={'text':'后来','duration_ms':700},transition_in='flash_white',transition_duration_ms=800))
     before=deepcopy(data)
-    source_picker.prepare(path,data,'EP1')
+    source_frames.prepare(path,data,'EP1')
     manifest,errors=intake.validate_draft(data,str(path/'source.xlsx'))
     assert not errors,errors
     assert data==before
@@ -48,5 +48,5 @@ def test_incomplete_frame_row_with_caption_is_not_silently_dropped(source):
     _,item,_,_=source
     path=w.folder(item['id']);data=draft(frame_clip())
     data['rows'][0]['clips'].append(frame_clip(episode='',start_f='000',end_s='00',end_f='000',segment_caption={'text':'keep','duration_ms':500}))
-    source_picker.prepare(path,data,'EP1')
+    source_frames.prepare(path,data,'EP1')
     assert intake.validate_draft(data,str(path/'source.xlsx'))[1]

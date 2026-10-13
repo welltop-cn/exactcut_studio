@@ -4,8 +4,8 @@ import json
 
 import pytest
 
-from exactcut import hook_preview, material_versions, source_picker, webserver as web, workflow as w
-from test_source_picker import source
+from exactcut import hook_preview, material_versions, source_frames, webserver as web, workflow as w
+from test_source_frames import source
 from test_source_frame_timecode import frame_clip
 from test_web_base_path import app, request
 
@@ -22,7 +22,7 @@ def test_frame_draft_hook_preview_uses_ready_source_index(source, monkeypatch, m
     row = draft['rows'][0]
     row.update(clips=[frame_clip()], hook_text='LOOK!',
                hook_options={'mode': 'none', 'style': 'default', 'position': 'top'})
-    index = source_picker.prepare(path, draft, 'EP1')
+    index = source_frames.prepare(path, draft, 'EP1')
     saved = w.save_draft(path.name, {'revision': created['revision'], 'draft': draft})
     assert not saved['errors']
     if managed:

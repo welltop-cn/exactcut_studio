@@ -1,21 +1,17 @@
-"""Read-only source picking. Durable boundaries use renderer's millisecond clock."""
+"""Source frame indexing and conversion to the existing millisecond timeline."""
 import json
 from bisect import bisect_left
 import math
 import re
-import subprocess
 import threading
-import tempfile
-from pathlib import Path
 from contextlib import contextmanager
 from fractions import Fraction
 
 from . import media, source_prefetch, workflow
 from .util import json_sha256, read_json, write_json_atomic
 
-# Separate bounded interactive work; never occupies the durable mutation lock.
+# Bound background indexing; never probe under the durable mutation lock.
 _SLOTS = threading.BoundedSemaphore(2)
-_CACHE_LOCK = threading.Lock()
 
 
 @contextmanager
@@ -32,7 +28,7 @@ def _video(drama, episode):
     try:
         return media.resolve_episode_video(workflow.ROOT / 'projects' / drama, episode)
     except (OSError, ValueError, RuntimeError):
-        raise ValueError('本集正片尚未就绪，请先准备正片，完成后重新打开选帧') from None
+        raise ValueError('本集正片尚未就绪，请先准备正片，等待帧索引准备完成') from None
 
 
 def _fingerprint(video):
@@ -87,60 +83,15 @@ def prepare(path, draft, episode):
 
 def _load(path, key):
     if not re.fullmatch('[a-f0-9]{64}', key):
-        raise ValueError('无效选帧标识')
+        raise ValueError('无效帧索引标识')
     target = path / 'source-picker' / key / 'index.json'
     if not target.is_file():
-        raise ValueError('选帧已失效，请重新打开')
+        raise ValueError('帧索引已失效，请重新准备正片')
     doc = read_json(target)
     video = _video(doc['drama'], doc['episode'])
     if _fingerprint(video) != doc['signature']:
-        raise ValueError('正片已变化，请重新打开选帧')
+        raise ValueError('正片已变化，请重新准备帧索引')
     return doc, video, target.parent
-
-
-def video(path, key):
-    return _load(path, key)[1]
-
-
-def frame(path, key, index):
-    doc, source, directory = _load(path, key)
-    if not 0 <= index < len(doc['pts']):
-        raise ValueError('帧序号超出范围')
-    target = directory / f'{index}.png'
-    with _CACHE_LOCK:
-        if target.is_file():
-            return target.read_bytes()
-    with _slot():
-        preceding = max((i for i in doc['keyframes'] if i <= index), default=0)
-        seek = max(0, doc['times_ms'][preceding])
-        # Preserve source PTS through seek; select the indexed presentation timestamp.
-        command = ['ffmpeg', '-v', 'error', '-copyts', '-ss', f'{seek / 1000:.3f}',
-                   '-i', str(source), '-vf', f"select=eq(pts\\,{doc['pts'][index]})",
-                   '-frames:v', '1', '-fps_mode', 'passthrough', '-f', 'image2pipe', '-c:v', 'png', '-']
-        try:
-            result = subprocess.run(media.bounded_ffmpeg(command), capture_output=True, timeout=30)
-            if result.returncode or not result.stdout.startswith(b'\x89PNG'):
-                raise ValueError('frame unavailable')
-            _load(path, key)
-            with _CACHE_LOCK:
-                # Publish a complete inode; concurrent responses never see truncation.
-                temporary = None
-                try:
-                    with tempfile.NamedTemporaryFile(dir=directory, suffix='.tmp', delete=False) as stream:
-                        temporary = Path(stream.name)
-                        stream.write(result.stdout)
-                    temporary.replace(target)
-                finally:
-                    if temporary is not None:
-                        temporary.unlink(missing_ok=True)
-                # Bound image storage for this batch across all source revisions.
-                images = sorted((path / 'source-picker').glob('*/*.png'), key=lambda p: p.stat().st_mtime_ns)
-                for old in images[:-256]:
-                    if old != target:
-                        old.unlink(missing_ok=True)
-        except (OSError, subprocess.TimeoutExpired, ValueError):
-            raise ValueError('准确帧暂不可用，请重新打开选帧后重试') from None
-    return result.stdout
 
 
 def copy_frame_indexes(source, target, draft):
