@@ -7,3 +7,8 @@
 - Keep durable data schema at version 1 for this phase. Any incompatible data or dependency change must include a separately reviewed migration and tested rollback procedure. Never restore an old database during an ordinary code rollback.
 - Publish only a committed, clean revision through the release manager. Record the release ID, Git commit, test result and health checks. Failed health checks restore the previous deployment automatically.
 - Git excludes secrets, account databases, original user spreadsheets, videos, feedback JSON and task state. Backups are private and remain outside Git.
+
+## Local dev coordination
+
+- Before starting, stopping, restarting, or reusing local dev, read [local dev service inventory](../docs/local-dev-services.md). Use 8793 as the shared daily dev entry; 8794–8797 are historical temporary/demo/test instances, not interchangeable production mirrors. Check current processes and active tasks before acting.
+- Keep synthetic delivery fixtures isolated from the main dev data. Record temporary service ownership and stop your own temporary instance after acceptance; do not claim cleanup or restart happened without verifying it.
