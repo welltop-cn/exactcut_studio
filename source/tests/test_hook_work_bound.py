@@ -34,3 +34,24 @@ def test_bounded_overlay_matches_every_frame_and_audio(tmp_path, monkeypatch, en
         return run_checked(['ffmpeg','-v','error','-i',str(path),'-map','0:v:0','-map','0:a:0',
                             '-f','framemd5','-']).stdout
     assert hashes(output)==hashes(tmp_path/'old.mp4')
+
+
+@pytest.mark.parametrize('duration', ['1.5', '4'])
+def test_normalized_full_hook_keeps_every_frame_through_eof(tmp_path, monkeypatch, duration):
+    from exactcut.media import ffprobe
+    source = tmp_path / 'source.mp4'
+    run_checked(['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=s=108x192:r=30',
+                 '-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100', '-t', duration,
+                 '-c:v', 'libx264', '-crf', '0', '-pix_fmt', 'yuv420p', '-c:a', 'aac', str(source)])
+    png = tmp_path / 'hook.png'
+    Image.new('RGBA', (108, 192), (200, 30, 80, 180)).save(png)
+    monkeypatch.setattr(renderer, 'resolve_hook_visual', lambda *a, **kw: {})
+    monkeypatch.setattr(renderer, 'render_personalized_hook_png', lambda *a, **kw: png)
+    render = {**load_config()['render'], 'width': 108, 'height': 192,
+              'crf': 0, 'hook_duration_ms': 900, 'hook_fade_out_ms': 400}
+    output = tmp_path / 'hooked.mp4'
+    renderer._apply_hook(source, 'Hook', output, render, tmp_path, normalized_input=True)
+    original = next(s for s in ffprobe(source)['streams'] if s['codec_type'] == 'video')
+    actual = next(s for s in ffprobe(output)['streams'] if s['codec_type'] == 'video')
+    assert int(actual['nb_frames']) == int(original['nb_frames']) == round(float(duration) * 30)
+    assert actual['duration'] == original['duration']

@@ -212,11 +212,11 @@ def stage_enter(job):
 
 
 def _receipt(receipt, path, digest, parent, rid):
-    from .preview_oss import PREFIX, _identity
+    from .preview_oss import object_prefix, _identity
     from urllib.parse import quote
     if (not isinstance(receipt, dict) or receipt.get('sha256') != digest
             or receipt.get('bytes') != path.stat().st_size or receipt.get('identity') != _identity(path)
-            or receipt.get('key') != f'{PREFIX}/{parent.name}/{quote(rid, safe="")}/{digest}.mp4'
+            or receipt.get('key') != f'{object_prefix()}/{parent.name}/{quote(rid, safe="")}/{digest}.mp4'
             or not receipt.get('bucket') or not receipt.get('endpoint')):
         raise ValueError('正式成片与预览均需完成 OSS 校验')
 

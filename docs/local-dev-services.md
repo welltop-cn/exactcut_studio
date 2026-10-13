@@ -80,6 +80,12 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 闪白时长反馈更新：确认无活动任务后，8793 从 PID 60490 正常重启为 PID 69384（历史快照），配置不变。项目 `292f4f2ab93a44ae8cb4a080e5a006a2` 提供硬切、默认 0.5 秒、自定义 0.8 秒三条成片，均 qc_passed，保留运行供用户验收。
 
 闪白上限更新：确认无活动任务后，从 PID 69384 正常重启为 PID 78630（历史快照），沿用隔离配置。前后端均支持 0.2～5 秒，默认 0.5 秒；healthz 返回 development/ok。
+## Source frame picker temporary preview (2026-10-13)
+
+- `http://localhost:8799/home/#95f99b49174e4cbb80dbbe381abde05c`: new explicit frame-format interaction demo; original millisecond copy `bb380fdda28544e98ed8839a2dfa1972` remains unchanged.
+- Owner: source-frame-picker feature session, worktree `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/source-frame-picker`. Private launcher `/tmp/exactcut-source-picker-dev-20261013/start.py`, data sibling `data`; recheck listener and command before any service action.
+- Worker, source fetching, AI, external writes and publishing disabled. The user explicitly requested readonly copies of the production project's configuration and video for local testing. No production mutation; no shared 8793 restart.
+- User requested a live preview, so leave this dedicated instance available until inspection is complete. Do not remove its data or treat it as production. Code is uncommitted and not released.
 
 ## 服务器独立测试实例部署文档
 

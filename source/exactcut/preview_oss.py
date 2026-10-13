@@ -11,10 +11,17 @@ from .runtime import environment
 from .util import file_sha256, load_config, env
 from . import diagnostics as diag
 
-# Fixed namespace: configuration must never redirect preview writes into delivery keys.
+# Restricted namespaces: configuration cannot redirect writes into delivery keys.
 PREFIX = 'exactcut-previews/production'
 _LOCKS = [threading.Lock() for _ in range(64)]
 _UPLOADS = threading.BoundedSemaphore(2)
+
+
+def object_prefix():
+    namespace = load_config().get("preview", {}).get("namespace", "production")
+    if namespace not in ("production", "test"):
+        raise ValueError("preview.namespace must be production or test")
+    return "exactcut-previews/" + namespace
 
 
 def enabled():
@@ -111,7 +118,7 @@ def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, rec
     request_key = quote(request_id, safe='')
     if not request_key or request_key in {'.', '..'}:
         raise ValueError('无效素材编号')
-    prefix = f'{PREFIX}/{batch_id}/{request_key}/'
+    prefix = f'{object_prefix()}/{batch_id}/{request_key}/'
     identity = _identity(video)
     if (isinstance(receipt, dict) and re.fullmatch(r'[0-9a-f]{64}', str(receipt.get('sha256', ''))) and
             receipt.get('key') == prefix + receipt['sha256'] + '.mp4' and

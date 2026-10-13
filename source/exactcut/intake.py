@@ -482,7 +482,11 @@ def _clip_fields(clip):
     episode = re.sub(r'(?i)^ep', '', str(clip.get('episode') or '').strip())
     stored = {'episode': episode, **_segment_fields(clip)}
     numbers = {}
-    for key, limit in _CLIP_LIMITS:
+    limits = _CLIP_LIMITS
+    if clip.get('time_format'):
+        stored['time_format'] = str(clip['time_format'])
+        limits = tuple((key.replace('_ms', '_f'), limit) for key, limit in _CLIP_LIMITS)
+    for key, limit in limits:
         raw = str('' if clip.get(key) is None else clip.get(key)).strip()
         stored[key] = raw
         numbers[key] = _clip_number(raw, limit)
@@ -498,6 +502,8 @@ def _clip_idle(stored, numbers):
 
 def _clip_line(stored, numbers):
     """分:秒:毫秒 becomes the minute:second.millisecond line the current cutter reads."""
+    if stored.get('time_format'):
+        return None
     episode = stored['episode']
     if not (episode.isdigit() and 1 <= int(episode) <= 500 and all(number is not None for number in numbers.values())):
         return None
@@ -565,6 +571,10 @@ def validate_draft(draft, source=''):
             request_id = str(row.get('request_id', '')).strip()
             if not re.fullmatch(r'[\w\-]{1,80}', request_id):
                 raise ValueError('需求编号只能包含文字、数字、下划线或连字符，最多 80 字')
+            clips = row.get('clips')
+            if isinstance(clips, list) and any(isinstance(clip, dict) and clip.get('time_format') for clip in clips):
+                from .source_picker import resolve_frame_clips
+                row = resolve_frame_clips(row, drama_id, Path(source).parent if source else None)
             structured_timeline = _structured_timeline(row)
             timeline = [] if structured_timeline is None else structured_timeline
             raw_timeline = str(row.get('timeline_text', '')) if structured_timeline is None else ''

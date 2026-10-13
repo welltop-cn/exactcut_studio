@@ -1237,6 +1237,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200, self.web_page('index.html'), 'text/html; charset=utf-8')
         if self.path == '/helper.js':
             return self.script('helper.js')
+        if self.path == '/source-picker.js':
+            return self.script('source-picker.js')
         if self.path == '/app.js':
             return self.script('app.js')
         if self.path == '/diagnostics.js':
@@ -1287,6 +1289,16 @@ class Handler(BaseHTTPRequestHandler):
                         self.end_headers()
                         return
                     return self.respond(200, result)
+                picker = re.fullmatch(r'source-picker/([a-f0-9]{64})/(video|frame/(\d+))', suffix)
+                if picker:
+                    from . import source_picker
+                    try:
+                        if picker[2] == 'video':
+                            return self.stream_video(source_picker.video(path, picker[1]))
+                        image = source_picker.frame(path, picker[1], int(picker[3]))
+                        return self.respond(200, image, 'image/png')
+                    except OSError:
+                        return self.respond(400, {'error': '正片暂不可用，请重新打开选帧后重试'})
                 if suffix.startswith('video/'):
                     output, _ = workflow.preview_file(batch_id, unquote(suffix[6:]))
                     return self.stream_video(output)
@@ -1395,6 +1407,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         self.normalize_path()
         match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/([^/]+)', self.path)
+        if match and match[2] == 'source-picker':
+            return self.source_picker_submission(match[1])
         if match and match[2] == 'hook-preview' and not workflow.material_versions.internal(workflow.BATCHES / match[1]):
             return self.hook_preview(match[1])
         if match:
@@ -1412,6 +1426,25 @@ class Handler(BaseHTTPRequestHandler):
             return self.handle_post()
         with mutation_lock():
             self.handle_post()
+
+    def source_picker_submission(self, batch_id):
+        if not self.authorized(): return
+        if self.headers.get('X-Exactcut-Request') != '1':
+            return self.respond(403, {'error': '无效请求来源'})
+        if not self.can_access(batch_id):
+            return self.respond(404, {'error': '项目不存在或无权访问'})
+        try:
+            size = int(self.headers.get('Content-Length', '0'))
+            if not 1 <= size <= 1_000_000: raise ValueError('无效请求大小')
+            data = json.loads(self.rfile.read(size))
+            if not isinstance(data, dict): raise ValueError('无效请求')
+            from . import source_picker
+            result = source_picker.prepare(workflow.folder(batch_id), data.get('draft'), data.get('episode'))
+            return self.respond(200, result)
+        except OSError:
+            return self.respond(400, {'error': '正片暂不可用，请重新打开选帧后重试'})
+        except ValueError as exc:
+            return self.respond(400, {'error': str(exc)})
 
     def material_submission(self, batch_id, action):
         """Managed CAS transactions run outside legacy mutation/thread locks."""
@@ -1588,7 +1621,7 @@ class Handler(BaseHTTPRequestHandler):
                 index = data.get('index')
                 if type(index) is not int or not 0 <= index < len(snapshot['draft']['rows']):
                     raise ValueError('无效素材序号')
-                manifest, errors = validate_draft(snapshot['draft'])
+                manifest, errors = validate_draft(snapshot['draft'], str(workflow.folder(batch_id) / 'source.xlsx'))
                 if errors:
                     raise ValueError('请先修正并保存制作内容：'+'；'.join(errors))
                 if not re.fullmatch(r'[0-9]{6}',manifest.drama_id):
@@ -1692,7 +1725,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(200, user)
             if self.path == '/api/clip-text':
                 from .llm_intake import read_clip_text
-                return self.respond(200, read_clip_text(data.get('text')))
+                return self.respond(200, read_clip_text(data.get('text'), time_format=data.get('time_format', '')))
             if self.path == '/api/help':
                 batch_id = data.get('batch_id')
                 detail = None
@@ -1723,7 +1756,7 @@ class Handler(BaseHTTPRequestHandler):
             if self.path in ('/api/projects','/api/jobs','/api/upload') and not self.is_admin():
                 return
             if self.path == '/api/batches/blank':
-                result = workflow.create_blank(self.user.get('name') or '')
+                result = workflow.create_blank(self.user.get('name') or '', time_format=data.get('time_format', ''))
                 with LOCK:
                     accounts.assign(workflow.folder(result['id']), self.user)
                     if workflow.material_versions.enabled():

@@ -321,8 +321,10 @@ def allocate_sequences(draft, batch_id, *, all_new=False):
     return changed
 
 
-def create_blank(author='', *, display_name=''):
+def create_blank(author='', *, display_name='', time_format=''):
     """Empty copy of the current editor. No spreadsheet and no model call."""
+    if not isinstance(time_format, str) or time_format not in ('', 'source_frames_v1'):
+        raise ValueError('无效片段时间格式')
     from .intake import blank_clip
     from .compiler import production_date
     batch_id = uuid.uuid4().hex
@@ -334,6 +336,10 @@ def create_blank(author='', *, display_name=''):
            'clips': [blank_clip()]}
     draft = {'drama_id': '', 'drama_title': '', 'business_date': production_date(), 'author': '',
              'creator2': 'agent', 'material_type': 'typezxraw', 'time_notation': 'seconds', 'rows': [row]}
+    if time_format == 'source_frames_v1':
+        draft['editor_time_format'] = time_format
+        row['clips'] = [{**{key.replace('_ms', '_f'): value for key, value in blank_clip().items()},
+                         'time_format': time_format}]
     write_json_atomic(path / 'draft.json', {'id': batch_id, 'filename': '网页填写', 'display_name': display_name,
                                             'created_at': now_iso(), 'revision': 1,
                                             'draft': draft, 'warnings': []})
@@ -686,6 +692,8 @@ def _clone_batch(batch_id, *, purpose='copy'):
                     shutil.copyfileobj(incoming, outgoing); outgoing.flush(); os.fsync(outgoing.fileno())
             if file_sha256(target) != digest or file_sha256(original) != digest: raise ValueError('结尾图片副本校验失败')
             material_versions.sync_directory(target.parent)
+    from .source_picker import copy_frame_indexes
+    copy_frame_indexes(source, path, data['draft'])
     data.update(id=batch_id, filename='网页填写', created_at=now_iso(), revision=1)
     data.update(source_batch_id=source.name, source_revision=source_revision, clone_purpose=purpose)
     data.pop('imported_batches', None)
@@ -731,9 +739,6 @@ def _start_batch(batch_id, revision):
     data = read_json(path / 'draft.json')
     if data['revision'] != revision:
         raise ValueError('请先保存最新草稿，再确认执行')
-    manifest, errors = validate_draft(data['draft'], str(path / 'source.xlsx'))
-    if errors:
-        raise ValueError('\n'.join(errors))
     if state['status'] == 'interrupted' and state.get('active_request') and (path / 'publications.json').exists():
         raise ValueError('上次中断于上传阶段，请在成片预览中重试对应素材上传')
     if (path / 'confirmed.json').exists():
@@ -741,6 +746,9 @@ def _start_batch(batch_id, revision):
             raise ValueError('此批次已制作，请直接预览或复制新草稿')
         manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
     else:
+        manifest, errors = validate_draft(data['draft'], str(path / 'source.xlsx'))
+        if errors:
+            raise ValueError('\n'.join(errors))
         names = {r.output_filename for r in manifest.requests}
         for other in BATCHES.glob('*/confirmed.json'):
             if other.parent != path:

@@ -22,10 +22,18 @@ def snapshot(draft):
     if not isinstance(rows, list) or len(rows) > 200 or len(json.dumps(draft)) > 1_000_000:
         raise ValueError('正片准备内容格式错误')
     requests = []
+    frame_episodes = set()
     for original in rows:
         if not isinstance(original, dict):
             continue
         row = deepcopy(original)
+        # Frame drafts need the source before time fields can be validated.
+        for clip in row.get('clips', []) if isinstance(row.get('clips'), list) else []:
+            if not isinstance(clip, dict) or clip.get('time_format') != 'source_frames_v1':
+                continue
+            episode = re.sub(r'(?i)^ep', '', str(clip.get('episode') or '').strip())
+            if episode.isdigit() and 1 <= int(episode) <= 500:
+                frame_episodes.add('EP' + str(int(episode)))
         compile_composition(row)
         compile_clips(row)
         raw = str(row.get('timeline_text') or '')
@@ -45,7 +53,7 @@ def snapshot(draft):
             except (ValueError, RuntimeError, TypeError):
                 continue
         requests.append(SimpleNamespace(request_id=str(row.get('request_id') or ''), timeline=timeline))
-    episodes = sorted({t.episode for r in requests for t in r.timeline if t.type == 'episode'},
+    episodes = sorted(frame_episodes | {t.episode for r in requests for t in r.timeline if t.type == 'episode'},
                       key=lambda ep: int(ep[2:]))
     return drama, episodes, SimpleNamespace(requests=requests)
 

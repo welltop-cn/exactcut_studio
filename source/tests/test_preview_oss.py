@@ -181,3 +181,54 @@ def test_fbbm_reuses_existing_copy_with_head_metadata(tmp_path, monkeypatch):
     assert result['oss_existed'] is True
     bucket.copy_object.assert_not_called()
     bucket.put_object_from_file.assert_not_called()
+
+
+def test_namespace_default_and_test(monkeypatch):
+    monkeypatch.setattr(preview_oss, 'load_config', lambda: {})
+    assert preview_oss.object_prefix() == 'exactcut-previews/production'
+    monkeypatch.setattr(preview_oss, 'load_config', lambda: {'preview': {'namespace': 'test'}})
+    assert preview_oss.object_prefix() == 'exactcut-previews/test'
+
+
+@pytest.mark.parametrize('value', ['', '../production', 'fb-bm-assets', None, True, 'test/foo'])
+def test_namespace_rejects_other_destinations(monkeypatch, value):
+    monkeypatch.setattr(preview_oss, 'load_config', lambda: {'preview': {'namespace': value}})
+    with pytest.raises(ValueError, match='namespace'):
+        preview_oss.object_prefix()
+
+
+def test_namespace_upload_never_reuses_production_receipt(tmp_path, monkeypatch):
+    class TestBucket(Bucket):
+        def put_object_from_file(self, key, filename, headers):
+            from pathlib import Path
+            assert key.startswith('exactcut-previews/test/')
+            self.puts.append(key)
+            self.objects[key] = (Path(filename).read_bytes(), headers)
+            return SimpleNamespace(status=200)
+    video = tmp_path / 'preview.mp4'; video.write_bytes(b'video')
+    bucket = TestBucket()
+    digest = hashlib.sha256(b'video').hexdigest()
+    receipt = {'key': 'exactcut-previews/production/'+'a'*32+'/R1/'+digest+'.mp4',
+               'sha256': digest, 'identity': preview_oss._identity(video),
+               'bytes': 5, 'bucket': bucket.bucket_name, 'endpoint': bucket.endpoint}
+    monkeypatch.setattr(preview_oss, 'load_config', lambda: {'preview': {'namespace': 'test'}})
+    result = preview_oss.signed_preview(video, 'a'*32, 'R1', bucket=bucket, receipt=receipt)
+    assert len(bucket.puts) == 1
+    assert '/exactcut-previews/test/' in result['url']
+
+
+@pytest.mark.parametrize('namespace', ['production', 'test'])
+def test_managed_receipt_accepts_only_configured_preview_namespace(tmp_path, monkeypatch, namespace):
+    from exactcut.material_workers import _receipt
+    video = tmp_path / 'preview.mp4'; video.write_bytes(b'video')
+    parent = tmp_path / ('a' * 32)
+    digest = hashlib.sha256(b'video').hexdigest()
+    monkeypatch.setattr(preview_oss, 'load_config', lambda: {'preview': {'namespace': namespace}})
+    receipt = {'key': f'exactcut-previews/{namespace}/{parent.name}/R1/{digest}.mp4',
+               'sha256': digest, 'identity': preview_oss._identity(video),
+               'bytes': 5, 'bucket': 'fixture', 'endpoint': 'https://oss.invalid'}
+    _receipt(receipt, video, digest, parent, 'R1')
+    other = 'test' if namespace == 'production' else 'production'
+    receipt['key'] = receipt['key'].replace('/'+namespace+'/', '/'+other+'/')
+    with pytest.raises(ValueError, match='OSS'):
+        _receipt(receipt, video, digest, parent, 'R1')

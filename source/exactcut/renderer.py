@@ -219,12 +219,15 @@ def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[st
     if fade_s:
         overlay_filter += f",fade=t=out:st={end_s - fade_s:.3f}:d={fade_s:.3f}:alpha=1"
     overlay_filter += "[ov];"
+    # Normalized cuts already have the target frame cadence. Re-running fps after
+    # overlay can consume its EOF at the final PTS and drop/repeat the last frame.
+    cadence = "" if normalized_input else f"fps={render['fps']},"
     command = [
         "ffmpeg", "-y", "-v", "error", "-i", str(input_video),
         # Invisible PNG frames otherwise keep decoding and fading for the entire film.
         # The existing eof_action=pass retains all main-video frames after the Hook.
         "-loop", "1", "-framerate", str(render["fps"]), "-t", f"{end_s:.3f}", "-i", str(overlay),
-        "-filter_complex", overlay_filter + f"[0:v][ov]overlay=0:0:format=auto:eof_action=pass:enable='lt(t,{end_s:.3f})',fps={render['fps']},setpts=N/({render['fps']}*TB),format=yuv420p[v]",
+        "-filter_complex", overlay_filter + f"[0:v][ov]overlay=0:0:format=auto:eof_action=pass:enable='lt(t,{end_s:.3f})',{cadence}setpts=N/({render['fps']}*TB),format=yuv420p[v]",
         "-map", "[v]", "-map", "0:a:0?", "-r", str(render["fps"]), "-t", f"{total_s:.3f}",
         "-c:v", render["video_codec"], "-preset", render["preset"],
         "-crf", str(render["crf"]), "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output),

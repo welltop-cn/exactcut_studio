@@ -139,9 +139,11 @@ def test_format_guards_and_audio_optional(hook_case, tmp_path, monkeypatch, mode
         assert frame_hashes(output)[60:] == frame_hashes(changed)[60:]
         assert not any(s['codec_type'] == 'audio' for s in ffprobe(output)['streams'])
     else:
-        legacy = tmp_path / 'legacy.mp4'
-        renderer._apply_hook(changed, 'Hook', legacy, render, tmp_path)
-        assert frame_hashes(output) == frame_hashes(legacy)
+        reference = tmp_path / 'full-encode.mp4'
+        monkeypatch.setattr(hook_splice, 'try_hook_splice', lambda *args: False)
+        renderer._apply_hook(changed, 'Hook', reference, render, tmp_path, normalized_input=True)
+        assert frame_hashes(output) == frame_hashes(reference)
+        assert len(frame_hashes(output)) == len(frame_hashes(changed))
         assert frame_hashes(output, 'a:0') == frame_hashes(changed, 'a:0')
 
 

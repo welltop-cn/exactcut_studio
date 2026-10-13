@@ -59,3 +59,19 @@ def test_helper_rejects_unauthorized_batch_before_model():
     finally:
         server.shutdown()
         server.server_close()
+
+
+@pytest.mark.parametrize('mode', ['', 'source_frames_v1'])
+def test_snapshot_preserves_declared_editor_time_format(mode):
+    detail={'draft':{'drama_id':'101573',**({'editor_time_format':mode} if mode else {})},'runtime':{},'assets':[]}
+    assert h.snapshot(detail)['editor_time_format']==mode
+
+
+def test_helper_knowledge_distinguishes_current_frame_and_legacy_ms_projects():
+    knowledge={item['id']:item['text'] for item in json.loads(h.KNOWLEDGE.read_text())}
+    assert 'source_frames_v1' in h.SYSTEM
+    assert '帧从0开始' in knowledge['timeline']
+    assert '结束帧保留' in knowledge['timeline']
+    assert '旧项目' in knowledge['timeline'] and '毫秒' in knowledge['timeline']
+    assert '手工填写' in knowledge['workflow']
+    assert '点击新建项目后选择或拖入xlsx' not in knowledge['excel']
