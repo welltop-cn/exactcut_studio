@@ -56,13 +56,17 @@ def test_real_effect_render_preserves_frames_audio_and_base(tmp_path):
     decorated[1].update(transition_in='flash_white', transition_duration_ms=400, segment_caption={'text': 'one hour ago', 'duration_ms': 500})
     result = renderer.render_request(tmp_path, request, decorated, tmp_path/'effects.mp4', config)
     assert result['base_cache_key'] == baseline['base_cache_key']
-    assert result['segment_effects']['total_frames'] == 90
+    # FFmpeg versions differ at the fixture's fractional cut/EOF.
+    # Decorations must preserve the actual baseline, not a platform-specific total.
+    baseline_video = next(s for s in ffprobe(tmp_path/'baseline.mp4')['streams'] if s['codec_type'] == 'video')
+    baseline_frames = int(baseline_video['nb_frames'])
+    assert result['segment_effects']['total_frames'] == baseline_frames
     assert result['segment_effects']['flashes'][0]['boundary_frame'] == 31
     assert ImageStat.Stat(frame(tmp_path/'baseline.mp4', 30)).mean[0] > 240
     assert ImageStat.Stat(frame(tmp_path/'baseline.mp4', 31)).mean[2] > 240
     for name in ('baseline', 'effects'):
         video = next(s for s in ffprobe(tmp_path/f'{name}.mp4')['streams'] if s['codec_type'] == 'video')
-        assert int(video['nb_frames']) == 90
+        assert int(video['nb_frames']) == baseline_frames
     white = frame(tmp_path/'effects.mp4', 31).crop((0, 200, 180, 300))
     assert min(ImageStat.Stat(white).mean) > 245
     assert ImageStat.Stat(frame(tmp_path/'effects.mp4', 37)).mean[0] < 30

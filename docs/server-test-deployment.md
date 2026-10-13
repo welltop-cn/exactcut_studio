@@ -23,7 +23,7 @@
 
 ## 当前能力与限制
 
-- 测试代码来自 `feat/source-frame-picker` 工作树开发快照，含未提交修改；镜像只提供已安装依赖。不是可直接发布的生产版本。
+- 测试部署统一以已审核并提交的 `main` 为源。2026-10-13 本轮候选为 `0178862`，已剥离可视化选帧；镜像提供固定依赖，代码通过只读挂载更新。正式发布仍须走正式发布管理器。
 - `EXACTCUT_WORKER_ENABLED=1`，`material_lifecycle.enabled=true`，制作参数及并发配置对齐正式实例（容器仍6核/6GiB）。可测试表单及已有测试原片的制作、质检、本地成片预览。新增原片下载尚无测试配置，开关暂为0；AI已按用户授权复用正式服务，开关为1，重点词分析真实调用已通过；新增原片下载尚未验证。
 - 手工分:秒:帧及文本识别入口保留。最新候选已剥离可视化选帧组件至 `feat/visual-frame-picker`，不提供选帧图片或原片播放接口；后台帧索引自动准备。制作完成后的OSS预览仍使用测试专用路径。已运行的旧测试容器需另行部署候选才体现这项变化。
 - 测试项目 `95f99b49174e4cbb80dbbe381abde05c`，剧101619，EP1/3/4/5/7为独立副本；帧索引已在Linux重建，项目errors为空。不要覆盖用户后续编辑。
@@ -75,11 +75,11 @@ df -h /srv/exactcut-test
 从**实际待部署工作树**打包，不默认使用共享主工作区。以下是示例，替换路径和唯一批次名。白名单仅包含应用代码、配置和模板；不要打包 `.env`、账号库、视频、整个source目录或生产数据。
 
 ```sh
-# 本地执行；此例包含未提交的工作树文件，必须在记录中注明。
+# 本地执行；仅使用干净、已审核的main。先 git status --porcelain，非空则停止。
 /Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
 import tarfile
 from pathlib import Path
-code = Path('/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/source-frame-picker/source')
+code = Path('/Users/matao/code/exact-cut-fbbm-handoff/source')
 archive = Path('/tmp/exactcut-test-code-UNIQUE.tar.gz')  # 换成唯一批次名
 with tarfile.open(archive, 'x:gz') as bundle:
     for folder in ('exactcut', 'config', 'templates'):
@@ -157,7 +157,7 @@ docker stats --no-stream
 
 - 正式版本与StartedAt应与更新前一致，worker健康；出现异常先停测试实例并排查，不能靠重启正式服务修复测试环境。
 - 记录公网响应时间。此前图片1–1.5MB，服务器抽帧0.2～0.4秒，公网却需2.8～4.3秒，不能以本机速度替代真实体验。
-- 帧索引包含路径、inode、mtime等，不能复用Mac的缓存。新样本在测试实例按当前草稿引用集数调用 `source_picker.prepare` 逐集准备，再检查 `workflow.detail(batch_id)['errors']`；不改用户输入来绕过校验。
+- 帧索引包含路径、inode、mtime等，不能复用Mac的缓存。新样本在测试实例按当前草稿引用集数调用 `source_frames.prepare` 逐集准备，再检查 `workflow.detail(batch_id)['errors']`；不改用户输入来绕过校验。
 - 复制独立项目需包含draft/access/runtime及引用的endings资产；不要复制生产运行任务。现有项目不要每次部署重新初始化。
 
 ## 回滚
@@ -219,6 +219,10 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 
 2026-10-13 修复后，复制项目会复制当前原片有效的帧索引，不复制预览图片或视频。复制后检查新项目详情 `errors` 为空，以及它自己的 `source-picker/*/index.json` 已存在。不能直接搬用本地索引：服务器原片指纹不同。
 
-对于此前已复制失败的测试草稿，可在确认来源和当前原片一致后，用 `source_picker.copy_frame_indexes(source_path, target_path, target_draft)` 补充派生索引，再调用 `workflow.detail` 验证；不改草稿时间、不恢复暂停任务。源文件已变化时应重新建立索引，不能绕过校验。
+对于此前已复制失败的测试草稿，可在确认来源和当前原片一致后，用 `source_frames.copy_frame_indexes(source_path, target_path, target_draft)` 补充派生索引，再调用 `workflow.detail` 验证；不改草稿时间、不恢复暂停任务。源文件已变化时应重新建立索引，不能绕过校验。
 
 验收记录见 [帧项目复制验收](verification/source-frame-clone-2026-10-13.md)。
+
+## Linux 回归镜像注意事项
+
+应用运行镜像不包含Node，不适合直接执行完整测试。使用与依赖锁文件匹配的 `exactcut-validation` 镜像，挂载完整的 Git 已提交源码树到 `/app`，工作目录 `/app/source`；测试依赖仓库中的README、deploy和integrations，不要仅传应用白名单用于全套测试。验证容器限额并禁止网络，不挂载测试或正式data。应用部署包仍只包含代码/配置/模板，不包含业务数据。
