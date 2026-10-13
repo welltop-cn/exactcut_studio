@@ -133,9 +133,10 @@ def apply_effects(source, output, render, work, plan, *, hook=None, hook_end=0, 
     if hook:
         filters = f',fade=t=out:st={hook_end - hook_fade:.6f}:d={hook_fade:.6f}:alpha=1' if hook_fade else ''
         add_overlay(hook, 0, max(1, round(hook_end * fps)), filters)
-    chains.append(f'[{label}]format=yuv420p[v]')
+    # Limit only video; output -frames:v can truncate copied audio on FFmpeg 5.
+    chains.append(f'[{label}]trim=end_frame={plan["total_frames"]},format=yuv420p[v]')
     command += ['-filter_complex', ';'.join(chains), '-map', '[v]', '-map', '0:a:0?',
-                '-fps_mode', 'passthrough', '-frames:v', str(plan['total_frames']),
+                '-fps_mode', 'passthrough',
                 '-c:v', render['video_codec'], '-preset', render['preset'], '-crf', str(render['crf']),
                 '-c:a', 'copy', '-movflags', '+faststart', str(output)]
     run_checked(command)
