@@ -14,9 +14,9 @@ const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
 (async()=>{
  let resolveFetch,calls=0,loads=0,aborted=false;
  const message={textContent:'',append(){}},button={hidden:true};
- const video={dataset:{previewRequest:'R1'},isConnected:true,src:'',pause(){},load(){loads++},removeAttribute(){this.src=''},querySelectorAll(){return []},closest(){return {querySelector(s){return s.includes('retry')?button:message}}}};
+ const video={dataset:{previewRequest:'R1',previewBatch:'a'},isConnected:true,src:'',pause(){},load(){loads++},removeAttribute(){this.src=''},querySelectorAll(){return []},closest(){return {querySelector(s){return s.includes('retry')?button:message}}}};
  const ctx=vm.createContext({AbortController,Date,encodeURIComponent,setTimeout,clearTimeout,
-  requestAnimationFrame:f=>f(),current:{id:'a'},activeTab:'progress',selectedId:'a',openingBatchId:null,
+  requestAnimationFrame:f=>f(),current:{id:'a',assets:[{request_id:'R1',preview:'/preview'}]},activeTab:'progress',selectedId:'a',openingBatchId:null,
   appUrl:p=>p,$:id=>id==='workspace'?{hidden:false}:{querySelectorAll:()=>[video]},
   fetch:(url,options)=>{calls++;options.signal.addEventListener('abort',()=>aborted=true);return new Promise(r=>resolveFetch=r)}});
  vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
@@ -68,12 +68,12 @@ const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
 (async()=>{
  let now=1000,calls=0,plays=0;
  const message={},retry={hidden:true};
- const video={dataset:{previewRequest:'R1'},isConnected:true,paused:true,currentTime:0,duration:120,
+ const video={dataset:{previewRequest:'R1',previewBatch:'a'},isConnected:true,paused:true,currentTime:0,duration:120,
  pause(){this.paused=true},play(){plays++;this.paused=false;return Promise.resolve()},
  load(){this.currentTime=0},removeAttribute(){this.src=''},querySelectorAll(){return []},
  closest(){return {querySelector:s=>s.includes('retry')?retry:message}}};
  const ctx=vm.createContext({AbortController,Date:{now:()=>now},encodeURIComponent,setTimeout,clearTimeout,
-  current:{id:'a'},activeTab:'review',selectedId:'a',appUrl:p=>p,$:id=>id==='workspace'?{hidden:false}:{querySelectorAll:()=>[video]},
+  current:{id:'a',assets:[{request_id:'R1',preview:'/preview'}]},activeTab:'review',selectedId:'a',appUrl:p=>p,$:id=>id==='workspace'?{hidden:false}:{querySelectorAll:()=>[video]},
   fetch:async()=>{calls++;return {ok:true,json:async()=>({url:'https://oss.invalid/'+calls,expires_in:900})}}});
  vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);ctx.video=video;
