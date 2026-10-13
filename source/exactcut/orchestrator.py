@@ -201,6 +201,7 @@ def execute_batch(
             record['hook_warnings'] = [message for message in (
                 (visual.get('placement') or {}).get('warning'), visual.get('readability_warning'),
                 (visual.get('sampling') or {}).get('warning')) if message]
+            record['hook_warnings'].extend((render_plan.get('segment_effects') or {}).get('warnings', []))
             write_json_atomic(request_audit / "clip_plan.json", {
                 "request": request.model_dump(mode="json"), **render_plan,
             })

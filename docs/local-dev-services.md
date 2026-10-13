@@ -68,3 +68,19 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 ## 2026-10-13 Hook 20 秒临时验收（已停止）
 
 本次 Hook 时长调整会话使用 `127.0.0.1:18893`、独立数据根 `/tmp/exactcut-hook20-dev-20261013`，真实 worker/FFmpeg 完成三条制作并通过 QC。所有临时任务完成后，核对 PID 24013 对应 `/tmp/exactcut-hook20-dev.py` 再正常停止，并确认端口无监听。数据保留；未重启共享 8793 或操作其他会话实例。详见 [验收记录](verification/hook-duration-20s-2026-10-13.md)。
+
+## 2026-10-13 段首字幕与闪白验收（8793 保留运行）
+
+用户要求开发并打开本地 dev 验收。检查原 8793 进程 cwd、活动任务和 FFmpeg 后，正常停止 PID 68925，并用原启动脚本 `.dev-state/preview-concurrency-20261012/start.sh` 与指定 Python 重启。新 PID 15177 为本次历史快照，加载主工作区字幕与闪白未提交改动；后续操作仍须重新确认 PID。沿用隔离开发数据，外部写入、发布、AI 和素材获取关闭，render/hook_previews 并发均为 3。
+
+健康接口返回 development/ok，worker 正常；三条真实成片均 qc_passed。浏览器验收入口使用 `localhost:8793`，项目 `4d12a4cb10f748f6a45840e5b0ea3ee2`，保留服务供用户验收。日志：`source/.dev-state/segment-effects-dev-20261013.log`。详见[验收记录](verification/segment-effects-dev-2026-10-13.md)。
+
+字号/行数反馈更新：8793 在确认无活动任务后从 PID 15177 正常重启为 PID 60490（历史快照），沿用上述隔离配置。新验收项目 `3523c9fb2443490381217c2d69c1bb8f` 已完成三条真实制作，均 qc_passed；72 px、最多三行，原项目保留作对照。
+
+闪白时长反馈更新：确认无活动任务后，8793 从 PID 60490 正常重启为 PID 69384（历史快照），配置不变。项目 `292f4f2ab93a44ae8cb4a080e5a006a2` 提供硬切、默认 0.5 秒、自定义 0.8 秒三条成片，均 qc_passed，保留运行供用户验收。
+
+闪白上限更新：确认无活动任务后，从 PID 69384 正常重启为 PID 78630（历史快照），沿用隔离配置。前后端均支持 0.2～5 秒，默认 0.5 秒；healthz 返回 development/ok。
+
+## 服务器独立测试实例部署文档
+
+服务器测试环境使用固定 IP 入口 `/test/`，与本机 dev 不同。其他 agent/session 更新前请阅读 [服务器测试部署手册](server-test-deployment.md)，复用既有容器、数据、账号及资源限制；测试通过不自动发布正式服务。

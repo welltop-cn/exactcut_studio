@@ -7,12 +7,13 @@ from zipfile import ZipFile
 from openpyxl import load_workbook
 from .catalog import load_catalog
 from .compiler import parse_segment_cell, parse_standard_segment, production_date, STANDARD_TEMPLATE_TITLE, compile_workbook
-from .models import BatchManifest, CutRequest
+from .models import BatchManifest, CutRequest, TimelineItem, SegmentCaption
 from .naming import build_material_filename
 from .timecode import format_ms
 from .errors import ValidationError
 from .hook_visual import validate_hook_layout
 from .hook_options import HookOptions
+from .segment_effects import caption_image
 
 ALIASES = {
     'drama_id': ['剧id', '剧集id', '短剧id', '项目id', 'dramaid', 'novelid', 'seriesid'],
@@ -362,14 +363,15 @@ def compile_composition(row):
     duration_s = min(20.0, max(1.0, duration_s))
     plots = composition.get('plots') if isinstance(composition.get('plots'), list) else []
     clean_plots, lines = [], []
-    for plot in plots[:12]:
+    for plot in plots:
         if not isinstance(plot, dict):
+            clean_plots.append(plot)
             continue
         episode = str(plot.get('episode') or '').strip().upper()
         if episode.isdigit():
             episode = 'EP' + str(int(episode))
         start, end = str(plot.get('start') or '').strip(), str(plot.get('end') or '').strip()
-        clean_plots.append({'episode': episode, 'start': start, 'end': end})
+        clean_plots.append({'episode': episode, 'start': start, 'end': end, **_segment_fields(plot)})
         if not (episode and start and end):
             continue
         try:
@@ -399,6 +401,69 @@ def compile_composition(row):
 _CLIP_LIMITS = (('start_m', 999), ('start_s', 59), ('start_ms', 999), ('end_m', 999), ('end_s', 59), ('end_ms', 999))
 
 
+def _segment_fields(segment):
+    # Preserve submitted values for validation, including invalid/incomplete edits.
+    return {key: segment[key] for key in ('segment_caption', 'transition_in', 'transition_duration_ms') if key in segment}
+
+
+def _has_segment_effects(segment):
+    caption = segment.get('segment_caption')
+    if caption is not None:
+        try:
+            if SegmentCaption.model_validate(caption).text:
+                return True
+        except ValueError:
+            return True
+    return segment.get('transition_in', 'none') != 'none'
+
+
+def _structured_timeline(row):
+    """Parse each structured row with its own effects; never align by ordinal."""
+    clips, composition = row.get('clips'), row.get('composition')
+    if isinstance(clips, list) and isinstance(composition, dict):
+        raise ValueError('不能同时填写 clips 和 composition')
+    if isinstance(clips, list):
+        if len(clips) > 40:
+            raise ValueError('片段数量超过上限')
+        items = []
+        for index, clip in enumerate(clips, 1):
+            if not isinstance(clip, dict):
+                raise ValueError(f'片段 {index} 内容必须是字段对象')
+            stored, numbers = _clip_fields(clip)
+            if _clip_idle(stored, numbers):
+                continue
+            line = _clip_line(stored, numbers)
+            if not line:
+                raise ValueError(f'片段 {index} 须填写集号和分:秒:毫秒，秒为 0～59，结束要晚于开始')
+            item = parse_segment_cell(line, 1500)
+            items.append(TimelineItem.model_validate({**item.model_dump(), **_segment_fields(clip)}))
+        return items
+    if isinstance(composition, dict):
+        from .timecode import parse_timepoint
+        plots = composition.get('plots', [])
+        if not isinstance(plots, list) or len(plots) > 12:
+            raise ValueError('剧情片段须为列表，最多 12 段')
+        items = []
+        for index, plot in enumerate(plots, 1):
+            if not isinstance(plot, dict):
+                raise ValueError(f'剧情 {index} 内容必须是字段对象')
+            episode = str(plot.get('episode') or '').strip().upper()
+            if episode.isdigit():
+                episode = 'EP' + str(int(episode))
+            start, end = str(plot.get('start') or '').strip(), str(plot.get('end') or '').strip()
+            if not any((episode, start, end)) and not _has_segment_effects(plot):
+                continue
+            if not re.fullmatch(r'EP[1-9]\d{0,2}', episode) or int(episode[2:]) > 500 or not start or not end:
+                raise ValueError(f'剧情 {index} 须填写集号、开头和结尾')
+            start_ms, end_ms = parse_timepoint(start), parse_timepoint(end)
+            if start_ms < 0:
+                raise ValueError(f'剧情 {index} 起点不能为负数')
+            items.append(TimelineItem(type='episode', episode=episode, start_ms=start_ms, end_ms=end_ms,
+                                      **_segment_fields(plot)))
+        return items
+    return None
+
+
 def blank_clip():
     return {'episode': '', 'start_m': '00', 'start_s': '00', 'start_ms': '000', 'end_m': '00', 'end_s': '00', 'end_ms': '000'}
 
@@ -415,7 +480,7 @@ def _clip_number(value, limit):
 
 def _clip_fields(clip):
     episode = re.sub(r'(?i)^ep', '', str(clip.get('episode') or '').strip())
-    stored = {'episode': episode}
+    stored = {'episode': episode, **_segment_fields(clip)}
     numbers = {}
     for key, limit in _CLIP_LIMITS:
         raw = str('' if clip.get(key) is None else clip.get(key)).strip()
@@ -426,7 +491,7 @@ def _clip_fields(clip):
 
 def _clip_idle(stored, numbers):
     """A row still showing 00:00:000 and no episode is unused, not an error."""
-    if stored['episode']:
+    if stored['episode'] or _has_segment_effects(stored):
         return False
     return all(number in (None, 0) for number in numbers.values())
 
@@ -448,8 +513,9 @@ def compile_clips(row):
     if not isinstance(clips, list):
         return
     clean, lines = [], []
-    for clip in clips[:40]:
+    for clip in clips:
         if not isinstance(clip, dict):
+            clean.append(clip)
             continue
         stored, numbers = _clip_fields(clip)
         clean.append(stored)
@@ -499,8 +565,9 @@ def validate_draft(draft, source=''):
             request_id = str(row.get('request_id', '')).strip()
             if not re.fullmatch(r'[\w\-]{1,80}', request_id):
                 raise ValueError('需求编号只能包含文字、数字、下划线或连字符，最多 80 字')
-            timeline = []
-            raw_timeline = str(row.get('timeline_text', ''))
+            structured_timeline = _structured_timeline(row)
+            timeline = [] if structured_timeline is None else structured_timeline
+            raw_timeline = str(row.get('timeline_text', '')) if structured_timeline is None else ''
             mode = draft.get('time_notation', 'seconds')
             if mode == 'unconfirmed' and re.search(r'\d+\.\d{1,2}s', raw_timeline, re.I):
                 raise ValueError('请先选择点号时间的含义（分.秒或小数秒）')
@@ -523,6 +590,9 @@ def validate_draft(draft, source=''):
                 raise ValueError('；'.join(problems) if problems else '请填写至少一个有效片段')
             if problems:
                 raise ValueError('；'.join(problems))
+            for item in timeline:
+                if item.segment_caption:
+                    caption_image(item.segment_caption.text, 1080, 1920)
             hook_options = HookOptions.model_validate(row.get('hook_options') or {})
             validate_hook_layout(str(row.get('hook_text', '')), font=hook_options.font,
                                  font_size=hook_options.font_size, style=hook_options.style)
@@ -561,6 +631,11 @@ def clip_editor(manifest):
                     or not 0 <= item.start_ms < item.end_ms < 60000000):
                 break
             clip = {'episode': str(int(item.episode[2:]))}
+            if item.segment_caption:
+                clip['segment_caption'] = item.segment_caption.model_dump(mode='json')
+            if item.transition_in != 'none':
+                clip['transition_in'] = item.transition_in
+                clip['transition_duration_ms'] = item.transition_duration_ms
             for side, value in [('start', item.start_ms), ('end', item.end_ms)]:
                 minutes, rest = divmod(value, 60000)
                 seconds, milliseconds = divmod(rest, 1000)

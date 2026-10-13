@@ -8,6 +8,19 @@ from .hook_emphasis import plain_hook
 from .ending import EndingOptions
 
 
+class SegmentCaption(BaseModel):
+    text: str
+    duration_ms: int = Field(default=1500, strict=True, ge=100, le=10000)
+
+    @field_validator('text')
+    @classmethod
+    def caption_text(cls, value: str) -> str:
+        value = value.replace('\r\n', '\n').replace('\r', '\n').strip()
+        if len(value) > 120 or len(value.split('\n')) > 3:
+            raise ValueError('本段字幕最多 120 字、三行')
+        return value
+
+
 class TimelineItem(BaseModel):
     type: Literal["episode", "title_card"]
     episode: str | None = None
@@ -17,9 +30,20 @@ class TimelineItem(BaseModel):
     duration_ms: int | None = None
     full_episode: bool = False
     to_end: bool = False
+    segment_caption: SegmentCaption | None = None
+    transition_in: Literal['none', 'flash_white'] = 'none'
+    transition_duration_ms: int = Field(default=500, strict=True, ge=200, le=5000)
+
+    @field_validator('segment_caption')
+    @classmethod
+    def empty_caption(cls, value: SegmentCaption | None) -> SegmentCaption | None:
+        return value if value and value.text else None
 
     @model_validator(mode="after")
     def validate_item(self) -> "TimelineItem":
+        if (self.segment_caption or self.transition_in != 'none') and (
+                self.type != 'episode' or self.full_episode or self.to_end):
+            raise ValueError('本段字幕和闪白仅支持明确起止时间的剧情片段')
         if self.type == "episode":
             if self.full_episode or self.to_end:
                 if not self.episode:
@@ -71,6 +95,11 @@ class CutRequest(BaseModel):
     def timeline_not_empty(cls, value: list[TimelineItem]) -> list[TimelineItem]:
         if not value:
             raise ValueError("timeline must not be empty")
+        if any(item.segment_caption or item.transition_in != 'none' for item in value):
+            if len(value) > 30 or any(item.type != 'episode' or item.full_episode or item.to_end for item in value):
+                raise ValueError('含段字幕或闪白的时间线仅支持最多30个明确范围剧情片段')
+        if value[0].transition_in != 'none':
+            raise ValueError('首个片段不能设置进入闪白')
         return value
 
 

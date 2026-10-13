@@ -24,6 +24,7 @@ from .hook_options import HookOptions, approved_emphasis, hook_duration
 from .hook_presentation import presentation, sample_timeline_frames, approved_preview
 from .util import file_sha256, json_sha256, read_json, write_json_atomic
 from . import diagnostics as diag
+from .segment_effects import cut_timeline, has_effects, effect_plan, video_frames, apply_effects
 
 
 def _font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
@@ -90,7 +91,8 @@ def _render_still_unit(png: Path, duration_ms: int, output: Path, render: dict[s
     ])
 
 
-def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any], expected_ms: int) -> None:
+def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any], expected_ms: int,
+                  *, frame_lengths: list[int] | None = None) -> None:
     # Units have already been normalized and independently checked. Copy their
     # video packets; reconstruct audio at frame boundaries to avoid accumulating
     # AAC padding or container-duration rounding at each join.
@@ -104,7 +106,8 @@ def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any], expe
             or any(int(video.get('has_b_frames', 0)) > 2 for video in videos)
             or any(tuple(video.get(key) for key in fields) != signature for video in videos)
             or any(not str(video.get('nb_frames', '')).isdigit() for video in videos)):
-        return _concat_units_encoded(inputs, output, render, expected_ms)
+        return _concat_units_encoded(inputs, output, render, expected_ms,
+                                     **({'frame_lengths': frame_lengths} if frame_lengths is not None else {}))
     lengths = [int(video['nb_frames']) / Fraction(video['r_frame_rate']) for video in videos]
     with tempfile.TemporaryDirectory(prefix='join-', dir=output.parent) as directory:
         listing = Path(directory) / 'video.ffconcat'
@@ -133,10 +136,32 @@ def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any], expe
         run_checked(command)
 
 
-def _concat_units_encoded(inputs: list[Path], output: Path, render: dict[str, Any], expected_ms: int) -> None:
+def _concat_units_encoded(inputs: list[Path], output: Path, render: dict[str, Any], expected_ms: int,
+                          *, frame_lengths: list[int] | None = None) -> None:
     command = ["ffmpeg", "-y", "-v", "error"]
     for item in inputs:
         command += ["-i", str(item)]
+    if frame_lengths is not None:
+        from fractions import Fraction
+        if len(frame_lengths) != len(inputs) or any(n <= 0 for n in frame_lengths):
+            raise ValidationError('编码拼接缺少片段帧边界')
+        rate = Fraction(str(render['fps']))
+        chains = []
+        for index, count in enumerate(frame_lengths):
+            seconds = float(Fraction(count, 1) / rate)
+            chains.extend([
+                f'[{index}:v]trim=end_frame={count},setpts=N/({render["fps"]}*TB)[v{index}]',
+                f'[{index}:a]aresample={render["audio_rate"]},apad,atrim=duration={seconds:.9f},asetpts=PTS-STARTPTS[a{index}]'])
+        chains.extend([
+            ''.join(f'[v{i}]' for i in range(len(inputs))) + f'concat=n={len(inputs)}:v=1:a=0,setpts=N/({render["fps"]}*TB)[v]',
+            ''.join(f'[a{i}]' for i in range(len(inputs))) + f'concat=n={len(inputs)}:v=0:a=1[a]'])
+        command += ['-filter_complex', ';'.join(chains), '-map', '[v]', '-map', '[a]',
+                    '-r', str(render['fps']), '-t', f'{float(Fraction(sum(frame_lengths), 1) / rate):.9f}',
+                    '-c:v', render['video_codec'], '-preset', render['preset'], '-crf', str(render['crf']),
+                    '-pix_fmt', 'yuv420p', '-c:a', render['audio_codec'], '-ar', str(render['audio_rate']),
+                    '-ac', str(render['audio_channels']), '-movflags', '+faststart', str(output)]
+        run_checked(command)
+        return
     chains = []
     labels = []
     for index in range(len(inputs)):
@@ -157,9 +182,13 @@ def _concat_units_encoded(inputs: list[Path], output: Path, render: dict[str, An
 def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[str, Any], work: Path,
                 emphasis: dict[str, Any] | None = None, options: HookOptions | None = None,
                 frames: list[bytes] | None = None, cache_dir: Path | None = None,
-                preview_decision: dict | None = None, normalized_input: bool = False) -> dict[str, Any] | None:
+                preview_decision: dict | None = None, normalized_input: bool = False,
+                segment_plan: dict | None = None) -> dict[str, Any] | None:
     if not hook_text.strip():
-        shutil.copy2(input_video, output)
+        if segment_plan is not None:
+            apply_effects(input_video, output, render, work, segment_plan)
+        else:
+            shutil.copy2(input_video, output)
         return None
     if preview_decision is not None:
         decision = dict(preview_decision)
@@ -182,6 +211,10 @@ def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[st
     fade_s = min(end_s, int(render.get("hook_fade_out_ms", 1000)) / 1000)
     if end_s <= 0 or fade_s < 0:
         raise ValidationError("Hook 时长必须大于零，淡出时长不能为负")
+    if segment_plan is not None:
+        apply_effects(input_video, output, render, work, segment_plan,
+                      hook=overlay, hook_end=end_s, hook_fade=fade_s)
+        return {**decision, 'duration_ms': round(end_s * 1000), 'fade_out_ms': round(fade_s * 1000)}
     overlay_filter = "[1:v]format=rgba"
     if fade_s:
         overlay_filter += f",fade=t=out:st={end_s - fade_s:.3f}:d={fade_s:.3f}:alpha=1"
@@ -262,7 +295,8 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
     timings['ai_emphasis'] = round(time.monotonic()-started, 3)
     # Hook-only edits and renaming reuse the checked cut; source bytes and encoder settings are part of the key.
     base_render = {k:v for k,v in render.items() if not k.startswith('hook_')}
-    identity = {'version':3,'timeline':safe_timeline,'sources':sources,
+    decorated = has_effects(safe_timeline)
+    identity = {'version':3,'timeline':cut_timeline(safe_timeline),'sources':sources,
                 'render':base_render}
     key = json_sha256(identity)
     cache = project_dir/'cache/render-base'
@@ -283,10 +317,15 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                     meta = read_json(meta_path)
                     reused = meta['identity'] == identity and meta['sha256'] == file_sha256(base)
                     reused = reused and abs(duration_ms(base)-meta['expected_duration_ms']) <= int(render['duration_tolerance_ms'])
+                    if decorated:
+                        lengths = meta.get('segment_frames', [])
+                        reused = reused and len(lengths) == len(safe_timeline) and all(type(n) is int and n > 0 for n in lengths)
+                        if reused:
+                            reused = video_frames(base, render['fps']) == sum(lengths)
                 except (ValueError, KeyError, OSError, RuntimeError):
                     reused = False
             if not reused:
-                units, boundaries_ms, unit_checks = [], [], []
+                units, boundaries_ms, unit_checks, segment_frames = [], [], [], []
                 expected_ms = 0
                 for index, item in enumerate(safe_timeline):
                     step('base_cut', segment=index+1, total=len(safe_timeline), completed=index)
@@ -307,6 +346,8 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                     if abs(actual-duration)>tolerance:
                         raise ValidationError(f'片段 {index+1} 时长不符：预期 {duration}ms，实际 {actual}ms；未进入拼接')
                     unit_checks.append({'segment':index+1,'expected_ms':duration,'actual_ms':actual})
+                    if decorated:
+                        segment_frames.append(video_frames(unit, render['fps']))
                     expected_ms += duration
                     if index+1 < len(safe_timeline):
                         boundaries_ms.append(expected_ms)
@@ -314,7 +355,10 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                     step('base_cut', segment=index+1, total=len(safe_timeline), completed=index+1)
                 joined = work/'joined.mp4'
                 step('concat', completed=len(units), total=len(units))
-                _concat_units(units,joined,render,expected_ms)
+                _concat_units(units,joined,render,expected_ms,
+                              **({'frame_lengths': segment_frames} if decorated else {}))
+                if decorated and video_frames(joined, render['fps']) != sum(segment_frames):
+                    raise ValidationError('拼接后片段帧边界不一致，未应用字幕或闪白')
                 if abs(duration_ms(joined)-expected_ms)>int(render['duration_tolerance_ms']):
                     raise ValidationError('拼接后的计划与实际时长不一致，未缓存')
                 # Atomic publication on the cache filesystem; never link a writable original/output.
@@ -326,6 +370,8 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
                     temporary_base.unlink(missing_ok=True)
                 meta = {'identity':identity,'sha256':file_sha256(base),'expected_duration_ms':expected_ms,
                         'edit_boundaries_ms':boundaries_ms,'unit_checks':unit_checks}
+                if decorated:
+                    meta['segment_frames'] = segment_frames
                 write_json_atomic(meta_path,meta)
             timings['base_cut'] = round(time.monotonic()-started,3)
             diag.event('render.cache_result', cache_key=key, reused=reused, expected_ms=meta['expected_duration_ms'])
@@ -334,6 +380,7 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
             # Reuse the joined path so a fresh cut needs no additional temporary-video peak.
             request_base = work/'joined.mp4'
             shutil.copy2(base,request_base)
+        segment_plan = effect_plan(safe_timeline, meta['segment_frames'], render['fps']) if decorated else None
         frames = []
         coverage=None
         if options is not None and request.hook_text.strip() and preview_decision is None:
@@ -350,7 +397,8 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
         hook_output = work/'hooked.mp4' if has_ending else output
         hook_visual = _apply_hook(request_base,request.hook_text,hook_output,render,work,emphasis=emphasis,
                                  options=options,frames=frames,cache_dir=project_dir/'cache/hook-placement',
-                                 preview_decision=preview_decision, normalized_input=True)
+                                 preview_decision=preview_decision, normalized_input=True,
+                                 **({'segment_plan': segment_plan} if segment_plan else {}))
         timings['hook_overlay'] = round(time.monotonic()-started,3)
         if hook_visual and coverage:hook_visual['sampling']=coverage
         expected_ms = meta['expected_duration_ms']
@@ -385,4 +433,5 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
     if project_dir.is_relative_to(data_root()):cleanup(data_root())
     return {'expected_duration_ms':expected_ms,'edit_boundaries_ms':boundaries,
             'unit_checks':checks,'timeline':safe_timeline,'hook_visual':hook_visual,'ending_visual':ending_visual,
-            'base_cache_reused':reused,'base_cache_key':key,'stage_seconds':timings}
+            'base_cache_reused':reused,'base_cache_key':key,'stage_seconds':timings,
+            **({'segment_effects': segment_plan} if segment_plan else {})}

@@ -1,0 +1,224 @@
+# 服务器独立测试实例：部署与交接
+
+最后核验：2026-10-13。面向其他 agent / session。用户约定：**先部署测试实例、验收，再单独发布正式服务；测试成功不代表获得正式发布授权。**
+
+## 固定入口与边界
+
+| 项目 | 测试实例 | 正式实例（本流程禁止修改） |
+|---|---|---|
+| 公网入口 | `http://8.221.122.75/test/` | `https://autocut.creativefitting.ai/home/` |
+| 容器 | `exactcut-test` | `exactcut-production-web-1` |
+| 宿主机监听 | `127.0.0.1:18899` | `127.0.0.1:18792` |
+| 容器端口 | 8792 | 8792 |
+| 数据根 | `/srv/exactcut-test/data` | `/srv/exactcut/data` |
+| 源码挂载 | `/srv/exactcut-test/code` → `/app/source:ro` | 不操作 |
+| 环境 | production（独立测试用途） | production（正式用途） |
+| Nginx | `/etc/nginx/conf.d/exactcut-test.conf`，精确匹配 IP Host | `sites-enabled/exactcut`、`snippets/exactcut-production.conf` |
+
+测试限额：6 CPU、6 GiB 内存、memory-swap同为6 GiB、256 PID、CPU shares256；不自动重启。日志轮转10MiB×3。同机仍共享网络、磁盘、CPU和Nginx，用户已接受有限资源竞争；不能声称绝对零影响。
+
+测试实例独立账号库，用户名admin。密码位于服务器 `/srv/exactcut-test/data/.web-state/password`，不要写入Git、报告或公开日志，不复用生产密码。
+
+**不要使用旧的 `/home/` IP入口或 `https://8.221.122.75/`。** 浏览器曾缓存/升级旧路径到HTTPS，而IP没有对应TLS入口。新 `/test/` 已完成真实Chrome登录验收。无需开放公网18899，也不要改正式HTTPS兜底规则。
+
+## 当前能力与限制
+
+- 测试代码来自 `feat/source-frame-picker` 工作树开发快照，含未提交修改；镜像只提供已安装依赖。不是可直接发布的生产版本。
+- `EXACTCUT_WORKER_ENABLED=1`，`material_lifecycle.enabled=true`，制作参数及并发配置对齐正式实例（容器仍6核/6GiB）。可测试表单及已有测试原片的制作、质检、本地成片预览。新增原片下载尚无测试配置，开关暂为0；AI已按用户授权复用正式服务，开关为1，重点词分析真实调用已通过；新增原片下载尚未验证。
+- 手工分:秒:帧及文本识别入口保留；按用户要求隐藏「查看画面 / 精调」及旁边提示。选帧弹框的严格区间播放尚未完成；制作完成后的OSS预览已接通测试专用路径。
+- 测试项目 `95f99b49174e4cbb80dbbe381abde05c`，剧101619，EP1/3/4/5/7为独立副本；帧索引已在Linux重建，项目errors为空。不要覆盖用户后续编辑。
+- 不导入生产账号、任务、发布回执、运行状态或凭据。添加真实样本只复制经用户授权的配置/视频副本，不能硬链接或挂载生产目录。
+
+## 连接与日常启停
+
+本地已配置SSH密钥，不在命令中放密码：
+
+```sh
+ssh -o BatchMode=yes -i /Users/matao/.ssh/exactcut_8_221_122_75 root@8.221.122.75
+```
+
+以下在服务器执行，只操作测试实例：
+
+```sh
+/srv/exactcut-test/control status
+/srv/exactcut-test/control start
+/srv/exactcut-test/control logs
+/srv/exactcut-test/control stop
+```
+
+停止后保留代码、账号、数据和缓存，测试入口返回上游不可用，正式实例不随之停止。不要运行 `docker compose down`、停止Docker服务或批量删除容器。
+
+## 更新前检查
+
+1. 阅读待部署仓库AGENTS.md，核实工作树及已有修改，不提交或合并他人的工作。
+2. 确认没有其他session在更新测试实例、没有用户正在编辑/跑测试。出现冲突先协调，不抢占。
+3. 保存待部署提交号、未提交diff说明和包SHA256。先完成对应本地验证。Python使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。
+4. 在服务器记录正式服务健康及启动时间，之后对比：
+
+```sh
+curl -fsS http://127.0.0.1:18792/home/healthz
+docker inspect -f '{{.State.StartedAt}}' exactcut-production-web-1
+docker stats --no-stream
+```
+
+5. 检查测试进程、磁盘和挂载，不输出整个环境变量列表以免泄露秘密：
+
+```sh
+/srv/exactcut-test/control status
+docker top exactcut-test -eo pid,ppid,etime,comm
+docker inspect -f '{{range .Mounts}}{{.Source}} -> {{.Destination}} {{end}}' exactcut-test
+df -h /srv/exactcut-test
+```
+
+## 打包与传输（不包含数据）
+
+从**实际待部署工作树**打包，不默认使用共享主工作区。以下是示例，替换路径和唯一批次名。白名单仅包含应用代码、配置和模板；不要打包 `.env`、账号库、视频、整个source目录或生产数据。
+
+```sh
+# 本地执行；此例包含未提交的工作树文件，必须在记录中注明。
+/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+import tarfile
+from pathlib import Path
+code = Path('/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/source-frame-picker/source')
+archive = Path('/tmp/exactcut-test-code-UNIQUE.tar.gz')  # 换成唯一批次名
+with tarfile.open(archive, 'x:gz') as bundle:
+    for folder in ('exactcut', 'config', 'templates'):
+        for item in (code / folder).rglob('*'):
+            if item.is_symlink():
+                raise RuntimeError(f'拒绝符号链接: {item}')
+            if item.is_file() and '__pycache__' not in item.parts and item.suffix != '.pyc':
+                bundle.add(item, arcname=str(item.relative_to(code)))
+print(archive)
+PY
+shasum -a 256 /tmp/exactcut-test-code-UNIQUE.tar.gz
+scp -i /Users/matao/.ssh/exactcut_8_221_122_75 /tmp/exactcut-test-code-UNIQUE.tar.gz root@8.221.122.75:/srv/exactcut-test/
+```
+
+依赖有变化时不能直接沿用旧镜像。先构建专用测试镜像并验证依赖，再更新测试专用 `base-image.txt`；不要从正式容器提取环境凭据，也不要改正式镜像/tag。集成脚本变化不在上述白名单内，须另行核对测试镜像内 `/app/integrations` 是否匹配。
+
+## 在独立目录准备配置
+
+以下在服务器执行，替换UNIQUE为相同批次名；只处理受信任、已核对SHA256的自建包：
+
+```sh
+set -eu
+cd /srv/exactcut-test
+sha256sum exactcut-test-code-UNIQUE.tar.gz
+mkdir code-UNIQUE.next
+tar --no-same-owner -xzf exactcut-test-code-UNIQUE.tar.gz -C code-UNIQUE.next
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('/srv/exactcut-test/code-UNIQUE.next/config/default.json')
+doc = json.loads(p.read_text())
+doc.setdefault('web', {})['base_path'] = '/test'
+p.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + '\n')
+PY
+chown -R root:root code-UNIQUE.next
+```
+
+`web.base_path`由集中配置读取。**当前代码不消费 `EXACTCUT_WEB_BASE_PATH`；仅设置该环境变量无效。** 固定覆盖配置 `/srv/exactcut-test/runtime.json` 挂载为 `/test-config.json`，通过 `EXACTCUT_CONFIG_FILE` 加载并设置 `/test`；该文件位于代码目录之外，更新代码时保留。上面设置候选默认配置是额外保护，最终以此覆盖配置为准。服务器测试环境文件为 `/srv/exactcut-test/production.env`，挂载为 `/production.env`。本地dev仍用development。不要修改环境标记来绕过目录归属检查。
+
+可以使用 `/srv/exactcut-test/base-image.txt` 指定的固定依赖镜像对候选源码运行隔离检查，不挂载测试data或生产路径。完整Python测试需另外准备tests及测试配置，不能把页面健康检查视为回归测试。
+
+## 切换测试代码
+
+只有候选包检查通过后才进入这一步。不要更新正在运行的Python源码，也不要覆盖data。
+
+```sh
+set -eu
+cd /srv/exactcut-test
+test -d code-UNIQUE.next
+test ! -e code-UNIQUE.previous
+/srv/exactcut-test/control stop
+mv code code-UNIQUE.previous
+mv code-UNIQUE.next code
+sh /srv/exactcut-test/recreate.sh
+```
+
+必须理解：现有容器绑定的目录inode不会随目录重命名自动变更，所以此流程通过 `recreate.sh` **只重建exactcut-test**，保留data和密码。脚本使用 `base-image.txt`、固定端口与限额。不要把正式容器名传入任何命令。
+
+现有脚本中的 `EXACTCUT_RELEASE_ID=frame-picker-test-production-20261013` 是固定展示标签，**不是新代码版本证据**。每次记录包SHA256、来源提交、差异、实际挂载和验收结果到 `/srv/exactcut-test/deployments/`，必要时仅修改测试recreate脚本中的release标签。不要根据health标签推断已经换到目标代码。
+
+日常代码更新不需要修改或reload Nginx。只在修改入口规则时备份测试conf、执行nginx -t，再平滑reload；不能覆盖正式两个配置文件。
+
+## 验收与生产核对
+
+```sh
+# 服务器本机
+curl -fsS http://127.0.0.1:18899/test/healthz
+curl -fsS -H 'Host: 8.221.122.75' http://127.0.0.1/test/healthz
+curl -fsS http://127.0.0.1:18792/home/healthz
+docker inspect -f '{{.State.StartedAt}}' exactcut-production-web-1
+docker stats --no-stream
+```
+
+另外从用户网络验证 `http://8.221.122.75/test/` **登录→跳转→项目加载→目标操作**，不能只检查登录页出现。确认协议仍HTTP、路径仍/test/；浏览器不应进入生产域名。更新静态资源后刷新页面。
+
+- 正式版本与StartedAt应与更新前一致，worker健康；出现异常先停测试实例并排查，不能靠重启正式服务修复测试环境。
+- 记录公网响应时间。此前图片1–1.5MB，服务器抽帧0.2～0.4秒，公网却需2.8～4.3秒，不能以本机速度替代真实体验。
+- 帧索引包含路径、inode、mtime等，不能复用Mac的缓存。新样本在测试实例按当前草稿引用集数调用 `source_picker.prepare` 逐集准备，再检查 `workflow.detail(batch_id)['errors']`；不改用户输入来绕过校验。
+- 复制独立项目需包含draft/access/runtime及引用的endings资产；不要复制生产运行任务。现有项目不要每次部署重新初始化。
+
+## 回滚
+
+候选版本失败，只回滚测试代码：
+
+```sh
+set -eu
+cd /srv/exactcut-test
+test -d code-UNIQUE.previous
+test ! -e code-UNIQUE.failed
+/srv/exactcut-test/control stop
+mv code code-UNIQUE.failed
+mv code-UNIQUE.previous code
+sh /srv/exactcut-test/recreate.sh
+```
+
+再次执行健康与页面验收。**不要回滚/删除data、账号库、项目或生产数据库。** 如果新代码写入旧代码不认识的数据，先评估兼容性，不盲目回滚。尤其新帧格式项目不能交给旧毫秒版本写回。
+
+保留失败代码、日志和部署记录供排查；容器重建前先保存需要的docker日志。没有用户清理要求时，不删除旧代码或测试数据。
+
+## 交付摘要模板
+
+- 测试地址与项目链接；用户名，密码仅指向受限位置。
+- 源工作树/提交/是否dirty、包SHA256、部署时间、测试release标签。
+- 改了什么、验证结果、未完成能力。
+- 正式健康/版本/StartedAt对照结果。
+- 测试账号/数据保留情况、回滚目录、当前是否运行。
+- 明确“仅部署测试实例，未发布正式服务”。
+
+## 2026-10-13 环境模式调整
+
+用户要求服务器测试实例也使用production，本地dev才使用development。已对独立测试实例停机切换并保留账号、项目、视频与索引；旧启动脚本和环境标记备份在 `/srv/exactcut-test/backups/production-mode-*`。这是一次明确授权的环境迁移，不是普通部署步骤，后续不要重复运行迁移脚本。
+
+- `production.env` 包含测试环境声明及本次授权的OSS预览连接配置，权限0600；不包含FBBM/飞书凭据，禁止输出内容。
+- `runtime.json`：`environment=production`、`web.base_path=/test`、`preview.oss_enabled=true`、`preview.namespace=test`。
+- OSS预览已按用户授权启用，使用独立test前缀；仅预览上传可写OSS，不开放交付。
+- 当前worker已开启；OSS测试预览上传允许，正式交付仍禁用。production模式不等于允许写入真实业务。
+- 两个容器内部8792不冲突：网络命名空间独立；宿主机18792和18899不同。不能改成host网络后继续共用监听端口。
+- 正式服务环境、端口、数据和Nginx规则不变。
+
+## 当前验收范围（用户最终确认）
+
+只测试表单填写及视频制作全过程：准备原片、剪辑、Hook/结尾、质检、成片预览；允许OSS预览上传到测试专用前缀；不测试正式交付、FBBM或飞书写入。`material_lifecycle.delivery_enabled=false`、`EXACTCUT_ALLOW_PUBLISH=0`、`EXACTCUT_ALLOW_EXTERNAL_WRITES=0`、`preview.oss_enabled=true`、`preview.namespace=test` 必须保留。现有5集副本可用于制作，AI已授权复用正式服务；新增下载待配置。已验证worker_alive=true、require_publish拒绝、OSS测试预览可用、正式健康正常；这是配置验证，不是已经完成一条新成片的验收。
+
+## OSS预览例外（2026-10-13最终配置）
+
+用户授权预览上传OSS，但必须写测试专用路径。当前复用OSS连接账号和Bucket，应用对象键限定 `exactcut-previews/test/`；这是应用前缀隔离，不是另建RAM账号或IAM权限隔离。FBBM/飞书凭据未注入，publish/external_writes保持0、delivery_enabled=false。
+
+`preview_oss.object_prefix()` 通过集中配置仅接受production或test，默认production兼容正式实例；测试runtime.json必须显式设置namespace=test、oss_enabled=true。不能把任意OSS前缀配置为交付目录，也不能用旧生产回执复用测试对象。测试代码回退到不支持namespace的版本前必须关闭OSS预览，否则旧版硬编码生产路径。
+
+验证：30项定向测试通过，含8项新增namespace校验；真实1秒合成视频私有上传成功，签名GET Range返回206/1024字节、MP4头正确，require_publish仍拒绝。验收记录与视频在测试data/acceptance/oss-preview，签名URL短期有效、不可写入文档。没有FBBM/飞书操作，没有修改正式服务。
+
+Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended=true、error=null，视频直接来自OSS测试前缀。
+
+2026-10-13 AI修复：用户明确授权复用正式AI服务和密钥；只将OPENAI_API_KEY/OPENAI_BASE_URL加入测试专属production.env，AI开关设1，不复制FBBM/飞书凭据。第二条素材原文的重点词分析已真实调用成功。切换时用户主动暂停项目，不自动恢复或重试；重启后需验证paused仍为true。
+
+## 复制帧时间项目的验收
+
+2026-10-13 修复后，复制项目会复制当前原片有效的帧索引，不复制预览图片或视频。复制后检查新项目详情 `errors` 为空，以及它自己的 `source-picker/*/index.json` 已存在。不能直接搬用本地索引：服务器原片指纹不同。
+
+对于此前已复制失败的测试草稿，可在确认来源和当前原片一致后，用 `source_picker.copy_frame_indexes(source_path, target_path, target_draft)` 补充派生索引，再调用 `workflow.detail` 验证；不改草稿时间、不恢复暂停任务。源文件已变化时应重新建立索引，不能绕过校验。
+
+验收记录见 [帧项目复制验收](verification/source-frame-clone-2026-10-13.md)。
