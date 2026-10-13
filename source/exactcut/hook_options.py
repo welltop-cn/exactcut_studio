@@ -22,7 +22,7 @@ class HookOptions(BaseModel):
     mode: Literal['ai', 'manual', 'none'] = 'ai'
     style: Literal['auto','default','neon_reversal','danger_warning','ceo_luxury','emotional_diary','cold_mystery','raw_conflict'] = 'auto'
     position: Literal['auto','top','middle','bottom'] = 'auto'
-    duration_ms: int | None = Field(default=None, ge=1000, le=12000)
+    duration_ms: int | None = Field(default=None, ge=1000, le=20000)
     manual_ranges: list[HookRange] = Field(default_factory=list, max_length=4)
     preview_key: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
     font: Literal['auto', 'sans', 'sans_italic', 'serif', 'cjk'] = 'auto'

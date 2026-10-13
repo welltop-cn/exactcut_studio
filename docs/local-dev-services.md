@@ -64,3 +64,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 - [字幕预览并发验收](verification/dev-preview-concurrency-2026-10-12.md)
 
 线上版本会继续变更，以发布管理器和公网健康接口为准；本地旧worktree/旧进程不会随生产发布自动更新。
+
+## 2026-10-13 Hook 20 秒临时验收（已停止）
+
+本次 Hook 时长调整会话使用 `127.0.0.1:18893`、独立数据根 `/tmp/exactcut-hook20-dev-20261013`，真实 worker/FFmpeg 完成三条制作并通过 QC。所有临时任务完成后，核对 PID 24013 对应 `/tmp/exactcut-hook20-dev.py` 再正常停止，并确认端口无监听。数据保留；未重启共享 8793 或操作其他会话实例。详见 [验收记录](verification/hook-duration-20s-2026-10-13.md)。

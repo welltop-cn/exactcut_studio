@@ -359,7 +359,7 @@ def compile_composition(row):
         duration_s = float(5 if opening.get('duration_s') in (None, '') else opening.get('duration_s'))
     except (TypeError, ValueError):
         duration_s = 5
-    duration_s = min(12.0, max(1.0, duration_s))
+    duration_s = min(20.0, max(1.0, duration_s))
     plots = composition.get('plots') if isinstance(composition.get('plots'), list) else []
     clean_plots, lines = [], []
     for plot in plots[:12]:

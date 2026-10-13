@@ -40,8 +40,11 @@ def test_adaptive_duration_is_bounded_and_never_outlasts_video():
     assert hook_duration('word '*40,HookOptions())==9000
     assert hook_duration(TEXT,HookOptions(duration_ms=7200))==7200
     assert hook_duration(TEXT,HookOptions(duration_ms=7200),1500)==1500
+    assert hook_duration(TEXT,HookOptions(duration_ms=15000))==15000
+    assert hook_duration(TEXT,HookOptions(duration_ms=20000))==20000
+    assert hook_duration(TEXT,HookOptions(duration_ms=20000),1500)==1500
     with pytest.raises(ValueError):
-        HookOptions(duration_ms=15000)
+        HookOptions(duration_ms=20001)
 
 
 def test_placement_avoids_face_and_subtitle_and_explains_unavoidable_overlap():
