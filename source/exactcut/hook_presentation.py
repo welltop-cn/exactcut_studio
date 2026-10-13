@@ -183,9 +183,10 @@ def presentation(text: str, emphasis: dict, options: HookOptions, frames: list[b
 
 
 def preview_identity(request, timeline, sources):
+    from .segment_effects import identity_timeline
     return {'layout_version':HOOK_LAYOUT_VERSION, 'sampling_version':SAMPLING_VERSION, 'text':request.hook_text,
             'options':request.hook_options.model_dump(exclude={'preview_key'}),
-            'timeline':timeline, 'sources':sources}
+            'timeline':identity_timeline(timeline), 'sources':sources}
 
 
 def shot_index_identity(project,timeline):

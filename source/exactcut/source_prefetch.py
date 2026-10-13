@@ -55,7 +55,7 @@ def snapshot(draft):
         requests.append(SimpleNamespace(request_id=str(row.get('request_id') or ''), timeline=timeline))
     episodes = sorted(frame_episodes | {t.episode for r in requests for t in r.timeline if t.type == 'episode'},
                       key=lambda ep: int(ep[2:]))
-    return drama, episodes, SimpleNamespace(requests=requests)
+    return drama, episodes, SimpleNamespace(requests=requests, frame_episodes=frame_episodes)
 
 
 def ensure_editable(path):
@@ -100,6 +100,18 @@ def cached(drama, episode):
                 and video.stat().st_size == meta.get('bytes'))
 
 
+def frame_index_ready(path, drama, episode):
+    from .source_picker import _video, _fingerprint, _load
+    from .util import json_sha256
+    try:
+        key = json_sha256({'version': 1, 'drama': drama, 'episode': episode,
+                          'signature': _fingerprint(_video(drama, episode))})
+        _load(path, key)
+        return True
+    except (ValueError, OSError, KeyError, TypeError):
+        return False
+
+
 def status(path, drama, episodes, jobs, manifest):
     states = []
     for episode in episodes:
@@ -122,6 +134,16 @@ def status(path, drama, episodes, jobs, manifest):
         if cached(drama, episode):
             state.update(status='ready')
             state.pop('error_info', None)
+        if episode in getattr(manifest, 'frame_episodes', set()):
+            if frame_index_ready(path, drama, episode):
+                state.update(status='ready')
+                state.pop('error_info', None)
+            elif job and job.get('status') in {'queued', 'running'}:
+                state.update(status='queued')
+            elif job and job.get('status') in {'failed', 'interrupted'}:
+                state.update(status='failed')
+            else:
+                state.update(status='waiting')
         states.append(state)
     explanation = timing_explanation(manifest, workflow.ROOT / 'projects' / drama, wait=False)
     by_episode = {state['episode']: state for state in states}
@@ -178,7 +200,13 @@ def run(batch_id, job_id):
             state.update(received_bytes=received, total_bytes=total)
             store()
         try:
-            source_cache.ensure(job['project'], [episode], on_progress=progress)
+            needs_frames = episode in desired.get('frame_episodes', [])
+            if not needs_frames or signature(job['project'], episode) is None:
+                source_cache.ensure(job['project'], [episode], on_progress=progress)
+            if needs_frames:
+                from .source_picker import prepare
+                prepare(path, {'drama_id': job['project'], 'rows': [{'clips': [
+                    {'episode': episode, 'time_format': 'source_frames_v1'}]}]}, episode)
             state.update(status='ready', signature=signature(job['project'], episode))
         except (ValueError, RuntimeError, OSError) as exc:
             from .stage_results import ResourceDeferred

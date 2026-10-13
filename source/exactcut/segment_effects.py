@@ -18,6 +18,18 @@ def cut_timeline(timeline):
     return [{key: item[key] for key in CUT_FIELDS if key in item} for item in timeline]
 
 
+def identity_timeline(timeline):
+    """Keep legacy no-effect identities; retain only active decorations."""
+    result = cut_timeline(timeline)
+    for original, item in zip(timeline, result):
+        if original.get('segment_caption'):
+            item['segment_caption'] = original['segment_caption']
+        if original.get('transition_in') == 'flash_white':
+            item.update(transition_in='flash_white',
+                        transition_duration_ms=original.get('transition_duration_ms', 500))
+    return result
+
+
 def has_effects(timeline):
     return any(item.get('segment_caption') or item.get('transition_in') == 'flash_white' for item in timeline)
 

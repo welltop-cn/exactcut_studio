@@ -181,7 +181,7 @@ def resolve_frame_clips(row, drama, path):
     The end frame is inclusive, mapped to the next frame's exclusive boundary.
     """
     from copy import deepcopy
-    from .intake import _clip_fields, compile_clips
+    from .intake import _clip_fields, compile_clips, _segment_fields, _clip_idle
     result = deepcopy(row)
     indexes = {}
     for clip in result['clips']:
@@ -191,7 +191,7 @@ def resolve_frame_clips(row, drama, path):
             raise ValueError('未知片段时间格式，请核对后重新保存')
         stored, numbers = _clip_fields(clip)
         episode = stored['episode']
-        if not episode and all(n in (None, 0) for n in numbers.values()):
+        if _clip_idle(stored, numbers):
             clip.clear()
             continue
         if any(stored[key] == '' for key in numbers):
@@ -201,13 +201,13 @@ def resolve_frame_clips(row, drama, path):
         episode = 'EP' + str(int(episode))
         if episode not in indexes:
             if path is None:
-                raise ValueError('原片帧索引尚未就绪，请先准备正片并打开选帧')
+                raise ValueError('原片帧索引尚未就绪，请等待正片及帧索引准备完成后重试')
             source = _video(drama, episode)
             signature = _fingerprint(source)
             key = json_sha256({'version': 1, 'drama': drama, 'episode': episode, 'signature': signature})
             target = path / 'source-picker' / key / 'index.json'
             if not target.is_file():
-                raise ValueError('原片帧索引尚未就绪或正片已变化，请先准备正片并打开选帧')
+                raise ValueError('原片帧索引尚未就绪或正片已变化，请等待正片及帧索引准备完成后重试')
             indexes[episode] = _load(path, key)[0]
         doc = indexes[episode]
         chosen = []
@@ -224,7 +224,9 @@ def resolve_frame_clips(row, drama, path):
         if last < first:
             raise ValueError('结束帧不能早于开始帧')
         boundaries = [doc['times_ms'][first], doc['times_ms'][last + 1] if last + 1 < len(doc['times_ms']) else doc['duration_ms']]
+        effects = _segment_fields(clip)
         clip.clear()
+        clip.update(effects)
         clip['episode'] = episode
         for side, boundary in zip(('start', 'end'), boundaries):
             minutes, rest = divmod(boundary, 60000)

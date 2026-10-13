@@ -108,6 +108,10 @@ def initialize(root, profile, *, instance, backend_port, public_port, cpus, memo
 
 
 class Docker:
+    def editor_protocol(self, image):
+        item = json.loads(output('docker', 'image', 'inspect', image))[0]
+        return (item.get('Config', {}).get('Labels') or {}).get('io.exactcut.editor-protocol') == '1'
+
     def media_protocol(self, image):
         item = json.loads(output('docker', 'image', 'inspect', image))[0]
         return (item.get('Config', {}).get('Labels') or {}).get('io.exactcut.media-protocol') == '1'
@@ -252,11 +256,39 @@ def media_state_records(root):
     return sorted(str(path.relative_to(root)) for path in records)
 
 
+def require_editor_compatibility(root, release, engine):
+    """Old writers silently discard frame/effect fields despite shared schema 1."""
+    batches = root / 'data/.web-state/batches'
+    paths = [p for name in ('draft.json', 'confirmed.json', 'media-state.json') for p in batches.glob('*/' + name)]
+    paths.extend((root / 'data/projects').glob('*/requests/*/normalized.json'))
+    if not paths:
+        return
+    inspect = getattr(engine, 'editor_protocol', None)
+    if inspect and inspect(release['image']) is True:
+        return
+    def requires_editor(value):
+        if isinstance(value, dict):
+            if (value.get('editor_time_format') == 'source_frames_v1'
+                    or value.get('time_format') == 'source_frames_v1'
+                    or value.get('segment_caption') is not None
+                    or value.get('transition_in', 'none') != 'none'):
+                return True
+            return any(requires_editor(v) for v in value.values())
+        return isinstance(value, list) and any(requires_editor(v) for v in value)
+    for path in paths:
+        try:
+            if path.is_symlink() or requires_editor(read(path)):
+                raise RuntimeError('已有帧时间或片段效果数据；目标镜像不支持编辑协议，禁止回退')
+        except (OSError, ValueError, RecursionError) as exc:
+            raise RuntimeError('无法核实编辑数据兼容性，禁止旧镜像写入') from exc
+
+
 def require_media_compatibility(root, release, engine):
     records = media_state_records(root)
     inspect = getattr(engine, 'media_protocol', None)
     if records and (inspect is None or inspect(release['image']) is not True):
         raise RuntimeError('已有素材版本数据；目标镜像不支持素材版本协议，禁止旧程序写入或回退')
+    require_editor_compatibility(root, release, engine)
 
 
 def require_phase_drained(root):

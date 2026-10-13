@@ -224,14 +224,18 @@ def batch_response(batch_id, job=None):
 def prefetch_sources(batch_id, data, actor):
     from . import source_prefetch
     from .runtime import require_material_fetch
-    require_material_fetch()
     path = workflow.folder(batch_id)
     source_prefetch.ensure_editable(path)
     if data.get('cancel') is True:
         write_json_atomic(path / 'source-prefetch.json', {'drama_id': '', 'episodes': []})
         return {'drama_id': '', 'episodes': [], 'timing_explanation': []}
     drama, episodes, manifest = source_prefetch.snapshot(data.get('draft'))
-    write_json_atomic(path / 'source-prefetch.json', {'drama_id': drama, 'episodes': episodes})
+    # Index already-local frame sources even when external fetching is disabled.
+    # Missing originals and legacy requests still require fetch authorization.
+    if not episodes or any(ep not in manifest.frame_episodes or source_prefetch.signature(drama, ep) is None for ep in episodes):
+        require_material_fetch()
+    write_json_atomic(path / 'source-prefetch.json', {'drama_id': drama, 'episodes': episodes,
+                                                    'frame_episodes': sorted(manifest.frame_episodes)})
     jobs = [job for job in stored_jobs() if job.get('batch_id') == batch_id
             and job.get('action') == 'prefetch' and (not job.get('instance') or batch_control.belongs(job))]
     result = source_prefetch.status(path, drama, episodes, jobs, manifest)

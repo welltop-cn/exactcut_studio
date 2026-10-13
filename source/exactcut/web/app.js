@@ -360,7 +360,7 @@ function renderSourcePrefetch(){
 }
 function scheduleSourcePrefetch(){clearTimeout(prefetchTimer);prefetchTimer=setTimeout(()=>prefetchSources(),600)}
 async function prefetchSources(retry=false){
- if(openingBatchId||selectedId!==current?.id||prefetching||!current||(!current.media_managed&&current.runtime.status!=='draft')||current.runtime.archived||current.runtime.paused||!currentUser?.features.material_fetch)return;
+ if(openingBatchId||selectedId!==current?.id||prefetching||!current||(!current.media_managed&&current.runtime.status!=='draft')||current.runtime.archived||current.runtime.paused||(!currentUser?.features.material_fetch&&!current.draft.rows.some(r=>(r.clips||[]).some(c=>c.time_format==='source_frames_v1'))))return;
  const id=current.id,draft=JSON.parse(JSON.stringify(current.draft)),key=JSON.stringify(draft);
  const cancel=!/^\d{6}$/.test(String(draft.drama_id||''))||Number(draft.drama_id)<101050;
  prefetching=true;
