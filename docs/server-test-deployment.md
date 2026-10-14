@@ -228,3 +228,7 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 应用运行镜像不包含Node，不适合直接执行完整测试。使用与依赖锁文件匹配的 `exactcut-validation` 镜像，挂载完整的 Git 已提交源码树到 `/app`，工作目录 `/app/source`；测试依赖仓库中的README、deploy和integrations，不要仅传应用白名单用于全套测试。验证容器限额并禁止网络，不挂载测试或正式data。应用部署包仍只包含代码/配置/模板，不包含业务数据。
 
 最新部署及验收：[main-test-deployment-2026-10-13.md](verification/main-test-deployment-2026-10-13.md)。正式服务等待用户测试结果与后续发布指令。
+
+## 2026-10-14 剪切功能测试部署
+
+用户授权重新开启原测试实例。已部署ae8acd3，启用cutting及scan，保持测试OSS前缀及交付禁用。当前代码与回滚、实际验收详见 [剪切测试部署记录](verification/cutting-test-deployment-2026-10-14.md)。旧账号和项目保留；正式服务未重启或修改。
