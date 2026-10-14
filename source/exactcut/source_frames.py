@@ -125,6 +125,27 @@ def copy_frame_indexes(source, target, draft):
         write_json_atomic(target / 'source-picker' / key / 'index.json', doc)
 
 
+def _clock(minutes, seconds, frame):
+    return f'{minutes:02d}:{seconds:02d}:{frame:03d}'
+
+
+def _reject_frame(episode, side, numbers, ordinal, count, times):
+    """Explain a frame the editor typed, using the same 分:秒:帧 fields."""
+    label = '开始' if side == 'start' else '结束'
+    clock = _clock(numbers[side + '_m'], numbers[side + '_s'], ordinal)
+    if count == 0:
+        last_ms = times[-1]
+        second = numbers[side + '_m'] * 60 + numbers[side + '_s']
+        if second * 1000 > last_ms:
+            last_second = last_ms // 1000
+            last_ordinal = len(times) - bisect_left(times, last_second * 1000) - 1
+            minutes, seconds = divmod(last_second, 60)
+            last = _clock(minutes, seconds, last_ordinal)
+            raise ValueError(f'{episode} {label}时间 {clock} 超出这一集的长度，请改到 {last} 或更早')
+        raise ValueError(f'{episode} {label}时间 {clock} 这一秒没有画面，请改到有画面的时间')
+    raise ValueError(f'{episode} {label}时间 {clock} 超出这一秒的帧数，请填 0 到 {count - 1}')
+
+
 def resolve_frame_clips(row, drama, path):
     """Compile explicit frame drafts from a current index; never probe under save locks.
 
@@ -169,7 +190,7 @@ def resolve_frame_clips(row, drama, path):
             count = next_second - first_in_second
             ordinal = numbers[side + '_f']
             if ordinal >= count:
-                raise ValueError(f'{episode} 第{second}秒原片帧序号超出范围（本秒{count}帧，从0开始）')
+                _reject_frame(episode, side, numbers, ordinal, count, doc['times_ms'])
             chosen.append(first_in_second + ordinal)
         first, last = chosen
         if last < first:

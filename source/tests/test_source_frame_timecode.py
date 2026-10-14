@@ -2,6 +2,8 @@
 from copy import deepcopy
 from pathlib import Path
 
+import pytest
+
 from exactcut import intake, source_prefetch, workflow as w
 from test_source_frames import source, make_video
 from test_web_base_path import app
@@ -74,7 +76,8 @@ def test_vfr_invalid_frame_and_unknown_format_block_execution(source):
     assert not errors, errors
     assert manifest.requests[0].timeline[0].start_ms == meta['times_ms'][3]
     data['rows'][0]['clips'][0]['end_f'] = '999'
-    assert intake.validate_draft(data, str(path / 'source.xlsx'))[0] is None
+    _, errors = intake.validate_draft(data, str(path / 'source.xlsx'))
+    assert errors and errors[0].startswith('素材 1：EP1 结束时间 00:01:999 超出这一秒的帧数，请填 0 到 ')
     data['rows'][0]['clips'][0]['time_format'] = 'unknown'
     intake.compile_clips(data['rows'][0])
     assert intake.validate_draft(data, str(path / 'source.xlsx'))[0] is None
@@ -166,6 +169,28 @@ def test_frame_bucket_lookup_does_not_scan_entire_source_index(source, monkeypat
     assert not errors, errors
     assert manifest.requests[0].timeline[0].start_ms == meta['times_ms'][32]
     assert manifest.requests[0].timeline[0].end_ms == meta['times_ms'][64]
+
+
+def test_time_past_episode_names_the_last_frame(source):
+    from exactcut import source_frames
+    _, item, _, _ = source
+    path = w.folder(item['id'])
+    data = draft(frame_clip(end_m='01', end_s='56', end_f='008'))
+    meta = source_frames.prepare(path, data, 'EP1')
+    _, errors = intake.validate_draft(data, str(path / 'source.xlsx'))
+    last_ms = meta['times_ms'][-1]
+    last_second = last_ms // 1000
+    last_ordinal = len(meta['times_ms']) - next(i for i, time in enumerate(meta['times_ms']) if time >= last_second * 1000) - 1
+    minutes, seconds = divmod(last_second, 60)
+    last = f'{minutes:02d}:{seconds:02d}:{last_ordinal:03d}'
+    assert errors == [f'素材 1：EP1 结束时间 01:56:008 超出这一集的长度，请改到 {last} 或更早']
+
+
+def test_empty_second_inside_episode_does_not_claim_the_file_ended():
+    from exactcut.source_frames import _reject_frame
+    times = [0, 33, 2000, 2033]
+    with pytest.raises(ValueError, match=r'EP6 结束时间 00:01:000 这一秒没有画面，请改到有画面的时间'):
+        _reject_frame('EP6', 'end', {'end_m': 0, 'end_s': 1}, 0, 0, times)
 
 
 def test_legacy_valid_timeline_with_null_clips_still_validates():
