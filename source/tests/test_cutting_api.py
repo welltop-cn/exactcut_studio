@@ -175,3 +175,22 @@ def test_feature_requires_explicit_config(environment, monkeypatch):
     for settings, expected in [({}, False), ({'enabled': False}, False), ({'enabled': 'true'}, False), ({'enabled': True}, True)]:
         monkeypatch.setattr(cutting, 'settings', lambda: settings)
         assert cutting.enabled() is expected
+
+
+def test_discard_fences_stale_window_mutations(ready):
+    bid, rid, sha, _ = ready
+    app = serve()
+    try:
+        _, session = call(app, 'POST', f'/api/batches/{bid}/cuts/open', {'request_id': rid, 'source_sha256': sha})
+        route = f"/api/batches/{bid}/cuts/{session['id']}"
+        code, reset = call(app, 'POST', route+'/discard', {})
+        assert code == 200 and reset['reset_at']
+        for action, body in [('render', {'ranges': []}), ('discard', {}), ('scan', {'force': True})]:
+            code, error = call(app, 'POST', route+'/'+action, body)
+            assert code == 409, (action, code, error)
+            assert '重新打开' in error['error']
+        assert call(app, 'POST', route+'/discard', {'reset_at': None})[0] == 409
+        assert call(app, 'POST', route+'/render', {'ranges': [], 'reset_at': reset['reset_at']})[0] == 400
+        assert call(app, 'POST', route+'/discard', {'reset_at': reset['reset_at']})[0] == 200
+    finally:
+        app.shutdown(); app.server_close()

@@ -287,7 +287,12 @@ def get_session(batch_id, session_id):
         return recover(path, read_session(batch_id, session_id))
 
 
-def discard(batch_id, session_id):
+def require_reset(session, reset_at):
+    if not isinstance(reset_at, str) or reset_at != session.get('reset_at', ''):
+        raise CutError('本次编辑已在其他窗口放弃，请关闭后重新打开', 409)
+
+
+def discard(batch_id, session_id, *, reset_at=''):
     """Abandon editing state, retaining immutable files and current project media."""
     from . import workflow, cutting_access
     data = get_session(batch_id, session_id)
@@ -297,6 +302,7 @@ def discard(batch_id, session_id):
         path = session_path(batch_id, session_id)
         with lock_file(path/'state.lock', blocking=True):
             data = read_session(batch_id, session_id)
+            require_reset(data, reset_at)
             if any(j['status'] == 'running' or j.get('replacement', {}).get('status') == 'running' for j in data['jobs']):
                 raise CutError('视频仍在处理中，请完成后再放弃', 409)
             for job in data['jobs']:

@@ -72,7 +72,7 @@ def test_independent_endpoints_and_inclusive_render(editor):
     editor.get_by_role('button', name='添加片段', exact=True).click()
     editor.get_by_role('button', name='生成编辑后视频', exact=True).click()
     editor.wait_for_function("calls.some(c=>c.url.endsWith('/render'))")
-    assert editor.evaluate("calls.find(c=>c.url.endsWith('/render')).body") == {'ranges': [[10, 20]], 'mosaics': []}
+    assert editor.evaluate("calls.find(c=>c.url.endsWith('/render')).body") == {'ranges': [[10, 20]], 'mosaics': [], 'reset_at': ''}
 
 
 def test_merge_remove_undo_and_all_frames_rejected(editor):
@@ -296,3 +296,14 @@ def test_cancel_rescan_keeps_current_plan(editor):
     editor.locator('#cutScan').click()
     assert editor.locator('[data-clip-check]:checked').count()==1
     assert not editor.evaluate("calls.some(c=>c.url.endsWith('/scan'))")
+
+
+def test_new_window_sends_current_reset_marker(editor):
+    editor.locator('#cutClose').click()
+    editor.wait_for_function("!document.querySelector('#cutSource').hasAttribute('src')")
+    editor.evaluate("session.reset_at='new-session';calls=[]")
+    editor.locator('[data-open-cut]').evaluate('(el)=>el.click()')
+    editor.locator('#cutManual').wait_for()
+    select(editor,11,20);editor.locator('#cutAdd').click();editor.locator('#cutRender').click()
+    editor.wait_for_function("calls.some(c=>c.url.endsWith('/render'))")
+    assert editor.evaluate("calls.find(c=>c.url.endsWith('/render')).body.reset_at")=='new-session'

@@ -28,7 +28,7 @@
     if(!Number.isSafeInteger(frame)||frame<0||frame>=count())throw Error(`位置应在 00:00:00–${timecode(count()-1)} 之间`);
     return frame;
   }
-  const plan = () => ({ranges, mosaics: []});
+  const plan = () => ({ranges, mosaics: [], reset_at: context.session.reset_at || ''});
   const samePlan = job => job && !(job.mosaics || []).length && JSON.stringify(job.ranges) === JSON.stringify(ranges);
   const draftKey = () => `exactcut.cuts.delete.v1.${currentUser?.username}.${context.batch}.${context.session.id}${context.session.reset_at?'.'+context.session.reset_at:''}`;
   const active = version => version === epoch && context && dialog.open;
@@ -220,7 +220,7 @@
     try {
       let state=await api(base+'/scan/standard'); if (!valid()) return;
       if (state.enabled && (retry || !state.report)) {
-        await api(base+'/scan',{policy:'standard',force:retry}); if(!valid())return;
+        await api(base+'/scan',{policy:'standard',force:retry,reset_at:context.session.reset_at||''}); if(!valid())return;
         if(retry){
           if(clips.some(c=>c.id===editingId&&c.origin==='ai')){editingId=null;selection=null;}
           undo=[];scanReport=null;
@@ -323,9 +323,9 @@
   $('cutRender').onclick=async()=>{if(busy||(selection&&!editingId)||!ranges.length)return;const version=epoch;busy=true;video.pause();paint();status('正在提交删除片段…');try{const job=await api(path()+'/render',plan());if(active(version))await watch(job.id,version);}catch(e){if(active(version))status(e.message,true);}finally{if(active(version)){busy=false;paint();}}};
   $('cutDiscard').onclick=async()=>{
     if(busy)return;
-    const version=epoch,key=draftKey(),base=path();busy=true;paint();status('正在放弃本次剪切…');
+    const version=epoch,key=draftKey(),base=path(),reset_at=context.session.reset_at||'';busy=true;paint();status('正在放弃本次剪切…');
     try{
-      await api(base+'/discard',{});
+      await api(base+'/discard',{reset_at});
       try{localStorage.removeItem(key);localStorage.removeItem(key+'.clips');}catch{}
       if(active(version)){dialog.close();toast('已放弃本次剪切，项目原片未改变。下次打开会重新识别。');}
     }catch(e){if(active(version))status(e.message,true);}

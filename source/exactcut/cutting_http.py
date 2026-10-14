@@ -47,7 +47,10 @@ def handle(handler, batch_id, suffix, method):
                 if method == 'GET' and policy:
                     return handler.respond(200, cutting_scan.state(batch_id, sid, policy))
                 if method == 'POST' and policy is None:
-                    return handler.respond(202, cutting_scan.start(batch_id, sid, data.get('policy', 'standard'), force=data.get('force', False)))
+                    with cutting_access.gate(workflow.folder(batch_id), scan_session['request_id']):
+                        cutting_access.require_editable(workflow.folder(batch_id), scan_session['request_id'], source_sha=scan_session['source_sha256'])
+                        cutting.require_reset(cutting.read_session(batch_id, sid), data.get('reset_at', ''))
+                        return handler.respond(202, cutting_scan.start(batch_id, sid, data.get('policy', 'standard'), force=data.get('force', False)))
                 raise cutting.CutError('识别入口不存在', 404)
             match = re.fullmatch(r'([0-9a-f]{32})(?:/(source|frame/[0-9]+|output/[0-9a-f]{32}|render|save|replace|discard))?', suffix)
             if not match:
@@ -69,7 +72,7 @@ def handle(handler, batch_id, suffix, method):
                 if action.startswith('output/'):
                     return handler.stream_video(cutting.output_file(batch_id, sid, action[7:]))
             elif action == 'discard':
-                return handler.respond(200, cutting.discard(batch_id, sid))
+                return handler.respond(200, cutting.discard(batch_id, sid, reset_at=data.get('reset_at', '')))
             elif action == 'replace':
                 from . import cutting_replace
                 return handler.respond(202, cutting_replace.start(batch_id, sid, data.get('job_id')))
@@ -77,6 +80,7 @@ def handle(handler, batch_id, suffix, method):
                 if data.get('mosaics'):
                     raise cutting.CutError('打码功能暂未开放', 422)
                 with cutting_access.gate(workflow.folder(batch_id), session['request_id']):
+                    cutting.require_reset(cutting.read_session(batch_id, sid), data.get('reset_at', ''))
                     cutting_access.require_editable(workflow.folder(batch_id), session['request_id'], source_sha=session['source_sha256'])
                     return handler.respond(202, cutting.start_render(batch_id, sid, data.get('ranges'), data.get('mosaics')))
             elif action == 'save':
