@@ -1,0 +1,1325 @@
+{
+  "first_pass": [
+    {
+      "id": 1,
+      "name": "原始报错文本",
+      "text": "EP4: 00:49:00-02:16:18,, EP5: 00:00:01-01:08:13",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "000",
+          "end_m": "02",
+          "end_s": "16",
+          "end_f": "018"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "00",
+          "start_f": "001",
+          "end_m": "01",
+          "end_s": "08",
+          "end_f": "013"
+        }
+      ],
+      "pass": false,
+      "exception_type": "ValueError",
+      "error": "AI 文本理解服务暂时不可用，请稍后重试；未使用旧规则替代解读",
+      "elapsed_seconds": 5.02,
+      "model_output": []
+    },
+    {
+      "id": 2,
+      "name": "换行和空行",
+      "text": "EP4 00:49:00-02:16:18\n\nEP5 00:00:01-01:08:13",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "000",
+          "end_m": "02",
+          "end_s": "16",
+          "end_f": "018"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "00",
+          "start_f": "001",
+          "end_m": "01",
+          "end_s": "08",
+          "end_f": "013"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "49",
+            "start_f": "000",
+            "end_m": "02",
+            "end_s": "16",
+            "end_f": "018"
+          },
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "00",
+            "start_f": "001",
+            "end_m": "01",
+            "end_s": "08",
+            "end_f": "013"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 4.67,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 49,
+                  "start_f": 0,
+                  "end_m": 2,
+                  "end_s": 16,
+                  "end_f": 18
+                }
+              ],
+              "issue": ""
+            },
+            {
+              "source_lines": [
+                3
+              ],
+              "clips": [
+                {
+                  "episode": 5,
+                  "start_m": 0,
+                  "start_s": 0,
+                  "start_f": 1,
+                  "end_m": 1,
+                  "end_s": 8,
+                  "end_f": 13
+                }
+              ],
+              "issue": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "name": "全角标点",
+      "text": "ＥＰ４：００：４９：００—０２：１６：１８；ＥＰ５：００：００：０１～０１：０８：１３",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "000",
+          "end_m": "02",
+          "end_s": "16",
+          "end_f": "018"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "00",
+          "start_f": "001",
+          "end_m": "01",
+          "end_s": "08",
+          "end_f": "013"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "49",
+            "start_f": "000",
+            "end_m": "02",
+            "end_s": "16",
+            "end_f": "018"
+          },
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "00",
+            "start_f": "001",
+            "end_m": "01",
+            "end_s": "08",
+            "end_f": "013"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 5.76,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 49,
+                  "start_f": 0,
+                  "end_m": 2,
+                  "end_s": 16,
+                  "end_f": 18
+                },
+                {
+                  "episode": 5,
+                  "start_m": 0,
+                  "start_s": 0,
+                  "start_f": 1,
+                  "end_m": 1,
+                  "end_s": 8,
+                  "end_f": 13
+                }
+              ],
+              "issue": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "name": "中文数字单位",
+      "text": "第四集，从零分四十九秒第零帧到二分十六秒第十八帧。\n第五集，从零分零秒第一帧到一分八秒第十三帧。",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "000",
+          "end_m": "02",
+          "end_s": "16",
+          "end_f": "018"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "00",
+          "start_f": "001",
+          "end_m": "01",
+          "end_s": "08",
+          "end_f": "013"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "49",
+            "start_f": "000",
+            "end_m": "02",
+            "end_s": "16",
+            "end_f": "018"
+          },
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "00",
+            "start_f": "001",
+            "end_m": "01",
+            "end_s": "08",
+            "end_f": "013"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 4.51,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 49,
+                  "start_f": 0,
+                  "end_m": 2,
+                  "end_s": 16,
+                  "end_f": 18
+                }
+              ],
+              "issue": ""
+            },
+            {
+              "source_lines": [
+                2
+              ],
+              "clips": [
+                {
+                  "episode": 5,
+                  "start_m": 0,
+                  "start_s": 0,
+                  "start_f": 1,
+                  "end_m": 1,
+                  "end_s": 8,
+                  "end_f": 13
+                }
+              ],
+              "issue": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "name": "同集多段",
+      "text": "第4集：00:10:00-00:20:12、00:30:05-00:40:18、01:00:00-01:15:08",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "10",
+          "start_f": "000",
+          "end_m": "00",
+          "end_s": "20",
+          "end_f": "012"
+        },
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "30",
+          "start_f": "005",
+          "end_m": "00",
+          "end_s": "40",
+          "end_f": "018"
+        },
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "01",
+          "start_s": "00",
+          "start_f": "000",
+          "end_m": "01",
+          "end_s": "15",
+          "end_f": "008"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "10",
+            "start_f": "000",
+            "end_m": "00",
+            "end_s": "20",
+            "end_f": "012"
+          },
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "30",
+            "start_f": "005",
+            "end_m": "00",
+            "end_s": "40",
+            "end_f": "018"
+          },
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "01",
+            "start_s": "00",
+            "start_f": "000",
+            "end_m": "01",
+            "end_s": "15",
+            "end_f": "008"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 4.18,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 10,
+                  "start_f": 0,
+                  "end_m": 0,
+                  "end_s": 20,
+                  "end_f": 12
+                },
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 30,
+                  "start_f": 5,
+                  "end_m": 0,
+                  "end_s": 40,
+                  "end_f": 18
+                },
+                {
+                  "episode": 4,
+                  "start_m": 1,
+                  "start_s": 0,
+                  "start_f": 0,
+                  "end_m": 1,
+                  "end_s": 15,
+                  "end_f": 8
+                }
+              ],
+              "issue": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "name": "跨行共用集号",
+      "text": "第4集\n00:10:00-00:20:12\n00:30:05-00:40:18",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "10",
+          "start_f": "000",
+          "end_m": "00",
+          "end_s": "20",
+          "end_f": "012"
+        },
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "30",
+          "start_f": "005",
+          "end_m": "00",
+          "end_s": "40",
+          "end_f": "018"
+        }
+      ],
+      "pass": false,
+      "exception_type": "ValueError",
+      "error": "AI 文本理解服务暂时不可用，请稍后重试；未使用旧规则替代解读",
+      "http_status": 429,
+      "elapsed_seconds": 2.09,
+      "model_output": []
+    },
+    {
+      "id": 7,
+      "name": "表格制表符",
+      "text": "4\t00:49:00\t02:16:18\n5\t00:00:01\t01:08:13",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "000",
+          "end_m": "02",
+          "end_s": "16",
+          "end_f": "018"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "00",
+          "start_f": "001",
+          "end_m": "01",
+          "end_s": "08",
+          "end_f": "013"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "49",
+            "start_f": "000",
+            "end_m": "02",
+            "end_s": "16",
+            "end_f": "018"
+          },
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "00",
+            "start_f": "001",
+            "end_m": "01",
+            "end_s": "08",
+            "end_f": "013"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 5.61,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 49,
+                  "start_f": 0,
+                  "end_m": 2,
+                  "end_s": 16,
+                  "end_f": 18
+                }
+              ],
+              "issue": ""
+            },
+            {
+              "source_lines": [
+                2
+              ],
+              "clips": [
+                {
+                  "episode": 5,
+                  "start_m": 0,
+                  "start_s": 0,
+                  "start_f": 1,
+                  "end_m": 1,
+                  "end_s": 8,
+                  "end_f": 13
+                }
+              ],
+              "issue": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "name": "省略帧号",
+      "text": "EP4 00:49-02:16\nEP5 00:00-01:08",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "000",
+          "end_m": "02",
+          "end_s": "16",
+          "end_f": "000"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "00",
+          "start_f": "000",
+          "end_m": "01",
+          "end_s": "08",
+          "end_f": "000"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "49",
+            "start_f": "000",
+            "end_m": "02",
+            "end_s": "16",
+            "end_f": "000"
+          },
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "00",
+            "start_f": "000",
+            "end_m": "01",
+            "end_s": "08",
+            "end_f": "000"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 5.56,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 49,
+                  "start_f": 0,
+                  "end_m": 2,
+                  "end_s": 16,
+                  "end_f": 0
+                }
+              ],
+              "issue": ""
+            },
+            {
+              "source_lines": [
+                2
+              ],
+              "clips": [
+                {
+                  "episode": 5,
+                  "start_m": 0,
+                  "start_s": 0,
+                  "start_f": 0,
+                  "end_m": 1,
+                  "end_s": 8,
+                  "end_f": 0
+                }
+              ],
+              "issue": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "name": "短位数字",
+      "text": "EP4 0:1:2-0:3:4",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "01",
+          "start_f": "002",
+          "end_m": "00",
+          "end_s": "03",
+          "end_f": "004"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "01",
+            "start_f": "002",
+            "end_m": "00",
+            "end_s": "03",
+            "end_f": "004"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 3.81,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 1,
+                  "start_f": 2,
+                  "end_m": 0,
+                  "end_s": 3,
+                  "end_f": 4
+                }
+              ],
+              "issue": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 10,
+      "name": "重复回溯顺序",
+      "text": "EP5 01:00:00-01:10:12\nEP4 00:30:00-00:40:18\nEP5 00:10:00-00:20:05\nEP5 01:00:00-01:10:12",
+      "expected_clips": [
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "01",
+          "start_s": "00",
+          "start_f": "000",
+          "end_m": "01",
+          "end_s": "10",
+          "end_f": "012"
+        },
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "30",
+          "start_f": "000",
+          "end_m": "00",
+          "end_s": "40",
+          "end_f": "018"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "10",
+          "start_f": "000",
+          "end_m": "00",
+          "end_s": "20",
+          "end_f": "005"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "01",
+          "start_s": "00",
+          "start_f": "000",
+          "end_m": "01",
+          "end_s": "10",
+          "end_f": "012"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "01",
+            "start_s": "00",
+            "start_f": "000",
+            "end_m": "01",
+            "end_s": "10",
+            "end_f": "012"
+          },
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "30",
+            "start_f": "000",
+            "end_m": "00",
+            "end_s": "40",
+            "end_f": "018"
+          },
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "10",
+            "start_f": "000",
+            "end_m": "00",
+            "end_s": "20",
+            "end_f": "005"
+          },
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "01",
+            "start_s": "00",
+            "start_f": "000",
+            "end_m": "01",
+            "end_s": "10",
+            "end_f": "012"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 4.62,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 5,
+                  "start_m": 1,
+                  "start_s": 0,
+                  "start_f": 0,
+                  "end_m": 1,
+                  "end_s": 10,
+                  "end_f": 12
+                }
+              ],
+              "issue": ""
+            },
+            {
+              "source_lines": [
+                2
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 30,
+                  "start_f": 0,
+                  "end_m": 0,
+                  "end_s": 40,
+                  "end_f": 18
+                }
+              ],
+              "issue": ""
+            },
+            {
+              "source_lines": [
+                3
+              ],
+              "clips": [
+                {
+                  "episode": 5,
+                  "start_m": 0,
+                  "start_s": 10,
+                  "start_f": 0,
+                  "end_m": 0,
+                  "end_s": 20,
+                  "end_f": 5
+                }
+              ],
+              "issue": ""
+            },
+            {
+              "source_lines": [
+                4
+              ],
+              "clips": [
+                {
+                  "episode": 5,
+                  "start_m": 1,
+                  "start_s": 0,
+                  "start_f": 0,
+                  "end_m": 1,
+                  "end_s": 10,
+                  "end_f": 12
+                }
+              ],
+              "issue": ""
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "name": "单帧",
+      "text": "EP4 00:49:18-00:49:18",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "018",
+          "end_m": "00",
+          "end_s": "49",
+          "end_f": "018"
+        }
+      ],
+      "pass": false,
+      "exception_type": "ValueError",
+      "error": "AI 文本理解服务暂时不可用，请稍后重试；未使用旧规则替代解读",
+      "http_status": 429,
+      "elapsed_seconds": 2.35,
+      "model_output": []
+    },
+    {
+      "id": 12,
+      "name": "结束早于开始",
+      "text": "EP4 02:16:18-00:49:00",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1行「EP4 02:16:18-00:49:00」：结束时间 00:49:00 早于开始时间 02:16:18；不能交换或自动更正，请确认并按“分:秒:帧”提供正确的起止时间。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 3.9,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [],
+              "issue": "结束时间 00:49:00 早于开始时间 02:16:18；不能交换或自动更正，请确认并按“分:秒:帧”提供正确的起止时间。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 13,
+      "name": "秒超范围",
+      "text": "EP4 00:60:00-01:10:00",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1行「EP4 00:60:00-01:10:00」：时间码无效：起始时间 00:60:00 的秒值为60，超出允许范围0～59；请确认并提供有效的分:秒:帧起止时间。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 4.14,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [],
+              "issue": "时间码无效：起始时间 00:60:00 的秒值为60，超出允许范围0～59；请确认并提供有效的分:秒:帧起止时间。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 14,
+      "name": "集号超范围",
+      "text": "EP501 00:10:00-00:20:00",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1行「EP501 00:10:00-00:20:00」：集号 EP501 超出允许范围（1～500），请提供有效集号。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 6.14,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [],
+              "issue": "集号 EP501 超出允许范围（1～500），请提供有效集号。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 15,
+      "name": "缺集号",
+      "text": "00:49:00-02:16:18",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1行「00:49:00-02:16:18」：缺少明确集号；请提供该片段所属集号（如“第4集 00:49:00-02:16:18”）。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 6.34,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [],
+              "issue": "缺少明确集号；请提供该片段所属集号（如“第4集 00:49:00-02:16:18”）。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 16,
+      "name": "缺结束时间",
+      "text": "EP4 从00:49:00剪到片尾",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1行「EP4 从00:49:00剪到片尾」：结束位置“片尾”没有明确的分:秒:帧，无法确定结束帧；请提供第4集的明确起止时间码。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 4.74,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [],
+              "issue": "结束位置“片尾”没有明确的分:秒:帧，无法确定结束帧；请提供第4集的明确起止时间码。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 17,
+      "name": "毫秒",
+      "text": "第4集，从0分49秒120毫秒到2分16秒180毫秒",
+      "expected_clips": null,
+      "pass": false,
+      "exception_type": "ValueError",
+      "error": "AI 文本理解服务暂时不可用，请稍后重试；未使用旧规则替代解读",
+      "http_status": 429,
+      "elapsed_seconds": 1.98,
+      "model_output": []
+    },
+    {
+      "id": 18,
+      "name": "小数秒",
+      "text": "EP4 00:49.120-02:16.180",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1行「EP4 00:49.120-02:16.180」：时间码使用“分:秒.小数”格式，不能将小数解释为帧。请确认并改为“分:秒:帧”格式后重新提供。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 5.03,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [],
+              "issue": "时间码使用“分:秒.小数”格式，不能将小数解释为帧。请确认并改为“分:秒:帧”格式后重新提供。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 19,
+      "name": "四段时间码",
+      "text": "EP4 00:00:49:12-00:02:16:18",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1行「EP4 00:00:49:12-00:02:16:18」：时间码为四段格式（00:00:49:12-00:02:16:18），可能表示时:分:秒:帧，不能按本页面的分:秒:帧约定解析。请确认并改写为分:秒:帧格式。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 9.41,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [],
+              "issue": "时间码为四段格式（00:00:49:12-00:02:16:18），可能表示时:分:秒:帧，不能按本页面的分:秒:帧约定解析。请确认并改写为分:秒:帧格式。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 20,
+      "name": "正确错误混合",
+      "text": "EP4 00:49:00-02:16:18\nEP5 01:08:13-00:00:01",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第2行「EP5 01:08:13-00:00:01」：结束时间早于开始时间，不能交换或自动修正；请确认第5集的正确起止时间。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 6.11,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1
+              ],
+              "clips": [
+                {
+                  "episode": 4,
+                  "start_m": 0,
+                  "start_s": 49,
+                  "start_f": 0,
+                  "end_m": 2,
+                  "end_s": 16,
+                  "end_f": 18
+                }
+              ],
+              "issue": ""
+            },
+            {
+              "source_lines": [
+                2
+              ],
+              "clips": [],
+              "issue": "结束时间早于开始时间，不能交换或自动修正；请确认第5集的正确起止时间。"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "name": "两个成片",
+      "text": "成片一：EP4 00:49:00-02:16:18\n成片二：EP5 00:00:01-01:08:13",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1、2行「成片一：EP4 00:49:00-02:16:18 / 成片二：EP5 00:00:01-01:08:13」：输入混合了“成片一”和“成片二”两条成片；请仅提供当前一条成片的片段信息。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 5.63,
+      "model_output": [
+        {
+          "items": [
+            {
+              "source_lines": [
+                1,
+                2
+              ],
+              "clips": [],
+              "issue": "输入混合了“成片一”和“成片二”两条成片；请仅提供当前一条成片的片段信息。"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "retries": [
+    {
+      "id": 1,
+      "name": "原始报错文本",
+      "text": "EP4: 00:49:00-02:16:18,, EP5: 00:00:01-01:08:13",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "000",
+          "end_m": "02",
+          "end_s": "16",
+          "end_f": "018"
+        },
+        {
+          "episode": "5",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "00",
+          "start_f": "001",
+          "end_m": "01",
+          "end_s": "08",
+          "end_f": "013"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "49",
+            "start_f": "000",
+            "end_m": "02",
+            "end_s": "16",
+            "end_f": "018"
+          },
+          {
+            "episode": "5",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "00",
+            "start_f": "001",
+            "end_m": "01",
+            "end_s": "08",
+            "end_f": "013"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 5.68
+    },
+    {
+      "id": 6,
+      "name": "跨行共用集号",
+      "text": "第4集\n00:10:00-00:20:12\n00:30:05-00:40:18",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "10",
+          "start_f": "000",
+          "end_m": "00",
+          "end_s": "20",
+          "end_f": "012"
+        },
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "30",
+          "start_f": "005",
+          "end_m": "00",
+          "end_s": "40",
+          "end_f": "018"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "10",
+            "start_f": "000",
+            "end_m": "00",
+            "end_s": "20",
+            "end_f": "012"
+          },
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "30",
+            "start_f": "005",
+            "end_m": "00",
+            "end_s": "40",
+            "end_f": "018"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 6.98
+    },
+    {
+      "id": 11,
+      "name": "单帧",
+      "text": "EP4 00:49:18-00:49:18",
+      "expected_clips": [
+        {
+          "episode": "4",
+          "time_format": "source_frames_v1",
+          "start_m": "00",
+          "start_s": "49",
+          "start_f": "018",
+          "end_m": "00",
+          "end_s": "49",
+          "end_f": "018"
+        }
+      ],
+      "result": {
+        "clips": [
+          {
+            "episode": "4",
+            "time_format": "source_frames_v1",
+            "start_m": "00",
+            "start_s": "49",
+            "start_f": "018",
+            "end_m": "00",
+            "end_s": "49",
+            "end_f": "018"
+          }
+        ],
+        "errors": []
+      },
+      "pass": true,
+      "elapsed_seconds": 5.52
+    },
+    {
+      "id": 17,
+      "name": "毫秒",
+      "text": "第4集，从0分49秒120毫秒到2分16秒180毫秒",
+      "expected_clips": null,
+      "result": {
+        "clips": [],
+        "errors": [
+          "第1行「第4集，从0分49秒120毫秒到2分16秒180毫秒」：时间码明确使用毫秒，不能按帧换算。请将起止时间改为“分:秒:帧”格式，并提供原片该秒内从0开始的帧序号。"
+        ]
+      },
+      "pass": true,
+      "elapsed_seconds": 6.24
+    }
+  ]
+}
