@@ -370,6 +370,12 @@ def reserved_names(path):
 
 
 def confirm(path, data):
+    from .cutting_access import gate
+    with gate(path):
+        return _confirm(path, data)
+
+
+def _confirm(path, data):
     from . import workflow as w
     from .intake import validate_draft
     snapshot = read(path)
@@ -420,6 +426,12 @@ def confirm(path, data):
 
 
 def queue_delivery(path, data):
+    from .cutting_access import gate
+    with gate(path, data.get('request_id')):
+        return _queue_delivery(path, data)
+
+
+def _queue_delivery(path, data):
     if not delivery_enabled(): raise ValueError('新版交付尚未启用；当前成片可预览下载')
     target = delivery_target()
     rid, vid = data.get('request_id'), data.get('version_id')
@@ -606,6 +618,8 @@ def detail(path):
             if publication.get('error'):
                 item['error'] = redact(publication['error'])
                 item['error_info'] = guidance(publication['error'], 'fbbm')
+        from .cutting_access import can_edit
+        item['can_edit_video'] = can_edit(path, rid)
         assets.append(item)
     status = 'producing' if 'processing' in candidates else 'queued' if 'queued' in candidates else 'partial' if 'failed' in candidates else 'review' if any(a.get('preview') for a in assets) else 'draft'
     pending_changes = any(not a['candidate_version'] and

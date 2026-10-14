@@ -50,5 +50,18 @@
   "material_lifecycle": {
     "enabled": false,
     "delivery_enabled": false
+  },
+  "cutting": {
+    "enabled": false,
+    "max_source_bytes": 536870912,
+    "max_duration_seconds": 300,
+    "scan": {
+      "enabled": false,
+      "model": "gemini-3.8-flash",
+      "coarse_fps": 2,
+      "max_refine_events": 8,
+      "request_timeout_ms": 120000,
+      "default_policy": "standard"
+    }
   }
 }

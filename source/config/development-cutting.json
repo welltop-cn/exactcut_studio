@@ -1,0 +1,17 @@
+{
+  "environment": "development",
+  "cutting": {
+    "enabled": true,
+    "scan": {
+      "enabled": true,
+      "model": "gemini-3.8-flash",
+      "coarse_fps": 2,
+      "max_refine_events": 8,
+      "request_timeout_ms": 120000,
+      "default_policy": "standard"
+    }
+  },
+  "preview": {
+    "oss_enabled": false
+  }
+}

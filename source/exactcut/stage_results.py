@@ -63,6 +63,18 @@ def artifacts(job, batches, root):
                      if (file := path / 'production' / directory / request.output_filename).is_file()]
         else:
             files = list((path / 'production/videos').glob('*.mp4')) + list((path / 'production/previews').glob('*.mp4'))
+        # A production retry can reuse an edited result. Its immutable evidence
+        # must describe the current pair, not the retained original files.
+        from .workflow import request_for, result_records
+        from .preview import media_path
+        for rid, record in result_records(path).items():
+            if not record.get('edited_media') or (job.get('request_id') and job['request_id'] != rid):
+                continue
+            _, request = request_for(path, rid)
+            originals = {path / 'production' / directory / request.output_filename
+                         for directory in ('videos', 'previews')}
+            files = [file for file in files if file not in originals]
+            files.extend(media_path(path, request, record, preview=preview) for preview in (False, True))
     elif job.get('phase') == 'fetch' and (path / 'confirmed.json').exists():
         from .media import resolve_episode_video
         from .workflow import download_plan

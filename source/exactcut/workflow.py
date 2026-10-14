@@ -22,7 +22,7 @@ from .intake import validate_draft, download_plan
 from .llm_intake import read_excel
 from .material_download import validate_downloaded_video
 from .models import BatchManifest
-from .preview import make_preview, available_preview
+from .preview import make_preview, available_preview, media_path
 from .util import read_json, write_json_atomic, load_config, load_env_file, file_sha256, now_iso
 
 from .runtime import CODE_ROOT, data_root, instance_marker, environment, release_id, maintenance_file, source_root
@@ -216,6 +216,14 @@ def checkpoint(path, stage, *, advanced=True, request_id=None, **details):
 
 @contextmanager
 def execution(path, request_id=None, interval=3, *, phase=None):
+    from .cutting_access import gate
+    with gate(path, request_id):
+        with _execution(path, request_id, interval, phase=phase):
+            yield
+
+
+@contextmanager
+def _execution(path, request_id=None, interval=3, *, phase=None):
     if request_id is not None:
         result_store.patch(path / 'production', request_id, execution_started_at=now_iso(),
                            execution_ended_at=None, executor_running=True, execution_phase=phase, heartbeat_at=now_iso(),
@@ -514,12 +522,14 @@ def detail(batch_id):
             asset['hook_emphasis'] = {'source': emphasis.get('source'), 'reason': emphasis.get('reason', ''),
                                       'highlights': [{'phrase': span['phrase'], 'role': span['role']}
                                                      for span in emphasis.get('highlights', [])]}
-        output = path / 'production/videos' / request.output_filename
+        output = media_path(path, request, record)
         if record.get('status') in SAFE and output.is_file():
             endpoint = 'preview' if available_preview(path, request, record) else 'video'
             asset['preview'] = f'/api/batches/{batch_id}/{endpoint}/{quote(request.request_id, safe="")}'
             asset['original'] = f'/api/batches/{batch_id}/download/{quote(request.request_id, safe="")}'
             asset['preview_kind'] = 'lightweight' if endpoint == 'preview' else 'original'
+        from .cutting_access import can_edit
+        asset['can_edit_video'] = can_edit(path, request.request_id)
         assets.append(asset)
     data['assets'] = assets
     data['feedback'] = sorted([read_json(f) for f in FEEDBACK.glob(f'{batch_id}-*.json')], key=lambda e: e['created_at'], reverse=True) if FEEDBACK.exists() else []
@@ -578,7 +588,8 @@ def delete_batch(batch_id, confirmation):
     if material_versions.internal(path): raise ValueError('内部执行项目禁止物理删除')
     if confirmation != batch_id:
         raise ValueError('请确认永久删除此项目，删除后不可恢复')
-    with batch_control.LOCK:
+    from .cutting import batch_lease
+    with batch_control.LOCK, batch_lease(batch_id, exclusive=True):
         if not batch_control.read(path).get('archived'):
             raise ValueError('请先归档项目，再永久删除')
         jobs_dir = ROOT / '.web-state/jobs'
@@ -721,7 +732,8 @@ def initialize_project(project, manifest):
 
 
 def start_batch(batch_id, revision):
-    with naming_lock():
+    from .cutting_access import gate
+    with naming_lock(), gate(folder(batch_id)):
         return _start_batch(batch_id, revision)
 
 
@@ -798,7 +810,7 @@ def preview_file(batch_id, request_id, *, lightweight=False):
     record = result_records(path).get(request_id, {})
     if record.get('status') not in SAFE:
         raise ValueError('素材尚未通过检查，暂不可预览或上传')
-    output = path / 'production/videos' / request.output_filename
+    output = media_path(path, request, record)
     if not output.is_file():
         raise ValueError('成片文件不存在')
     if lightweight:
@@ -828,11 +840,11 @@ def _make_batch_previews(batch_id):
             upload_generated_original(path / 'production', request, record)
             result_store.put(path / 'production', request.request_id, record)
             continue
-        master = path / 'production/videos' / request.output_filename
+        master = media_path(path, request, record)
         checkpoint(path, 'preview')
         update(path, active_request=request.request_id)
         try:
-            record['preview'] = make_preview(master, path / 'production/previews' / request.output_filename, record['output_sha256'])
+            record['preview'] = make_preview(master, media_path(path, request, record, preview=True), record['output_sha256'])
             record.pop('preview_error', None)
         except Exception as exc:
             record['preview_error'] = str(exc)
@@ -862,6 +874,12 @@ def approval_evidence(batch_id, request_id, sha256, evidence=None):
 
 
 def queue_publish(batch_id, request_id, sha256, *, _evidence=None):
+    from .cutting_access import gate
+    with gate(folder(batch_id), request_id):
+        return _queue_publish(batch_id, request_id, sha256, _evidence=_evidence)
+
+
+def _queue_publish(batch_id, request_id, sha256, *, _evidence=None):
     material_versions.reject_legacy_write(folder(batch_id))
     path = folder(batch_id)
     batch_control.ensure_editable(path, execution=True)
@@ -1215,6 +1233,11 @@ def upload(batch_id, request_id):
             if isinstance(exc, DeliveryPreparationError) and attempted:
                 entry['intent'].update(status='preparation_failed', failed_at=now_iso())
                 attempted = False
+            if not attempted and not any(entry.get(key) for key in ('intent', 'publication', 'verification_only', 'verification_history')):
+                # This attempt failed before recording intent or entering any
+                # external publisher. Persist positive no-effect evidence.
+                entry['intent'] = {'phase': 'upload', 'status': 'preparation_failed',
+                                   'approved_sha256': entry.get('approved_sha256'), 'failed_at': now_iso()}
             unknown = attempted or delivery_blocked(entry) or bool(entry.get('verification_only') or entry.get('verification_history'))
             diag.event('publication.failed', level='error', batch_id=batch_id, request_id=request_id,
                        unknown_delivery=unknown, error=exc)

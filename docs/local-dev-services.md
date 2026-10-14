@@ -98,3 +98,15 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 启动器：`source/.dev-state/clip-text-model-only-20261014/start.sh`，日志同目录 `server.log`；指定Python3.12，沿用主dev数据及preview-concurrency runtime.json。用户授权后，只从 `8.221.122.75:/srv/exactcut/config/production.env` 只读提取OPENAI_API_KEY、OPENAI_BASE_URL及可用模型名到本地私有development.env（0600）；AI=1，素材获取/发布/外部写入仍为0。未修改线上服务。
 
 真实模型通过应用read_clip_text对 `EP4: 00:49:00-02:16:18,, EP5: 00:00:01-01:08:13` 返回正确两段、errors=[]，所有分秒帧逐字段断言通过。此验收为真实模型+应用函数，非鉴权HTTP接口验收。最初验证进程因继承OPENAI环境变量发生401；load_env_file使用setdefault，清除继承变量后通过。不能由该401推断配置文件密钥无效；dev启动器已清除父进程OPENAI变量。
+
+## 2026-10-14 剪切替换本地验收（8800 保留运行）
+
+用户要求打开本地 dev 观察。8800 健康检查为 `development-cut-replace`，使用主工作区未提交代码；私有启动器 `source/.dev-state/cut-replace-20261014/start.py`，日志同目录 `server.log`。指定 Python 3.12、worker 关闭，沿用开发数据，禁止真实外部发布和写入。8793 未改动。
+
+验收项目：`http://localhost:8800/home/#2cf132715d8e47719f5c275f0f6f2d13`，原 101606 / 150 秒项目的独立复制件。真实 FFmpeg 删除两段共 60 帧，产出 4440 帧 / 148 秒；浏览器已验证播放、取消替换不改变当前成片、确认替换后再次编辑使用 4440 帧新成片。原项目及原文件保留。页面已交还用户，观察期间不要自动刷新或重启服务。
+
+服务启动后的后台边界修正尚需后续重启加载；静态界面读工作区当前文件。线上 OSS/FBBM 未在该验收环境实际写入，相关上传选择通过隔离测试验证，不能把本地验收当作真实交付成功。
+
+2026-10-14 更新：等待用户本次剪切任务 ready 后，取得已有 cut-locks 排他锁，再从已核验 PID 74360 正常重启 8800 为 PID 74366（历史快照）。加载 managed 交付路径修复及 force 重新识别；原150秒测试项目本次生成结果3682帧已保留。8793未动。
+
+2026-10-14 再次更新：无活动剪切/识别任务、取得排他锁后，将8800从已核验PID74366重启至84455（历史快照，操作前重新核验），加载放弃剪切的后端重置接口。healthz确认development-cut-replace/ok。用户候选保留，8793未动。

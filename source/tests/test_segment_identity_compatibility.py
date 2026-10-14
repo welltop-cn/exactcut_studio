@@ -76,3 +76,21 @@ def test_output_identity_changes_for_active_caption_and_flash(tmp_path):
     assert flash!=baseline
     r.timeline[1].transition_duration_ms=900
     assert orchestrator._request_fingerprint(tmp_path,r,{})!=flash
+
+
+def test_edited_current_survives_batch_retry(tmp_path,monkeypatch):
+    r=request();write_json_atomic(tmp_path/'project.json',{'project_id':'101573','excluded_episodes':[]})
+    m=BatchManifest(drama_id='101573',drama_title='fixture',source_workbook='fixture.xlsx',business_date='20261013',author='test',requests=[r])
+    folder=tmp_path/'production';original=folder/'videos/test.mp4';original.parent.mkdir(parents=True);original.write_bytes(b'original')
+    master=folder/'edits/R1/job/master/test.mp4';master.parent.mkdir(parents=True);master.write_bytes(b'edited')
+    preview=folder/'edits/R1/job/preview/test.mp4';preview.parent.mkdir(parents=True);preview.write_bytes(b'preview')
+    record={'status':'qc_passed','fingerprint':legacy_fingerprint(r),'output_sha256':file_sha256(master),
+        'edited_media':{'master':str(master),'preview':str(preview)},'preview':{'master_sha256':file_sha256(master),'sha256':file_sha256(preview)}}
+    write_json_atomic(folder/'results/R1.json',record)
+    def forbidden(*a,**kw):raise AssertionError('edited current must not render')
+    monkeypatch.setattr(orchestrator,'render_request',forbidden)
+    monkeypatch.setattr(orchestrator,'upload_generated_preview',lambda *a:None)
+    monkeypatch.setattr(orchestrator,'upload_generated_original',lambda *a:None)
+    result=orchestrator.execute_batch(tmp_path,m,{},output_dir=folder)['requests']['R1']
+    assert result['status']=='qc_passed' and result['output_sha256']==file_sha256(master)
+    assert original.read_bytes()==b'original'

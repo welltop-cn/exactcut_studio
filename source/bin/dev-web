@@ -11,6 +11,19 @@ export EXACTCUT_DATA_ROOT="$DEVELOPMENT_ROOT/.dev-state/data"
 export EXACTCUT_SOURCE_ROOT="$EXACTCUT_DATA_ROOT/sources"
 export EXACTCUT_ENV_FILE="$DEVELOPMENT_ROOT/.env.development"
 export EXACTCUT_CONFIG_FILE="$DEVELOPMENT_ROOT/config/default.json"
+unset EXACTCUT_CUT_SCAN_ENV
+if [[ "${1:-}" == "--cutting" ]]; then
+  export EXACTCUT_CONFIG_FILE="$DEVELOPMENT_ROOT/config/development-cutting.json"
+  shift
+  if [[ "${1:-}" == "--scan-ai-env" && $# -ge 2 ]]; then
+    export EXACTCUT_CUT_SCAN_ENV="$2"
+    shift 2
+  fi
+fi
+if [[ $# -gt 0 ]]; then
+  echo "Usage: dev-web [--cutting [--scan-ai-env /absolute/path/to/credentials]]" >&2
+  exit 2
+fi
 export EXACTCUT_ENVIRONMENT=development
 export EXACTCUT_ALLOW_EXTERNAL_WRITES=0
 export EXACTCUT_ALLOW_MATERIAL_FETCH=0
@@ -31,6 +44,9 @@ config=project_env_file()
 if not config.is_file():
     raise RuntimeError('请先复制 .env.development.example 为 .env.development')
 load_env_file(config)
+if os.environ.get('EXACTCUT_CUT_SCAN_ENV'):
+    from exactcut.cutting_scan import credential
+    credential()  # Validate without putting the key in the process environment.
 root=claim_data_root()
 source_root()
 state=root/'.web-state'

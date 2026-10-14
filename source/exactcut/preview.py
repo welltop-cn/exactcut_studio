@@ -36,7 +36,21 @@ def make_preview(master: Path, output: Path, master_sha256: str) -> dict:
 
 def available_preview(path, request, record):
     metadata=record.get('preview') or {}
-    file=path/'production/previews'/request.output_filename
+    file=media_path(path, request, record, preview=True)
     if metadata.get('master_sha256')==record.get('output_sha256') and file.is_file():
         return file
     return None
+
+
+def media_path(path, request, record, *, preview=False):
+    """Resolve a legacy current pair; edited files stay inside sealed edit storage."""
+    edit = record.get('edited_media')
+    if not edit:
+        return path / ('production/previews' if preview else 'production/videos') / request.output_filename
+    file = Path(edit['preview' if preview else 'master'])
+    root = path / 'production/edits'
+    if (not file.is_absolute() or not file.resolve().is_relative_to(root.resolve())
+            or file.name != request.output_filename
+            or any(p.is_symlink() for p in (file, *file.parents) if p == path or p.is_relative_to(path))):
+        raise ValueError('编辑成片路径无效')
+    return file

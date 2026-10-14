@@ -1051,7 +1051,7 @@ class Handler(BaseHTTPRequestHandler):
         if name == 'index.html':
             body = body.replace(b'<script src="app.js">', b'<script src="diagnostics.js"></script><script src="app.js">')
         if name == 'index.html':
-            for script in ('app.js', 'helper.js', 'diagnostics.js'):
+            for script in ('app.js', 'helper.js', 'diagnostics.js', 'cutting.js'):
                 version = hashlib.sha256((CODE_ROOT / 'exactcut/web' / script).read_bytes()).hexdigest()[:20]
                 body = body.replace(f'src="{script}"'.encode(), f'src="{script}?v={version}"'.encode())
             app_version = hashlib.sha256((CODE_ROOT / 'exactcut/web/app.js').read_bytes()).hexdigest()[:20]
@@ -1205,6 +1205,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.normalize_path()
+        cut_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/cuts/(.*)', self.path)
+        if cut_route:
+            from .cutting_http import handle
+            return handle(self, *cut_route.groups(), 'GET')
         if self.path == '/login':
             return self.respond(200, self.web_page('login.html'), 'text/html; charset=utf-8')
         if self.path == '/healthz':
@@ -1221,7 +1225,8 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError, TypeError, KeyError):
                 return self.respond(503, {'error': '任务队列暂时不可用，请稍后重试'})
         if self.path == '/api/me':
-            return self.respond(200, {**self.user, 'features': feature_flags()})
+            from .cutting import enabled as cutting_enabled
+            return self.respond(200, {**self.user, 'features': {**feature_flags(), 'cutting': cutting_enabled()}})
         if self.path == '/api/users':
             if not self.is_admin(): return
             return self.respond(200, {'users': accounts.users(self.server.auth_db)})
@@ -1241,6 +1246,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200, self.web_page('index.html'), 'text/html; charset=utf-8')
         if self.path == '/helper.js':
             return self.script('helper.js')
+        if self.path == '/cutting.js':
+            return self.script('cutting.js')
         if self.path == '/app.js':
             return self.script('app.js')
         if self.path == '/diagnostics.js':
@@ -1398,6 +1405,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.normalize_path()
+        cut_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/cuts/(.*)', self.path)
+        if cut_route:
+            from .cutting_http import handle
+            return handle(self, *cut_route.groups(), 'POST')
         match = re.fullmatch(r'/api/batches/([0-9a-f]{32})/([^/]+)', self.path)
         if match and match[2] == 'hook-preview' and not workflow.material_versions.internal(workflow.BATCHES / match[1]):
             return self.hook_preview(match[1])

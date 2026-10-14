@@ -55,7 +55,7 @@ def test_cached_managed_prefetch_without_runtime_plan_recovers_to_latest(page):
       const error=await opening;
       setTab('review');await loadPreview(document.querySelector('video'));
       return {error,progress,openingBatchId,status:current.runtime.status,
-        cards:Array.from(document.querySelectorAll('video')).map(v=>v.dataset.previewRequest),calls:previewCalls};
+        cards:Array.from(document.querySelectorAll('#assets video')).map(v=>v.dataset.previewRequest),calls:previewCalls};
     }''')
     assert result.get('error') is None, result
     assert 'EP2（2/2）' in result['progress']

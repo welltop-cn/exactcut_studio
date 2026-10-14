@@ -17,7 +17,7 @@ from .models import BatchManifest
 from .publish import publish_to_queue, wait_until_ready
 from .qc import inspect_output
 from .renderer import render_request
-from .preview import make_preview, available_preview
+from .preview import make_preview, available_preview, media_path
 from .preview_oss import upload_generated_preview, upload_generated_original
 from .util import file_sha256, json_sha256, now_iso, read_json, write_json_atomic
 
@@ -125,6 +125,12 @@ def execute_batch(
         fingerprint = _request_fingerprint(project_dir, request, config, source_cache)
         output = videos_dir / request.output_filename
         previous = results["requests"].get(request.request_id) or {}
+        if previous.get('edited_media'):
+            if force or previous.get('fingerprint') != fingerprint:
+                raise ExactCutError('此素材已经剪切替换，请复制新草稿重新制作，当前成片保留')
+            output = media_path(batch_dir.parent, request, previous)
+            if not output.is_file() or file_sha256(output) != previous.get('output_sha256'):
+                raise ExactCutError('编辑后的成片缺失或校验失败，禁止用原制作结果覆盖')
         reusable_output = (
             not force
             and previous.get("fingerprint") == fingerprint
@@ -136,7 +142,7 @@ def execute_batch(
             diag.event('render.output_reused', request_id=request.request_id, output_sha256=previous.get('output_sha256'))
             if not available_preview(batch_dir.parent, request, previous) and output_dir is not None:
                 try:
-                    previous['preview'] = make_preview(output, batch_dir / 'previews' / request.output_filename, previous['output_sha256'])
+                    previous['preview'] = make_preview(output, media_path(batch_dir.parent, request, previous, preview=True), previous['output_sha256'])
                 except Exception as exc:
                     previous['preview_error'] = str(exc)
                 persist()

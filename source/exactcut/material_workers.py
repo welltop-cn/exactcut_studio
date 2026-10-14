@@ -56,6 +56,9 @@ def materialize(parent, event):
         result_file = child / 'production/results' / (rid + '.json')
         if not result_file.exists():
             record = copy.deepcopy(version['record']); record['output'] = str(target)
+            # Delivery owns a verified local copy. Parent edit paths must never
+            # escape into the child resolver (which deliberately rejects them).
+            record.pop('edited_media', None)
             if record.get('original_oss'):
                 from .preview_oss import _identity
                 record['original_oss']['identity'] = _identity(target)

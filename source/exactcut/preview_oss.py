@@ -74,7 +74,8 @@ def upload_generated_preview(batch_dir, request, record):
 def upload_generated_original(batch_dir, request, record):
     if not enabled() or batch_dir.name != 'production':
         return
-    video = batch_dir / 'videos' / request.output_filename
+    from .preview import media_path
+    video = media_path(batch_dir.parent, request, record)
     if not video.is_file() or not record.get('output_sha256'):
         return
     try:
