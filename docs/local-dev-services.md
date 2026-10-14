@@ -90,3 +90,11 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 ## 服务器独立测试实例部署文档
 
 服务器测试环境使用固定 IP 入口 `/test/`，与本机 dev 不同。其他 agent/session 更新前请阅读 [服务器测试部署手册](server-test-deployment.md)，复用既有容器、数据、账号及资源限制；测试通过不自动发布正式服务。
+
+## 2026-10-14 粘贴文本统一模型识别（8793 保留运行）
+
+用户要求启动本地dev，并明确授权复用线上真实 `.env` 的AI配置。确认主dev进程cwd、无活动制作/FFmpeg后，重启8793加载提交 `a7d4ce0` 及主工作区已有其他修改。最终PID 67415为历史快照，操作前重新核对。入口 `http://localhost:8793/home/` 已打开，healthz返回development/ok、worker_alive=true。
+
+启动器：`source/.dev-state/clip-text-model-only-20261014/start.sh`，日志同目录 `server.log`；指定Python3.12，沿用主dev数据及preview-concurrency runtime.json。用户授权后，只从 `8.221.122.75:/srv/exactcut/config/production.env` 只读提取OPENAI_API_KEY、OPENAI_BASE_URL及可用模型名到本地私有development.env（0600）；AI=1，素材获取/发布/外部写入仍为0。未修改线上服务。
+
+真实模型通过应用read_clip_text对 `EP4: 00:49:00-02:16:18,, EP5: 00:00:01-01:08:13` 返回正确两段、errors=[]，所有分秒帧逐字段断言通过。此验收为真实模型+应用函数，非鉴权HTTP接口验收。最初验证进程因继承OPENAI环境变量发生401；load_env_file使用setdefault，清除继承变量后通过。不能由该401推断配置文件密钥无效；dev启动器已清除父进程OPENAI变量。

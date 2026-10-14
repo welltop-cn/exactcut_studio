@@ -23,3 +23,7 @@ PYTHONPATH=. /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/
 结果：63 passed in 16.57s。覆盖接口、失败释放并发槽、数值范围、倒序和单帧、段数、页面追加/替换/撤销及真实本地视频帧边界与渲染。
 
 模型响应使用测试替身/MockTransport，未调用真实外部模型；因此验证的是程序路由、结果处理及下游帧正确性，不是模型识别准确率。未执行发布前全量测试，未重启开发服务，未部署生产。
+
+## 用户要求启动 dev 后的追加验收
+
+8793 已重启，healthz为development/ok、worker_alive=true，浏览器已打开。经用户授权，只读复用线上AI配置到私有开发配置，未部署线上。真实外部模型通过read_clip_text识别截图原文，errors=[]且EP4/EP5所有分秒帧值与预期一致。未保存或启动制作。服务/配置位置见local-dev-services.md的2026-10-14记录。
