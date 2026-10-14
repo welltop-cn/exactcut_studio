@@ -51,12 +51,13 @@ def test_input_rejected_before_model(monkeypatch, text):
         m.read_clip_text(text)
 
 
-def test_failure_releases_slot_and_does_not_fallback(monkeypatch):
+@pytest.mark.parametrize('time_format', ['', 'source_frames_v1'])
+def test_failure_releases_slot_and_does_not_fallback(monkeypatch, time_format):
     def fail(*a, **k):
         raise ValueError('AI 服务不可用')
     monkeypatch.setattr(m, 'interpret', fail)
     with pytest.raises(ValueError, match='AI 服务不可用'):
-        m.read_clip_text('30 1:20-1:47')
+        m.read_clip_text('EP30 1:20-1:47', time_format=time_format)
     assert m.SLOTS.acquire(blocking=False)
     m.SLOTS.release()
 

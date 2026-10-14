@@ -37,8 +37,14 @@ def test_managed_frame_draft_renders_confirmed_milliseconds_with_hook_ending_and
                              'style': 'default', 'position': 'top', 'duration_ms': 1000},
                ending={'mode': 'last_frame', 'duration_ms': 1000})
     if pasted:
-        from exactcut.llm_intake import read_clip_text
-        recognized = read_clip_text('EP1 00:00:019-00:02:012', time_format='source_frames_v1')
+        from exactcut import llm_intake
+        def interpret(payload, **kwargs):
+            return kwargs['schema'].model_validate({'items': [{
+                'source_lines': [1], 'issue': '', 'clips': [{
+                    'episode': 1, 'start_m': 0, 'start_s': 0, 'start_f': 19,
+                    'end_m': 0, 'end_s': 2, 'end_f': 12}]}]})
+        monkeypatch.setattr(llm_intake, 'interpret', interpret)
+        recognized = llm_intake.read_clip_text('EP1 00:00:019-00:02:012', time_format='source_frames_v1')
         assert not recognized['errors'], recognized
         row['clips'] = recognized['clips']
     index = source_frames.prepare(parent, draft, 'EP1')

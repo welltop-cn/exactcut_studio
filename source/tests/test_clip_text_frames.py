@@ -18,31 +18,76 @@ def result(items=None):
     return {'items': items or [{'source_lines': [1], 'clips': [frame()], 'issue': ''}]}
 
 
-def test_explicit_lines_parse_locally_preserving_frame_ordinals(monkeypatch):
-    monkeypatch.setattr(m, 'interpret', lambda *a, **k: pytest.fail('explicit frame grammar needs no AI'))
-    parsed = m.read_clip_text('第4集 00:00:000-00:50:019\n\nEP5 00:00:000 至 01:28:012', time_format='source_frames_v1')
-    assert not parsed['errors']
-    assert parsed['clips'] == [
-        {'episode': '4', 'time_format': 'source_frames_v1', 'start_m': '00', 'start_s': '00', 'start_f': '000', 'end_m': '00', 'end_s': '50', 'end_f': '019'},
-        {'episode': '5', 'time_format': 'source_frames_v1', 'start_m': '00', 'start_s': '00', 'start_f': '000', 'end_m': '01', 'end_s': '28', 'end_f': '012'}]
-    same = m.read_clip_text('EP4 01:20 至 01:20', time_format='source_frames_v1')
-    assert not same['errors'] and same['clips'][0]['end_f'] == '000'
+def mock_frames(monkeypatch, clips=None, items=None):
+    def interpret(payload, **kw):
+        return kw['schema'].model_validate({'items': items if items is not None else [
+            {'source_lines': [1], 'clips': clips if clips is not None else [frame()], 'issue': ''}]})
+    monkeypatch.setattr(m, 'interpret', interpret)
 
 
-@pytest.mark.parametrize('text', ['EP4 00:60:000-01:00:000', 'EP4 00:01:1000-00:02:000',
-    'EP4 1000:01:000-1001:00:000', 'EP4 00:01:020-00:01:019', 'EP501 00:01-00:02',
-    'EP4 00:01.019-00:02.012', 'EP4 00:01:019-00:02:012 毫秒',
-    'EP4 00:00:01:19-00:00:02:12', 'SMPTE EP4 00:01:019-00:02:012'])
-def test_ambiguous_or_invalid_explicit_input_never_partially_fills(monkeypatch, text):
-    monkeypatch.setattr(m, 'interpret', lambda *a, **k: pytest.fail('must reject explicit invalid/ambiguous grammar locally'))
+@pytest.mark.parametrize('text', [
+    'EP4 00:49:00-02:16:18',
+    'EP4: 00:49:00-02:16:18,, EP5: 00:00:01-01:08:13',
+    'EP4：00:49:00-02:16:18，EP5：00:00:01-01:08:13',
+])
+def test_all_frame_text_reaches_model_and_preserves_ordinals(monkeypatch, text):
+    calls = []
+    clips = [frame(start_s=49, end_m=2, end_s=16, end_f=18)]
+    if 'EP5' in text:
+        clips.append(frame(episode=5, start_f=1, end_m=1, end_s=8, end_f=13))
+    def interpret(payload, **kw):
+        calls.append(json.loads(payload))
+        assert kw['schema'] is m.FrameTextInterpretation
+        return kw['schema'].model_validate(result([{'source_lines': [1], 'clips': clips, 'issue': ''}]))
+    monkeypatch.setattr(m, 'interpret', interpret)
+    parsed = m.read_clip_text(text, time_format='source_frames_v1')
+    assert calls == [{'lines': [{'line': 1, 'text': text}]}]
+    assert parsed['errors'] == []
+    assert len(parsed['clips']) == len(clips)
+    assert parsed['clips'][0]['start_s'] == '49'
+    assert parsed['clips'][0]['end_f'] == '018'
+    if len(clips) == 2:
+        assert parsed['clips'][1]['episode'] == '5'
+        assert parsed['clips'][1]['start_f'] == '001'
+        assert parsed['clips'][1]['end_f'] == '013'
+
+
+@pytest.mark.parametrize('text', ['EP4 00:01.019-00:02.012',
+    'EP4 00:01:019-00:02:012 毫秒', 'EP4 00:00:01:19-00:00:02:12',
+    'SMPTE EP4 00:01:019-00:02:012'])
+def test_unit_questions_are_sent_to_model_and_issues_never_partially_fill(monkeypatch, text):
+    calls = []
+    def interpret(payload, **kw):
+        calls.append(json.loads(payload)['lines'][1]['text'])
+        return kw['schema'].model_validate(result([
+            {'source_lines': [1], 'clips': [frame()], 'issue': ''},
+            {'source_lines': [2], 'clips': [], 'issue': '请明确分秒帧单位'}]))
+    monkeypatch.setattr(m, 'interpret', interpret)
     parsed = m.read_clip_text('EP1 00:00-00:01\n' + text, time_format='source_frames_v1')
-    assert parsed['errors'] and parsed['clips'] == []
+    assert calls == [text]
+    assert parsed['clips'] == [] and '请明确分秒帧单位' in parsed['errors'][0]
+
+
+@pytest.mark.parametrize('changes', [{'episode': 501}, {'start_s': 60}, {'start_f': 1000},
+    {'end_m': 1000}, {'start_f': -1}, {'start_f': '19'}])
+def test_model_frame_values_must_satisfy_strict_schema(changes):
+    with pytest.raises(ValidationError):
+        m.FrameTextInterpretation.model_validate(result([{'source_lines': [1], 'clips': [frame(**changes)], 'issue': ''}]))
+
+
+def test_frame_order_and_single_frame_validation(monkeypatch):
+    mock_frames(monkeypatch, [frame(start_s=50, start_f=20)])
+    parsed = m.read_clip_text('EP4 00:50:020-00:50:019', time_format='source_frames_v1')
+    assert parsed['clips'] == [] and parsed['errors']
+    mock_frames(monkeypatch, [frame(start_s=50, start_f=19)])
+    assert m.read_clip_text('EP4 00:50:019-00:50:019', time_format='source_frames_v1')['errors'] == []
 
 
 def test_frame_clip_limit_and_unknown_modes(monkeypatch):
-    monkeypatch.setattr(m, 'interpret', lambda *a, **k: pytest.fail('must not call AI'))
-    assert len(m.read_clip_text('\n'.join(['EP4 00:00-00:01'] * 30), time_format='source_frames_v1')['clips']) == 30
-    parsed = m.read_clip_text('\n'.join(['EP4 00:00-00:01'] * 31), time_format='source_frames_v1')
+    mock_frames(monkeypatch, [frame()] * 30)
+    assert len(m.read_clip_text('EP4 00:00-00:01', time_format='source_frames_v1')['clips']) == 30
+    mock_frames(monkeypatch, [frame()] * 31)
+    parsed = m.read_clip_text('EP4 00:00-00:01', time_format='source_frames_v1')
     assert parsed['errors'] and parsed['clips'] == []
     for mode in (None, 0, [], 'frames'):
         with pytest.raises(ValueError, match='格式'):
@@ -97,7 +142,7 @@ def test_frame_mode_uses_independent_strict_schema_over_existing_transport(monke
 
 
 def test_http_requires_auth_csrf_and_passes_explicit_format(app, monkeypatch):
-    monkeypatch.setattr(m, 'interpret', lambda *a, **k: pytest.fail('explicit frames need no AI'))
+    mock_frames(monkeypatch, [frame(start_f=19, end_s=1, end_f=12)])
     data = {'text': 'EP4 00:00:019-00:01:012', 'time_format': 'source_frames_v1'}
     assert call(app, 'POST', '/api/clip-text', data, auth=False)[0] == 401
     assert call(app, 'POST', '/api/clip-text', data, csrf=False)[0] == 403
@@ -107,11 +152,11 @@ def test_http_requires_auth_csrf_and_passes_explicit_format(app, monkeypatch):
     assert call(app, 'POST', '/api/clip-text', {**data, 'time_format': 'unknown'})[0] == 400
 
 
-def test_local_paste_saves_prepares_and_confirms_actual_source_frame_boundaries(app, monkeypatch):
+def test_model_paste_saves_prepares_and_confirms_actual_source_frame_boundaries(app, monkeypatch):
     from copy import deepcopy
     import uuid
     from exactcut import source_frames, workflow as w, material_versions, material_workers
-    monkeypatch.setattr(m, 'interpret', lambda *a, **k: pytest.fail('standard paste must stay local'))
+    mock_frames(monkeypatch, [frame(episode=1, start_f=19, end_s=1, end_f=12)])
     monkeypatch.setenv('EXACTCUT_ALLOW_AI', '0')
     make_video(w.ROOT / 'projects/101573/source/videos/EP1.mp4')
     parsed = m.read_clip_text('EP1 00:00:019-00:01:012', time_format='source_frames_v1')
@@ -140,7 +185,8 @@ def test_local_paste_saves_prepares_and_confirms_actual_source_frame_boundaries(
 
 
 @pytest.mark.parametrize('field', ['start_m', 'start_s', 'start_f', 'end_m', 'end_s', 'end_f'])
-def test_source_frame_confirmation_requires_every_explicit_time_field(app, field):
+def test_source_frame_confirmation_requires_every_explicit_time_field(app, monkeypatch, field):
+    mock_frames(monkeypatch, [frame(episode=1, start_f=19, end_s=1, end_f=12)])
     from copy import deepcopy
     from exactcut import intake, source_frames, workflow as w
     make_video(w.ROOT / 'projects/101573/source/videos/EP1.mp4')
