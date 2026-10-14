@@ -231,4 +231,6 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 
 ## 2026-10-14 剪切功能测试部署
 
-用户授权重新开启原测试实例。已部署ae8acd3，启用cutting及scan，保持测试OSS前缀及交付禁用。当前代码与回滚、实际验收详见 [剪切测试部署记录](verification/cutting-test-deployment-2026-10-14.md)。旧账号和项目保留；正式服务未重启或修改。
+用户授权重新开启原测试实例。已部署1256f3e（含ae8acd3剪切功能与旧窗口请求修复），启用cutting及scan，保持测试OSS前缀及交付禁用。当前代码与回滚、实际验收详见 [剪切测试部署记录](verification/cutting-test-deployment-2026-10-14.md)。旧账号和项目保留；正式服务未重启或修改。
+
+指定 101606 五集时间段的真实服务器验收及当前项目入口见 [101606 线上剪切验收](verification/cutting-101606-server-2026-10-14.md)。

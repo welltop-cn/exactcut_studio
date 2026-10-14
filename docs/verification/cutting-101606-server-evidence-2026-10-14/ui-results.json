@@ -1,0 +1,68 @@
+[
+  {
+    "case": "server_original_ready",
+    "detail": {
+      "sha": "875d6094f766b22b72cf47ebbd372a4449464ebb3424d09fa3bf335a80caa7cc"
+    }
+  },
+  {
+    "case": "opens_150_second_video",
+    "detail": "1080 × 1920 · 30.00 fps · 150.00 秒"
+  },
+  {
+    "case": "timecode_frame_nudges",
+    "detail": null
+  },
+  {
+    "case": "manual_30_frames_and_mosaic_placeholder",
+    "detail": null
+  },
+  {
+    "case": "initial_ai",
+    "detail": "勾选要删除的片段；AI 建议仅供参考。"
+  },
+  {
+    "case": "cancel_rescan_preserves_plan",
+    "detail": null
+  },
+  {
+    "case": "rescan_resets_ai_keeps_manual",
+    "detail": null
+  },
+  {
+    "case": "fresh_ai_completed",
+    "detail": "勾选要删除的片段；AI 建议仅供参考。"
+  },
+  {
+    "case": "overlap_counted_once",
+    "detail": null
+  },
+  {
+    "case": "undo_overlap",
+    "detail": null
+  },
+  {
+    "case": "first_last_second_selected",
+    "detail": null
+  },
+  {
+    "case": "generated_result_plays_without_original_editor",
+    "detail": null
+  },
+  {
+    "case": "cancel_replace_keeps_original",
+    "detail": null
+  },
+  {
+    "case": "close_reopen_restores_result",
+    "detail": null
+  },
+  {
+    "case": "return_to_original_plan",
+    "detail": null
+  },
+  {
+    "case": "phase_one_done",
+    "detail": null
+  }
+]

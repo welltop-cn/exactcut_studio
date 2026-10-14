@@ -1,0 +1,37 @@
+[
+  {
+    "case": "discard_closes_without_replacement",
+    "detail": null
+  },
+  {
+    "case": "reopen_after_discard_original_and_empty_plan",
+    "detail": null
+  },
+  {
+    "case": "fresh_scan_after_discard",
+    "detail": "勾选要删除的片段；AI 建议仅供参考。"
+  },
+  {
+    "case": "select_all_and_clear_all",
+    "detail": null
+  },
+  {
+    "case": "regenerated_after_discard",
+    "detail": null
+  },
+  {
+    "case": "confirmed_oss_replacement",
+    "detail": {
+      "sha": "f9f9a57e39925c7f9c49fbd700fa11c7582197d89e9b910754bbc30b1cc92436",
+      "status": "qc_passed"
+    }
+  },
+  {
+    "case": "reopen_uses_new_current_no_old_deletions",
+    "detail": null
+  },
+  {
+    "case": "phase_two_done",
+    "detail": null
+  }
+]
