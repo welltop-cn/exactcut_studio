@@ -96,7 +96,7 @@ def test_upload_exits_without_polling_and_poll_queries_once(workspace):
          patch('exactcut.publish.sync_record_once', return_value={'record_id': 'fixture-record', 'action': 'syncing'}) as sync, \
          patch.object(workflow.time, 'sleep', side_effect=AssertionError('poll must not sleep')):
         assert workflow.upload(batch['id'], rid) == 0; sync.assert_not_called()
-        assert workflow.poll(batch['id'], rid) == 0; sync.assert_called_once_with('fixture-record'); upload.assert_called_once()
+        assert workflow.poll(batch['id'], rid) == 0; sync.assert_called_once_with('fixture-record', expected_url=None, expected_material_id=None); upload.assert_called_once()
     assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_queued'
     with patch('exactcut.publish.sync_record_once', return_value={'record_id': 'fixture-record', 'action': 'ready', 'video_id': 'fixture-video'}):
         assert workflow.poll(batch['id'], rid) == 0

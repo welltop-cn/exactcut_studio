@@ -41,7 +41,7 @@ def uncertain(workspace):
 
 
 def readonly_clients(url='https://fixture.invalid/video', material='123', status='ready'):
-    feishu = Mock(); feishu.get_record.return_value = {'record_id': 'saved-record', 'fields': {'OSS_URL': {'link': url}, 'ADS素材ID': material}}
+    feishu = Mock(); feishu.get_record.return_value = {'record_id': 'saved-record', 'fields': {'OSS_URL': {'link': url}, 'ADS素材ID': material, '状态': '已完成' if status == 'ready' else '失败' if status == 'failed' else '同步中', '视频ID': 'saved-video' if status == 'ready' else ''}}
     cf = Mock(); cf.sync_status.return_value = {'facebook_bm_sync_status': status, 'facebook_bm_video_id': 'saved-video' if status == 'ready' else None}
     return feishu, cf
 
@@ -61,7 +61,7 @@ def test_controlled_poll_keeps_receipt_after_timeout_and_never_ingests(workspace
         w.queue_verify_delivery(batch['id'], rid, record['output_sha256'])
         assert w.poll(batch['id'], rid) == 0
         assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_ready'
-        cf.sync_status.assert_called_once_with('123'); cf.ingest.assert_not_called(); cf.resync.assert_not_called()
+        cf.sync_status.assert_not_called(); cf.ingest.assert_not_called(); cf.resync.assert_not_called()
         feishu.create_or_reuse.assert_not_called(); feishu.update.assert_not_called(); oss.assert_not_called()
 
 
@@ -347,7 +347,7 @@ def test_readonly_local_launch_failure_can_retry_only_saved_poll(api, workspace)
     with patch.object(publish, 'FeishuClient', return_value=feishu), patch.object(publish, 'CfAdsClient', return_value=cf), patch.object(publish.OssPublisher, 'upload') as oss, patch.object(publish, 'publish_to_queue') as upload:
         assert w.poll(batch['id'], rid) == 0
         assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_ready'
-        cf.sync_status.assert_called_once_with('123')
+        cf.sync_status.assert_not_called()
         cf.ingest.assert_not_called(); cf.resync.assert_not_called()
         feishu.create_or_reuse.assert_not_called(); feishu.update.assert_not_called()
         oss.assert_not_called(); upload.assert_not_called()

@@ -41,7 +41,7 @@ def test_offline_verification_is_readonly_and_resolves_bound_history(isolated):
     assert result['status'] == 'verified'
     assert read_json(web.JOBS / (original['id'] + '.json'))['resolution'] == 'verified_delivery'
     assert (isolated / '.web-state/maintenance.json').exists()
-    cf.sync_status.assert_called_once_with('123'); feishu.get_record.assert_called_once_with('saved-record')
+    cf.sync_status.assert_not_called(); feishu.get_record.assert_called_once_with('saved-record')
     cf.ingest.assert_not_called(); cf.resync.assert_not_called()
     feishu.create_or_reuse.assert_not_called(); feishu.update.assert_not_called(); oss.assert_not_called()
     with pytest.raises(ValueError): w.queue_publish(bid, rid, sha)
@@ -85,7 +85,7 @@ def test_ready_receipt_before_local_resolution_crash_can_resume(isolated, monkey
             fault.setattr(web, 'resolve_verified_delivery', lambda *a: (_ for _ in ()).throw(OSError('local resolve crash')))
             with pytest.raises(OSError): maintenance_verify.verify_delivery(bid, rid, sha)
         assert maintenance_verify.verify_delivery(bid, rid, sha)['status'] == 'verified'
-    assert cf.sync_status.call_count == 1
+    cf.sync_status.assert_not_called()
     assert read_json(web.JOBS / (original['id'] + '.json'))['status'] == 'interrupted'
 
 

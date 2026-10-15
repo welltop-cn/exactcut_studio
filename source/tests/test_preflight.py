@@ -17,11 +17,12 @@ def test_preflight_missing_config_does_not_call_services(monkeypatch):
     for keys in preflight.REQUIRED.values():
         for key in keys:
             monkeypatch.delenv(key, raising=False)
-    for name in ('check_oss', 'check_ai', 'check_feishu', 'check_cf_ads'):
+    for name in ('check_oss', 'check_ai', 'check_feishu'):
         monkeypatch.setattr(preflight, name, lambda *args: pytest.fail('network called'))
     report = preflight.run_checks('101460', 1)
     assert report['status'] == 'failed'
-    assert all(item['status'] == 'missing_config' for item in report['checks'].values())
+    assert all(report['checks'][name]['status'] == 'missing_config' for name in ('oss', 'ai', 'feishu'))
+    assert report['checks']['cf_ads']['ingestion_and_sync'] == 'not_verified'
     assert 'OPENAI_API_KEY' in report['checks']['ai']['missing']
 
 
@@ -88,3 +89,9 @@ def test_oss_probe_only_reads_bounded_ranges_without_copy_or_upload(monkeypatch)
     assert [item[0] for item in calls if isinstance(item, tuple)] == ['HEAD', 'GET', 'HEAD', 'GET']
     assert calls.count('closed') == 2
     assert all(item[2] == (0, 1024**2 - 1) for item in calls if isinstance(item, tuple) and item[0] == 'GET')
+
+
+def test_fbbm_preflight_does_not_login_or_require_quota(monkeypatch):
+    monkeypatch.setattr(preflight, 'CfAdsClient', lambda: pytest.fail('FBBM belongs to automation'))
+    assert preflight.check_cf_ads()['status'] == 'ok'
+    assert preflight.REQUIRED['cf_ads'] == ()

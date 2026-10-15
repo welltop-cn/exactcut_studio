@@ -84,8 +84,8 @@ def test_read_retry_never_bypasses_missing_or_conflicting_binding(workspace, mis
         entry['verification_only'] = {**w.verification_binding(entry), 'material_id': 'other'}
     w.store_publication(path, rid, entry)
     with patch.object(publish, 'sync_record_once', side_effect=publish.TransientDeliveryReadError('temporary')):
-        assert w.poll(batch['id'], rid) == 2
-    assert read_json(path / 'publications.json')[rid]['status'] == 'unverified'
+        assert w.poll(batch['id'], rid) == (0 if missing else 2)
+    assert read_json(path / 'publications.json')[rid]['status'] == ('fbbm_queued' if missing else 'unverified')
 
 
 def test_temporary_query_stops_at_original_deadline(workspace):

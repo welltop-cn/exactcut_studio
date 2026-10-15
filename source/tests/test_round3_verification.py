@@ -65,6 +65,6 @@ def test_verification_exit_75_waits_then_queries_original_receipt_once(chain, mo
     for _ in range(2): chain.tick()
     assert not chain.owned
     feishu.get_record.assert_called_once_with('saved-record')
-    cf.sync_status.assert_called_once_with('123')
+    cf.sync_status.assert_not_called()
     cf.ingest.assert_not_called(); cf.resync.assert_not_called()
     feishu.create_or_reuse.assert_not_called(); feishu.update.assert_not_called(); oss.assert_not_called()

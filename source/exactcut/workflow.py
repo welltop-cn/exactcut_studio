@@ -1182,13 +1182,19 @@ def delivery_blocked(entry):
     return entry.get('status') == 'unverified' or entry.get('intent', {}).get('status') == 'pending'
 
 
-def delivery_intent(path, request_id, entry, phase, video=None):
+def delivery_intent(path, request_id, entry, phase, video=None, *, read_only=False, material_id=None):
     from .publish import OssPublisher
     publication = entry.get('publication') or {}
     target_key = OssPublisher().key_for(video)[0] if video is not None else publication.get('oss_key')
-    entry['intent'] = {'id': uuid.uuid4().hex, 'phase': phase, 'status': 'pending',
+    entry['intent'] = {'id': uuid.uuid4().hex, 'phase': phase, 'status': 'verified' if read_only else 'pending',
                        'approved_sha256': entry.get('approved_sha256'), 'oss_key': target_key,
                        'feishu_record_id': publication.get('feishu_record_id'), 'created_at': now_iso()}
+    if read_only:
+        # A killed GET has no unknown external write. Preserve the known binding
+        # before the request so crash recovery can safely requeue the same poll.
+        entry['intent']['read_only'] = True
+        if material_id:
+            entry['intent']['receipt'] = {'record_id': publication.get('feishu_record_id'), 'material_id': material_id}
     store_publication(path, request_id, entry)
 
 
@@ -1250,7 +1256,7 @@ def upload(batch_id, request_id):
 
 def poll(batch_id, request_id):
     material_versions.reject_legacy_write(folder(batch_id))
-    """One guarded sync (which may ingest/resync/write), then release the lane."""
+    """Observe the automation-owned Feishu result, then release the lane."""
     from .publish import sync_record_once, verify_record_once, guarded_delivery, TransientDeliveryReadError
     path = folder(batch_id)
     with execution(path, request_id, phase='poll'):
@@ -1272,13 +1278,14 @@ def poll(batch_id, request_id):
             binding = verification_binding(entry) if entry.get('verification_only') else None
             if binding and binding != entry['verification_only']: raise ValueError('只读核实身份已变化')
             record_id = binding['record_id'] if binding else str(entry['publication']['feishu_record_id'])
-            delivery_intent(path, request_id, entry, 'poll')
+            expected_material = (entry.get('fbbm') or {}).get('material_id') or (entry.get('intent', {}).get('receipt') or {}).get('material_id')
+            delivery_intent(path, request_id, entry, 'poll', read_only=True, material_id=expected_material)
             attempted = True
             def receipt(value):
                 entry['intent'].setdefault('receipt', {}).update(value)
                 store_publication(path, request_id, entry)
             with guarded_delivery(receipt=receipt):
-                result = verify_record_once(binding) if binding else sync_record_once(record_id)
+                result = verify_record_once(binding) if binding else sync_record_once(record_id, expected_url=entry['publication'].get('oss_url'), expected_material_id=expected_material or None)
             if result.get('record_id') != record_id:
                 raise ValueError('同步返回记录与交付意图不一致')
             entry['intent'].update(status='verified', verified_at=now_iso())
@@ -1295,7 +1302,7 @@ def poll(batch_id, request_id):
                 entry.update(status='fbbm_ready', completed_at=now_iso()); entry.pop('error', None)
             elif result.get('action') == 'failed':
                 attempted = False
-                raise RuntimeError('FBBM 同步失败，请查看平台原因后继续查询原记录')
+                raise RuntimeError('FBBM 自动化处理失败，请查看飞书记录后继续查询：' + str(result.get('error') or result.get('feishu_status') or '未提供原因'))
             else: entry['status'] = 'fbbm_queued'
         except Exception as exc:
             retry_binding = None
@@ -1306,7 +1313,15 @@ def poll(batch_id, request_id):
                         retry_binding = None
                 except ValueError:
                     pass
-            if retry_binding:
+            if (isinstance(exc, TransientDeliveryReadError) and attempted
+                    and not expected_material and not entry.get('verification_only')
+                    and not entry.get('verification_history')
+                    and entry.get('publication', {}).get('oss_url')):
+                # No platform ID exists yet. This attempt only read Feishu; a
+                # temporary read failure must not require an impossible ID-based verification.
+                entry['intent'].update(status='verified', verified_at=now_iso())
+                entry.update(status='fbbm_queued', error='状态查询暂时失败，将自动重试：' + str(exc))
+            elif retry_binding:
                 # Preserve the original write intent. All subsequent attempts use
                 # only its saved identities, never ingest/resync/update again.
                 if not entry.get('verification_only'):

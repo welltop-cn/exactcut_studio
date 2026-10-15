@@ -20,7 +20,7 @@ REQUIRED = {
     'oss': ('ALIYUN_OSS_ACCESS_KEY_ID', 'ALIYUN_OSS_ACCESS_KEY_SECRET', 'ALIYUN_OSS_ENDPOINT', 'ALIYUN_OSS_BUCKET'),
     'ai': ('OPENAI_API_KEY', 'OPENAI_BASE_URL'),
     'feishu': ('FEISHU_APP_ID', 'FEISHU_APP_SECRET', 'FEISHU_BITABLE_APP_TOKEN', 'FEISHU_BITABLE_TABLE_ID'),
-    'cf_ads': ('CF_ADS_BASE_URL', 'CF_ADS_USERNAME', 'CF_ADS_PASSWORD'),
+    'cf_ads': (),  # FBBM is owned by external Feishu automation.
 }
 
 
@@ -123,10 +123,9 @@ def check_feishu():
 
 
 def check_cf_ads():
-    usage = CfAdsClient().app_usage()
-    # is_available is consumed by sync_record_once; do not infer other quota fields.
-    return {'status': 'ok' if usage.get('is_available') is True else 'failed',
-            'facebook_available': usage.get('is_available'), 'ingestion_and_sync': 'not_verified'}
+    # No login/quota dependency in ExactCut; this does not verify the worker.
+    return {'status': 'ok', 'mode': 'external_feishu_automation',
+            'ingestion_and_sync': 'not_verified'}
 
 
 def run_checks(drama_id, sample_mib):

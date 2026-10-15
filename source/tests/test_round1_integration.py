@@ -63,7 +63,7 @@ def chain(workspace, monkeypatch):
                 'oss_key': publish.OssPublisher().key_for(video)[0]}
     monkeypatch.setattr(publish, 'publish_to_queue', upload)
     answers = ['syncing', 'ready']
-    def poll(record_id):
+    def poll(record_id, **kwargs):
         poll_calls.append(record_id)
         action = answers.pop(0) if answers else 'ready'
         return {'record_id': record_id, 'action': action, **({'video_id': 'fixture-video'} if action == 'ready' else {})}
@@ -282,7 +282,7 @@ def test_controlled_verification_resolves_only_proven_original_job_for_old_rollb
     entry = read_json(path / 'publications.json')[rid]
     entry['publication']['oss_url'] = 'https://fixture.invalid/video'
     w.store_publication(path, rid, entry)
-    def lost_reply(record_id):
+    def lost_reply(record_id, **kwargs):
         publish.delivery_receipt({'record_id': record_id, 'material_id': '123'})
         raise TimeoutError('sync reply lost')
     monkeypatch.setattr(publish, 'sync_record_once', lost_reply)
@@ -330,7 +330,7 @@ def test_controlled_verification_resolves_only_proven_original_job_for_old_rollb
            'command': command, 'instance': instance_marker(), 'verification_only': persisted['verification_only']}
     web.prepare_staged_job(job); web.save(job); web.WORK.put((job, job['command']))
     feishu = Mock(); feishu.get_record.return_value = {'record_id': entry['publication']['feishu_record_id'],
-        'fields': {'OSS_URL': {'link': 'https://fixture.invalid/video'}, 'ADS素材ID': '123'}}
+        'fields': {'OSS_URL': {'link': 'https://fixture.invalid/video'}, 'ADS素材ID': '123', '状态': '已完成', '视频ID': 'saved-video'}}
     cf = Mock(); cf.sync_status.return_value = {'facebook_bm_sync_status': 'ready', 'facebook_bm_video_id': 'saved-video'}
     monkeypatch.setattr(publish, 'FeishuClient', lambda: feishu)
     monkeypatch.setattr(publish, 'CfAdsClient', lambda: cf)

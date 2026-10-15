@@ -261,7 +261,7 @@ class FeishuClient:
         if existing:
             return {"record_id": existing.get("record_id") or existing.get("id"), "action": "reused", "fields": existing.get("fields") or {}}
         schema = self.fields()
-        required = {"剧ID", "OSS_URL", "状态", "来源", "重试次数", "ADS素材ID", "视频ID", "封面URL"}
+        required = {"剧ID", "OSS_URL", "状态", "来源", "ADS素材ID", "视频ID", "封面URL"}
         missing = sorted(required - set(schema))
         if missing:
             raise PublishError(f"飞书表缺少必要字段：{missing}；请先运行 exactcut ensure-feishu --dry-run")
@@ -400,11 +400,6 @@ def publish_to_queue(video: Path, manifest: Any, request: Any, *, dry_run: bool 
         "OSS_URL": feishu_url(upload["oss_url"]),
         "状态": "待处理",
         "来源": source,
-        "重试次数": 0,
-        "剧集ID": manifest.drama_id,
-        "序号": request.seq,
-        "业务日期": f"{manifest.business_date[:4]}-{manifest.business_date[4:6]}-{manifest.business_date[6:]}",
-        "OSS_KEY": upload["oss_key"],
     }
     record = FeishuClient().create_or_reuse(fields)
     delivery_receipt({"stage": "queued", **upload, "feishu_record_id": record["record_id"], "feishu_action": record["action"]})
@@ -417,97 +412,41 @@ def publish_to_queue(video: Path, manifest: Any, request: Any, *, dry_run: bool 
     return {"stage": "queued", **upload, "feishu_record_id": record["record_id"], "feishu_action": record["action"]}
 
 
-def verify_sync_fields(feishu, record_id, expected):
-    """Only the insured path requires remote evidence after filtered updates."""
-    if not GUARDED_DELIVERY.get(): return
-    record = feishu.get_record(record_id)
-    if str(record.get("record_id") or record.get("id") or "") != record_id:
-        raise PublishError("飞书同步写入后记录身份核验失败，待核实")
-    fields = record.get("fields") or {}
-    for name, value in expected.items():
-        actual = fields.get(name)
-        if name == "重试次数":
-            try: matched = actual is not None and int(actual) == int(value)
-            except (TypeError, ValueError): matched = False
-        else: matched = actual is not None and str(actual) == str(value)
-        if not matched:
-            raise PublishError(f"飞书同步写入后字段核验失败，待核实：{name}")
-
-
-@diag.traced('publication.sync')
-def sync_record_once(record_id: str) -> dict[str, Any]:
-    feishu = FeishuClient()
-    cf = CfAdsClient()
-    usage = cf.app_usage()
-    percent = max(float(usage.get("call_count") or 0), float(usage.get("total_time") or 0))
-    if not usage.get("is_available") or percent >= 85:
-        feishu.update(record_id, {"状态": "同步中", "错误信息": "Meta API额度接近上限，自动延后", "下次执行时间": int(time.time() * 1000) + 600000})
-        verify_sync_fields(feishu, record_id, {"状态": "同步中"})
-        return {"record_id": record_id, "status": "quota_deferred", "usage": usage}
-    record = feishu.get_record(record_id)
-    fields = record.get("fields") or {}
-    url_value = fields.get("OSS_URL")
-    oss_url = url_value.get("link") if isinstance(url_value, dict) else str(url_value or "")
-    material_id = str(fields.get("ADS素材ID") or "").strip()
-    retries = int(fields.get("重试次数") or 0)
-    max_retries = int(os.getenv("MAX_RETRIES", "2"))
-    if material_id: delivery_receipt({"record_id": record_id, "material_id": material_id})
-    feishu.update(record_id, {"状态": "处理中", "处理开始时间": int(time.time() * 1000)})
-    if not material_id:
-        material_id = cf.ingest(oss_url)
-        delivery_receipt({"record_id": record_id, "material_id": material_id})
-        feishu.update(record_id, {"ADS素材ID": material_id, "状态": "同步中", "错误信息": ""})
-        verify_sync_fields(feishu, record_id, {"ADS素材ID": material_id, "状态": "同步中"})
-    material = cf.sync_status(material_id)
-    fb_status = str(material.get("facebook_bm_sync_status") or "none")
-    video_id = material.get("facebook_bm_video_id")
-    thumbnail = material.get("facebook_thumbnail_url")
-    patch: dict[str, Any] = {"ADS素材ID": material_id, "最后查询时间": int(time.time() * 1000), "错误信息": material.get("facebook_remark") or ""}
-    if video_id:
-        patch["视频ID"] = str(video_id)
-    if thumbnail:
-        patch["封面URL"] = feishu_url(str(thumbnail), "cover")
-    if fb_status == "ready" and video_id:
-        patch.update({"状态": "已完成", "完成时间": int(time.time() * 1000), "下次执行时间": None})
-        action = "ready"
-    elif fb_status in {"failed", "none", ""} and retries < max_retries:
-        cf.resync(material_id)
-        retries += 1
-        delivery_receipt({"record_id": record_id, "material_id": material_id, "fields": {"重试次数": retries}})
-        patch.update({"状态": "同步中", "重试次数": retries, "下次执行时间": int(time.time() * 1000) + int(os.getenv("NEXT_POLL_SECONDS", "60")) * 1000})
-        action = "resync_requested"
-    elif retries >= max_retries:
-        patch["状态"] = "失败"
-        action = "failed"
-    else:
-        patch.update({"状态": "同步中", "下次执行时间": int(time.time() * 1000) + int(os.getenv("NEXT_POLL_SECONDS", "60")) * 1000})
-        action = "syncing"
-    result = {"record_id": record_id, "action": action, "fb_status": fb_status, "material_id": material_id, "video_id": video_id, "thumbnail": thumbnail}
-    delivery_receipt(result)
-    feishu.update(record_id, patch)
-    expected = {"ADS素材ID": material_id, "重试次数": retries, "状态": patch["状态"]}
-    if video_id: expected["视频ID"] = str(video_id)
-    verify_sync_fields(feishu, record_id, expected)
-    return result
-
-
-def verify_record_once(binding):
-    """Read only the saved record/material: no ingest, resync, or Feishu writes."""
-    record_id, material_id = binding['record_id'], binding['material_id']
+def _observe_record(record_id, *, expected_url=None, expected_material_id=None):
+    """Observe the automation-owned row; never create/sync a platform material."""
     record = FeishuClient().get_record(record_id)
     fields = record.get('fields') or {}
     url_value = fields.get('OSS_URL')
     oss_url = url_value.get('link') if isinstance(url_value, dict) else str(url_value or '')
-    remote_material = str(fields.get('ADS素材ID') or '').strip()
+    material_id = str(fields.get('ADS素材ID') or '').strip()
     if (str(record.get('record_id') or record.get('id') or '') != record_id
-            or oss_url != binding['oss_url'] or remote_material != material_id):
+            or not oss_url or (expected_url is not None and oss_url != expected_url)
+            or (expected_material_id is not None and material_id != expected_material_id)):
         raise PublishError('保存回执与飞书原记录身份、URL 或素材 ID 不一致，待核实')
-    material = CfAdsClient().sync_status(material_id)
-    status = str(material.get('facebook_bm_sync_status') or 'none')
-    video = material.get('facebook_bm_video_id')
-    return {'record_id': record_id, 'material_id': material_id, 'fb_status': status,
-            'video_id': video, 'thumbnail': material.get('facebook_thumbnail_url'),
-            'action': 'ready' if status == 'ready' and video else 'failed' if status in {'failed', 'none', ''} else 'syncing'}
+    state = str(fields.get('状态') or '')
+    video = str(fields.get('视频ID') or '').strip()
+    thumbnail = fields.get('封面URL')
+    if isinstance(thumbnail, dict): thumbnail = thumbnail.get('link')
+    ready = state == '已完成' and bool(material_id and video)
+    action = 'ready' if ready else 'failed' if state in {'失败', '超时'} else 'syncing'
+    return {'record_id': record_id, 'material_id': material_id, 'video_id': video,
+            'thumbnail': thumbnail, 'action': action,
+            'fb_status': 'ready' if ready else 'failed' if action == 'failed' else 'syncing',
+            'feishu_status': state, 'error': str(fields.get('错误信息') or '')}
+
+
+@diag.traced('publication.sync')
+def sync_record_once(record_id: str, *, expected_url=None, expected_material_id=None) -> dict[str, Any]:
+    """Compatibility name: only read the result written by Feishu automation."""
+    result = _observe_record(record_id, expected_url=expected_url, expected_material_id=expected_material_id)
+    delivery_receipt(result)
+    return result
+
+
+def verify_record_once(binding):
+    """Verify the saved binding against Feishu, without logging into FBBM."""
+    return _observe_record(binding['record_id'], expected_url=binding['oss_url'],
+                           expected_material_id=binding['material_id'])
 
 
 def wait_until_ready(record_id: str, config: dict[str, Any]) -> dict[str, Any]:

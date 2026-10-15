@@ -32,7 +32,7 @@ def test_guarded_material_read_relogs_once(code):
         assert login.call_count == 1 and request.call_count == 2
 
 
-def test_ingest_committed_but_auth_response_leaves_job_unverified(api, workspace):
+def test_poll_never_calls_ingest_even_without_material_id(api, workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     entry.update(status='fbbm_queued', intent={'status': 'verified'})
     w.store_publication(path, rid, entry)
@@ -42,14 +42,14 @@ def test_ingest_committed_but_auth_response_leaves_job_unverified(api, workspace
     def commit_but_lose_response(*args, **kwargs):
         creations.append(kwargs.get('json'))
         return Mock(json=lambda: {'code': 100006})
-    job = {'id': 'a' * 32, 'batch_id': batch['id'], 'request_id': rid, 'phase': 'poll', 'attempt': 1, 'status': 'running'}
+    job = {'id': 'a' * 32, 'batch_id': batch['id'], 'request_id': rid, 'phase': 'poll', 'attempt': 1, 'status': 'running', 'command': ['fixture']}
     job['input_fingerprint'] = stage_results.fingerprint(job, w.BATCHES, w.ROOT)
     web.save(job)
     with patch.object(publish, 'CfAdsClient', return_value=cf), patch.object(publish, 'FeishuClient', return_value=feishu), patch.object(cf, 'login') as login, patch.object(publish.requests, 'request', side_effect=commit_but_lose_response):
         code = w.poll(batch['id'], rid)
         stage_results.complete(job, web.JOBS, w.BATCHES, w.ROOT, code)
         web.finish_job(job, code)
-    assert len(creations) == 1
-    assert read_json(web.JOBS / (job['id'] + '.json'))['status'] == 'unverified'
-    assert read_json(path / 'publications.json')[rid]['intent']['status'] == 'pending'
+    assert len(creations) == 0
+    assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_queued'
+    assert read_json(path / 'publications.json')[rid]['intent']['status'] == 'verified'
     login.assert_not_called()

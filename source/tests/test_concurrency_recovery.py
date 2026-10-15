@@ -78,7 +78,8 @@ def test_ambiguous_delivery_is_unverified_and_never_replayed(workspace, phase):
     operation = 'publish_to_queue' if phase == 'upload' else 'sync_record_once'
     def ambiguous(*args, **kwargs):
         intent = read_json(path / 'publications.json')[rid]['intent']
-        assert intent['status'] == 'pending' and intent['approved_sha256'] == record['output_sha256']
+        assert intent['status'] == ('pending' if phase == 'upload' else 'verified')
+        assert intent['approved_sha256'] == record['output_sha256']
         raise TimeoutError('remote accepted; reply lost')
     with patch('exactcut.publish.' + operation, side_effect=ambiguous) as remote:
         assert getattr(workflow, phase)(batch['id'], rid) == 2
@@ -278,75 +279,67 @@ def test_owned_sighup_requeues_safe_unfinished_stage(runner, phase):
     assert read_json(web.JOBS / (job['id'] + '.json'))['status'] == 'queued'
 
 
-def sync_fixture(workspace, monkeypatch, *, missing=(), timeout_after_ingest=False, material_status=None):
-    """Exercise real FeishuClient.update filtering against an in-memory record."""
+def sync_fixture(workspace, monkeypatch):
+    """The automation writes the fixture row; ExactCut only observes it."""
     from copy import deepcopy
     from exactcut import publish
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
-    entry = read_json(path / 'publications.json')[rid]; entry['publication'] = {'feishu_record_id': 'fixture-record'}
+    entry = read_json(path / 'publications.json')[rid]
+    entry['publication'] = {'feishu_record_id': 'fixture-record', 'oss_url': 'https://fixture.invalid/video'}
     workflow.store_publication(path, rid, entry)
     remote = {'状态': '待处理', 'OSS_URL': {'link': 'https://fixture.invalid/video'}, '重试次数': 0}
-    feishu = publish.FeishuClient.__new__(publish.FeishuClient)
-    feishu.app_token = 'fixture'; feishu.table_id = 'fixture'; feishu.token = 'fixture'
-    schema = {name: {'field_name': name} for name in ('状态', 'ADS素材ID', '重试次数', '视频ID') if name not in missing}
-    feishu.fields = lambda: schema
-    feishu.get_record = lambda record_id: {'record_id': record_id, 'fields': deepcopy(remote)}
-    cf = Mock(); cf.app_usage.return_value = {'is_available': True}; cf.ingest.side_effect = ['1', '2']
-    cf.sync_status.return_value = material_status or {'facebook_bm_sync_status': 'processing'}
-    def put(url, **kwargs):
-        fields = kwargs['json']['fields']
-        if timeout_after_ingest and 'ADS素材ID' in fields: raise TimeoutError('reply lost after ingest')
-        remote.update(fields)
-        response = Mock(ok=True); response.json.return_value = {'code': 0}
-        return response
+    feishu = Mock()
+    feishu.get_record.side_effect = lambda record_id: {'record_id': record_id, 'fields': deepcopy(remote)}
+    feishu.update.side_effect = AssertionError('No Feishu update')
+    cf = Mock(side_effect=AssertionError('No FBBM client'))
     monkeypatch.setattr(publish, 'FeishuClient', lambda: feishu)
-    monkeypatch.setattr(publish, 'CfAdsClient', lambda: cf)
-    monkeypatch.setattr(publish.requests, 'put', put)
+    monkeypatch.setattr(publish, 'CfAdsClient', cf)
     return batch['id'], rid, path, cf, remote
 
 
-def test_missing_remote_material_column_cannot_cause_second_ingest(workspace, monkeypatch):
-    batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch, missing=('ADS素材ID',))
-    assert workflow.poll(batch, rid) == 2
-    assert workflow.poll(batch, rid) == 2
-    assert cf.ingest.call_count == 1 and 'ADS素材ID' not in remote
-    entry = read_json(path / 'publications.json')[rid]
-    assert entry['status'] == 'unverified' and entry['intent']['receipt']['material_id'] == '1'
+def test_missing_remote_material_cannot_cause_ingest(workspace, monkeypatch):
+    batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch)
+    assert workflow.poll(batch, rid) == 0
+    assert workflow.poll(batch, rid) == 0
+    cf.assert_not_called()
+    assert 'ADS素材ID' not in remote
+    assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_queued'
 
 
-def test_timeout_after_ingest_preserves_remote_material_receipt(workspace, monkeypatch):
-    batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch, timeout_after_ingest=True)
-    assert workflow.poll(batch, rid) == 2
-    entry = read_json(path / 'publications.json')[rid]
-    assert entry['status'] == 'unverified' and entry['intent']['receipt']['material_id'] == '1'
-    assert workflow.poll(batch, rid) == 2 and cf.ingest.call_count == 1
-
-
-@pytest.mark.parametrize('missing,status', [
-    ('重试次数', {'facebook_bm_sync_status': 'failed'}),
-    ('视频ID', {'facebook_bm_sync_status': 'ready', 'facebook_bm_video_id': 'video-1'}),
-    ('状态', {'facebook_bm_sync_status': 'ready', 'facebook_bm_video_id': 'video-1'}),
-])
-def test_guarded_sync_requires_remote_retry_video_and_status_readback(workspace, monkeypatch, missing, status):
-    batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch, missing=(missing,), material_status=status)
+def test_observed_material_cannot_change_on_later_poll(workspace, monkeypatch):
+    batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch)
+    remote.update({'状态': '同步中', 'ADS素材ID': '1'})
+    assert workflow.poll(batch, rid) == 0
+    remote.update({'状态': '已完成', 'ADS素材ID': '2', '视频ID': 'video'})
     assert workflow.poll(batch, rid) == 2
     assert read_json(path / 'publications.json')[rid]['status'] == 'unverified'
-    assert workflow.poll(batch, rid) == 2 and cf.ingest.call_count == 1
+    cf.assert_not_called()
 
 
-@pytest.mark.parametrize('status,expected,retries', [
-    ({'facebook_bm_sync_status': 'processing'}, 'fbbm_queued', 0),
-    ({'facebook_bm_sync_status': 'failed'}, 'fbbm_queued', 1),
-    ({'facebook_bm_sync_status': 'ready', 'facebook_bm_video_id': 'video-1'}, 'fbbm_ready', 0),
-])
-def test_guarded_sync_accepts_persisted_material_retry_video_and_status(workspace, monkeypatch, status, expected, retries):
-    batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch, material_status=status)
+@pytest.mark.parametrize('missing', ['ADS素材ID', '视频ID', '状态'])
+def test_incomplete_completion_never_marks_ready(workspace, monkeypatch, missing):
+    batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch)
+    remote.update({'状态': '已完成', 'ADS素材ID': '1', '视频ID': 'video'})
+    remote.pop(missing)
     assert workflow.poll(batch, rid) == 0
+    assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_queued'
+    cf.assert_not_called()
+
+
+@pytest.mark.parametrize('status,expected,code', [
+    ('同步中', 'fbbm_queued', 0), ('失败', 'publish_failed', 2), ('已完成', 'fbbm_ready', 0),
+])
+def test_poll_accepts_automation_result_without_changing_row(workspace, monkeypatch, status, expected, code):
+    from copy import deepcopy
+    batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch)
+    remote.update({'状态': status, 'ADS素材ID': '1', '视频ID': 'video-1', '重试次数': 2})
+    before = deepcopy(remote)
+    assert workflow.poll(batch, rid) == code
     entry = read_json(path / 'publications.json')[rid]
     assert entry['status'] == expected and entry['intent']['status'] == 'verified'
-    assert remote['ADS素材ID'] == '1' and remote['重试次数'] == retries
-    if expected == 'fbbm_ready': assert remote['视频ID'] == 'video-1' and remote['状态'] == '已完成'
+    assert remote == before
+    cf.assert_not_called()
 
 
 def test_finish_delivery_preserves_specific_error(runner):

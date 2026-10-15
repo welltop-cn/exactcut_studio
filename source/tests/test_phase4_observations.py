@@ -92,7 +92,7 @@ def test_fbbm_retry_keeps_original_record_and_does_not_upload(workspace):
          patch('exactcut.publish.sync_record_once',return_value={'record_id':'original-record','action':'ready','video_id':'video-1'}) as sync:
         assert w.publish(workspace['id'],rid)==0
         upload.assert_not_called()
-        sync.assert_called_once_with('original-record')
+        sync.assert_called_once_with('original-record', expected_url=None, expected_material_id=None)
     saved=w.read_json(path/'publications.json')[rid]
     assert saved['status']=='fbbm_ready' and 'error' not in saved
     assert w.runtime(path)['stage']=='fbbm' and not w.runtime(path)['executor_running']

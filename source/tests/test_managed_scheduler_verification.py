@@ -28,7 +28,7 @@ def verification(workspace, monkeypatch):
             job['status'] = 'unverified'; write_json_atomic(file, job)
     feishu, cf = Mock(), Mock()
     feishu.get_record.return_value = {'record_id': 'record-1', 'fields': {
-        'OSS_URL': {'link': 'https://fixture.invalid/video'}, 'ADS素材ID': 'material-1'}}
+        'OSS_URL': {'link': 'https://fixture.invalid/video'}, 'ADS素材ID': 'material-1', '状态': '已完成', '视频ID': 'video-1'}}
     cf.sync_status.return_value = {'facebook_bm_sync_status': 'ready', 'facebook_bm_video_id': 'video-1'}
     monkeypatch.setattr(publish, 'FeishuClient', lambda: feishu)
     monkeypatch.setattr(publish, 'CfAdsClient', lambda: cf)
@@ -65,7 +65,7 @@ def retry_to_ready(fixture):
     new = run(web.JOBS / (event['job_id'] + '.json'))
     assert m.read(parent)['deliveries'][did]['status'] == 'fbbm_ready'
     assert feishu.get_record.call_count == 2
-    cf.sync_status.assert_called_once_with('material-1')
+    cf.sync_status.assert_not_called()
     return old, new
 
 
@@ -125,7 +125,7 @@ def test_managed_verification_handoff_survives_process_exit(verification, window
     run(target)
     assert m.read(parent)['deliveries'][did]['status'] == 'fbbm_ready'
     assert feishu.get_record.call_count == 2
-    cf.sync_status.assert_called_once_with('material-1')
+    cf.sync_status.assert_not_called()
 
 
 def test_unsaved_admission_failure_still_finishes_current_verification(verification):
