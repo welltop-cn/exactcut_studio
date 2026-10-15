@@ -288,7 +288,15 @@ def test_controlled_verification_resolves_only_proven_original_job_for_old_rollb
     monkeypatch.setattr(publish, 'sync_record_once', lost_reply)
     chain.due(batch)
     original, process, _ = chain.one('poll', batch)
-    assert w.poll(batch['id'], rid) == 2
+    # This fixture represents a pre-upgrade poll that wrote to FBBM and lost
+    # its response. New observer polls do not create pending write intents.
+    current_intent = w.delivery_intent
+    def legacy_intent(*args, **kwargs):
+        kwargs['read_only'] = False
+        return current_intent(*args, **kwargs)
+    with monkeypatch.context() as historical:
+        historical.setattr(w, 'delivery_intent', legacy_intent)
+        assert w.poll(batch['id'], rid) == 2
     evidence_path = stage_results.result_path(original, web.JOBS)
     if original_proof != 'crash_before_result':
         stage_results.complete(original, web.JOBS, w.BATCHES, w.ROOT, 2)
