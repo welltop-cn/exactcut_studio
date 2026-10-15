@@ -546,7 +546,7 @@ def detail(batch_id):
         pub = publish.get(asset['request_id'], {})
         asset['can_continue_fbbm'] = bool((pub.get('publication') or {}).get('feishu_record_id'))
         asset['error_info'] = guidance(asset.get('error'), 'fbbm' if pub.get('error') else record.get('stage'),
-                                      continuation=asset['can_continue_fbbm'])
+                                      continuation=asset['can_continue_fbbm'], fbbm_status=(pub.get('fbbm') or {}).get('status'))
         asset['error'] = redact(asset.get('error'))
         asset['preview_warning'] = guidance(record.get('preview_error') or record.get('preview_oss_error'), 'preview')
         asset['observation'] = observation(record)

@@ -521,7 +521,7 @@ def runtime_message(status, *, has_preview=False, pending_changes=False, paused=
     elif status == 'unverified':
         message = '交付结果待核实，已停止上传；请联系管理员核实后继续'
     elif status == 'publish_failed':
-        message = '上传失败，请查看原因后重试上传 FBBM'
+        message = 'FBBM 交付未完成，请查看素材上的具体原因后重试'
     elif status == 'complete':
         return '全部素材已入库，可在 FBBM 使用'
     elif status == 'review' and pending_changes:
@@ -617,7 +617,7 @@ def detail(path):
             item['stage_seconds'] = {**item['stage_seconds'], **publication.get('stage_seconds', {})}
             if publication.get('error'):
                 item['error'] = redact(publication['error'])
-                item['error_info'] = guidance(publication['error'], 'fbbm')
+                item['error_info'] = guidance(publication['error'], 'fbbm', fbbm_status=(publication.get('fbbm') or {}).get('status'))
         from .cutting_access import can_edit
         item['can_edit_video'] = can_edit(path, rid)
         assets.append(item)

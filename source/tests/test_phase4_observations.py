@@ -133,3 +133,13 @@ def test_unverified_delivery_guidance_does_not_offer_blind_retry():
     assert result['title'] == '交付结果待核实'
     assert '管理员' in result['action']
     assert '重试' not in result['action']
+
+
+def test_fbbm_timeout_guidance_uses_recorded_quota_reason():
+    message = '等待 FBBM 就绪超时，可重试继续查询原记录'
+    result = guidance(message, 'fbbm', fbbm_status='quota_deferred')
+    assert result['code'] == 'fbbm_quota'
+    assert 'Meta API' in result['title']
+    assert '无需重新制作' in result['action']
+    assert guidance(message, 'fbbm')['code'] == 'fbbm_timeout'
+    assert guidance(message, 'fbbm', continuation=True)['code'] == 'fbbm_continue'
