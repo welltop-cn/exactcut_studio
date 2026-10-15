@@ -244,7 +244,7 @@
     context=null; clips=[];editingId=null;clipSerial=0;ranges=[];undo=[];selection=null;selectedJob=null;busy=false;wanted=0;frameReady=-1;quick=false;resultMode=false;scanReport=null;scanLoading=false;syncRiskBulk();
     $('cutEditor').hidden=true; $('cutReplaceConfirm').hidden=true; $('cutToast').hidden=true; $('cutDownload').hidden=true; $('cutReplace').hidden=true; $('cutContinue').hidden=true; $('cutRender').disabled=true;
     $('cutRanges').innerHTML='';$('cutRiskMarkers').innerHTML='';$('cutRangeEditor').hidden=true;
-    $('cutTitle').textContent='剪切与打码 · '+asset.title;
+    $('cutTitle').textContent='剪切 · '+asset.title;
     for(const v of $('assets').querySelectorAll('video'))v.pause();
     if(!dialog.open)dialog.showModal(); status('正在准备视频…');
     try {
@@ -278,7 +278,7 @@
       const asset=current.assets[Number(card.dataset.asset)],batch=current.id;
       if(!asset?.preview || asset.can_edit_video !== true){card.querySelector('.cut-tools')?.remove();continue;}
       if(card.querySelector('.cut-tools'))continue;
-      const box=document.createElement('div');box.className='cut-tools';box.innerHTML='<button type="button" class="secondary" data-open-cut>✂ 剪切与打码</button>';
+      const box=document.createElement('div');box.className='cut-tools';box.innerHTML='<button type="button" class="secondary" data-open-cut>✂ 剪切</button>';
       const download=card.querySelector('a[download]')?.closest('p');
       if(download){
         let row=download.closest('.cut-media-row');
