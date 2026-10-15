@@ -10,3 +10,11 @@
 - 测试代码及配置备份：`/srv/exactcut-test/backups/observer-b00374a`、`/srv/exactcut-test/code-observer-b00374a.previous`。私有部署报告 `/srv/exactcut-test/deployments/test-observer-b00374a.json`。
 - 正式服务前后均为 `us-east-20261015-fbbm-cf5344f`，启动时间 `2026-10-15T05:23:21.533169538Z` 未改变，健康正常；未改正式配置、数据或代码。
 - 实际写飞书并等待外部自动化完成的端到端操作未执行，留给用户测试。历史未知写入回执不迁移。
+
+## 2026-10-15 私有成片命名空间修复
+
+测试交付失败“私有成片回执与本次确认的版本不符”源于 OssPublisher.upload 硬编码 production 前缀，而实际 preview.namespace=test。提交 0b13f2f 改用已有 object_prefix()，仅接受实例配置命名空间；bucket/endpoint/SHA/bytes/HEAD/etag 保护不变。Grok复核不阻断，完整回归1442 passed（10 warnings）。
+
+已仅部署测试实例 test-observer-0b13f2f，health=ok、maintenance=false、worker_alive=true。正式版本和启动时间未变。备份 /srv/exactcut-test/backups/observer-0b13f2f 及 code-observer-0b13f2f.previous。
+
+对用户项目 ff64a2f2d4d64bbaacf9216323624b80 的真实148秒成片，通过只读包装调用原upload校验：实际HEAD源对象并核验元数据，在copy_object执行前拦截，返回copy_source_validated_no_write；按OSS_URL查飞书无记录。没有上传、修改回执或创建飞书行。旧失败为preparation_failed且无飞书ID，可通过正常重试入口继续；未代用户重试。正式namespace默认production及跨namespace拒绝均测试通过，后续正式发布仍需独立授权和部署检查。

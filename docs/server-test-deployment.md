@@ -238,3 +238,5 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 ## 2026-10-15 飞书自动化交付测试更新
 
 当前测试代码 `b00374a`，release `test-observer-b00374a`。用户明确授权使用真实 OSS/飞书服务配置，测试交付已启用；这是对上文凭据隔离限制的本次明确例外。预览仍用 test namespace，未配置 CF_ADS 凭据。用户点击上传会创建真实飞书待处理记录并触发外部自动化。不要代用户提交素材。正式服务未更新，仍运行旧交付实现。详见 [验收记录](verification/feishu-observer-test-release-2026-10-15.md)。
+
+测试实例现已更新至 `test-observer-0b13f2f`（代码 `0b13f2f`），修复真实交付对 test 私有成片路径的错误拒绝；配置未变。详见上述验收记录。
