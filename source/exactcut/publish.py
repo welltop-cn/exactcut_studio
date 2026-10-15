@@ -144,10 +144,11 @@ class OssPublisher:
                 content_type = mimetypes.guess_type(video.name)[0] or "video/mp4"
                 source = OSS_COPY_SOURCE.get()
                 if source:
+                    from .preview_oss import object_prefix
                     source_key = str(source.get('key', ''))
                     if (source.get('bucket') != self.bucket_name or source.get('endpoint') != self.endpoint or
                             source.get('sha256') != digest or source.get('bytes') != video.stat().st_size or
-                            not re.fullmatch(r'exactcut-previews/production/[0-9a-f]{32}/[^/]+/' + digest + r'\.mp4', source_key)):
+                            not re.fullmatch(re.escape(object_prefix()) + r'/[0-9a-f]{32}/[^/]+/' + digest + r'\.mp4', source_key)):
                         raise PublishError('私有成片回执与本次确认的版本不符，停止交付')
                     meta = bucket.head_object(source_key)
                     remote_hash = meta.headers.get('x-oss-meta-sha256') or meta.headers.get('X-Oss-Meta-Sha256')

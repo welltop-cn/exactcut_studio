@@ -141,7 +141,9 @@ def test_original_download_uses_private_master_and_signed_attachment(tmp_path):
     assert "filename*=UTF-8''" in seen['params']['response-content-disposition']
 
 
-def test_fbbm_reuses_private_master_by_server_side_copy(tmp_path,monkeypatch):
+@pytest.mark.parametrize('namespace', ['production', 'test'])
+def test_fbbm_reuses_private_master_by_server_side_copy(tmp_path,monkeypatch,namespace):
+    monkeypatch.setattr(preview_oss, 'load_config', lambda: {'preview': {'namespace': namespace}})
     from exactcut.publish import OssPublisher,guarded_delivery
     from unittest.mock import Mock
     video=tmp_path/'20260902_typezxraw_张三_AGENT_12_#101460#.mp4';video.write_bytes(b'master')
@@ -153,7 +155,7 @@ def test_fbbm_reuses_private_master_by_server_side_copy(tmp_path,monkeypatch):
     # OSS GetObjectMeta returns basic metadata, not custom SHA headers.
     bucket.get_object_meta.return_value=SimpleNamespace(content_length=6,headers={})
     monkeypatch.setattr(publisher,'connect',lambda:bucket)
-    receipt={'bucket':'fixture','endpoint':'https://oss.invalid','key':f'exactcut-previews/production/{"a"*32}/R1/{digest}.mp4','sha256':digest,'bytes':6}
+    receipt={'bucket':'fixture','endpoint':'https://oss.invalid','key':f'exactcut-previews/{namespace}/{"a"*32}/R1/{digest}.mp4','sha256':digest,'bytes':6}
     with guarded_delivery(oss_source=receipt):
         result=publisher.upload(video)
     assert result['sha256']==digest
@@ -163,6 +165,14 @@ def test_fbbm_reuses_private_master_by_server_side_copy(tmp_path,monkeypatch):
     assert args[2].startswith('fb-bm-assets/')
     assert kw['headers']['x-oss-forbid-overwrite']=='true'
     assert kw['headers']['x-oss-copy-source-if-match']=='"etag"'
+    other = 'test' if namespace == 'production' else 'production'
+    receipt['key'] = receipt['key'].replace('/'+namespace+'/', '/'+other+'/')
+    bucket.reset_mock()
+    from exactcut.publish import PublishError
+    with guarded_delivery(oss_source=receipt), pytest.raises(PublishError, match='私有成片回执'):
+        publisher.upload(video)
+    bucket.copy_object.assert_not_called()
+    bucket.put_object_from_file.assert_not_called()
 
 
 def test_fbbm_reuses_existing_copy_with_head_metadata(tmp_path, monkeypatch):
