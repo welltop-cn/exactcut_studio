@@ -1004,7 +1004,7 @@ def test_partial_round_keeps_reused_asset_distinct_after_completion(workspace):
         first: 'reused', event['asset_id']: 'run'}
 
 
-@pytest.mark.parametrize('delivery_status,expected', [('unverified', '待核实'), ('publish_failed', '上传失败'), ('uploading', '正在上传')])
+@pytest.mark.parametrize('delivery_status,expected', [('unverified', '待核实'), ('publish_failed', 'FBBM 交付未完成'), ('uploading', '正在上传')])
 def test_delivery_banner_matches_actual_delivery_state(workspace, delivery_status, expected):
     m, path, state = enrolled(media=True)
     rid = state['draft']['rows'][0]['request_id']
