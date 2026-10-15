@@ -234,3 +234,7 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 用户授权重新开启原测试实例。已部署1256f3e（含ae8acd3剪切功能与旧窗口请求修复），启用cutting及scan，保持测试OSS前缀及交付禁用。当前代码与回滚、实际验收详见 [剪切测试部署记录](verification/cutting-test-deployment-2026-10-14.md)。旧账号和项目保留；正式服务未重启或修改。
 
 指定 101606 五集时间段的真实服务器验收及当前项目入口见 [101606 线上剪切验收](verification/cutting-101606-server-2026-10-14.md)。
+
+## 2026-10-15 飞书自动化交付测试更新
+
+当前测试代码 `b00374a`，release `test-observer-b00374a`。用户明确授权使用真实 OSS/飞书服务配置，测试交付已启用；这是对上文凭据隔离限制的本次明确例外。预览仍用 test namespace，未配置 CF_ADS 凭据。用户点击上传会创建真实飞书待处理记录并触发外部自动化。不要代用户提交素材。正式服务未更新，仍运行旧交付实现。详见 [验收记录](verification/feishu-observer-test-release-2026-10-15.md)。
