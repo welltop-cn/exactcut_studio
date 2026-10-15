@@ -143,3 +143,13 @@ def test_fbbm_timeout_guidance_uses_recorded_quota_reason():
     assert '无需重新制作' in result['action']
     assert guidance(message, 'fbbm')['code'] == 'fbbm_timeout'
     assert guidance(message, 'fbbm', continuation=True)['code'] == 'fbbm_continue'
+
+
+def test_stale_quota_status_does_not_mask_current_delivery_error():
+    for message in ['执行中断，可重试继续原记录', '执行进程已结束，可查看日志后重试']:
+        result = guidance(message, 'fbbm', fbbm_status='quota_deferred')
+        assert result['code'] == 'interrupted'
+    result = guidance('待核实：交付阶段中断，只能核实原回执', 'fbbm', fbbm_status='quota_deferred')
+    assert result['code'] == 'delivery_unverified'
+    result = guidance('状态查询暂时失败，将自动重试：1255001', 'fbbm', fbbm_status='quota_deferred')
+    assert result['code'] == 'delivery_read_retry'

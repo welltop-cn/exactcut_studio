@@ -36,7 +36,7 @@ def guidance(message, stage=None, *, continuation=False, fbbm_status=None):
         code, title, action = 'disk_space', '可用磁盘空间不足', '在空间管理中预览并清理可回收缓存，或释放磁盘空间后重试。'
     elif any(s in lower for s in ('已变化', 'sha256', 'hash mismatch')):
         code, title, action = 'integrity', '文件版本发生变化', '重新预览并确认当前成片；不要沿用旧版本确认。'
-    elif stage == 'fbbm' and fbbm_status == 'quota_deferred':
+    elif stage == 'fbbm' and fbbm_status == 'quota_deferred' and '等待 FBBM 就绪超时' in str(message):
         code, title, action = 'fbbm_quota', 'FBBM 交付等待超时：Meta API 额度受限', '文件已上传，FBBM 尚未完成。请等待额度恢复后重试；无需重新制作视频。额度未恢复时重试仍会延后。'
     elif stage == 'fbbm' and not continuation and '等待 FBBM 就绪超时' in str(message):
         code, title, action = 'fbbm_timeout', 'FBBM 交付等待超时', '文件已上传，但尚未确认 FBBM 就绪。可重试完成交付，无需重新制作视频。'
