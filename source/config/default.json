@@ -62,6 +62,13 @@
       "max_refine_events": 8,
       "request_timeout_ms": 120000,
       "default_policy": "standard"
+    },
+    "tracking": {
+      "enabled": false,
+      "checkpoint": "",
+      "model_config": "configs/sam2.1/sam2.1_hiera_t.yaml",
+      "device": "mps",
+      "dependency_paths": []
     }
   }
 }

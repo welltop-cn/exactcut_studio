@@ -478,3 +478,22 @@ def test_checkbox_then_confirm_does_not_duplicate_region(editor):
     editor.wait_for_function("!document.getElementById('mosaicConfirm').disabled")
     editor.locator('[data-proposal]').click();editor.locator('#mosaicConfirm').click()
     assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'
+
+
+def test_tracking_preview_uses_saved_region_without_changing_adoption(editor):
+    editor.evaluate('''() => {
+      session.capabilities.tracking=true;
+      const old=window.api;
+      window.api=async(url,body)=>{
+        if(url.endsWith('/track')){window.trackBody=body;return {id:'a'.repeat(32),status:'completed',result:{warnings:[],elapsed_seconds:2}};}
+        return old(url,body);
+      };
+    }''')
+    open_editor(editor);editor.locator('#mosaicRecognize').click()
+    editor.locator('#mosaicConfirm').click()
+    editor.locator('#mosaicTrack').click()
+    assert editor.locator('#mosaicTrackDialog').evaluate('(el)=>el.open')
+    assert editor.locator('#mosaicTrackVideo').is_visible()
+    assert editor.evaluate('trackBody.target')=={'start':0,'end':300,'seed_frame':0,'x':40,'y':24,'w':80,'h':48}
+    editor.locator('#mosaicTrackClose').click()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'

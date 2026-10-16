@@ -247,6 +247,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 #mosaicDialog .mosaic-event-card>[data-scan-event] small:last-child{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
 #mosaicDialog .mosaic-event-card>[data-scan-event][aria-pressed="true"]{outline:1px solid #47dbc4;border-radius:5px}
 @media(max-width:700px){#mosaicReview{height:auto}#mosaicReview .mosaic-review-actions{flex-wrap:wrap}}
+#mosaicTrackDialog{width:90vw;max-width:1100px;max-height:94dvh;padding:16px;background:#151c22;color:#e0e9ef}#mosaicTrackVideo{width:100%;height:65dvh;object-fit:contain;background:#080b0e}#mosaicTrackStatus{color:#c2d5d9;font-size:13px;max-height:90px;overflow:auto}
 </style></head><body><header><div><strong>素材工作台</strong></div><div class="actions"><div class="header-group"><button id="helpNav" class="helper-nav-btn" type="button" title="制作流程与疑难解答">🤖 制作助手</button><button id="feedbackNav" class="header-btn" title="查看成片反馈汇总">📊 反馈汇总</button></div><span id="connection" class="header-connection">正在连接</span><span class="header-divider" aria-hidden="true"></span><div class="header-group"><span id="accountName" class="account-pill"></span><button id="usageNav" class="header-btn" hidden>用量</button><button id="storageNav" class="header-btn" hidden>磁盘与缓存</button><button id="accountsNav" class="header-btn" hidden>账户管理</button><button id="logoutButton" class="header-btn logout-btn">退出登录</button></div></div></header><div class="shell"><aside><button id="newBatch">＋ 新建项目</button><div class="eyebrow">制作批次</div><nav class="tabs"><button class="tab active" id="currentBatches">当前项目</button><button class="tab" id="archivedBatches">已归档</button></nav><div id="batchList"><p class="hint">正在加载…</p></div></aside><main>
 <section id="emptyWorkspace"><h1 id="emptyWorkspaceTitle">正在打开项目…</h1><p id="emptyWorkspaceHint" class="hint">正在恢复你的工作台。</p><button id="retryWorkspace" class="secondary" hidden>重试</button></section>
 <section id="workspace" hidden><div class="topline"><div><div class="eyebrow" id="batchName"></div><h1 id="batchTitle"></h1></div><div class="workspace-header-right"><span id="batchStatus" class="badge"></span><div class="actions project-actions"><button id="pauseButton" class="secondary" hidden>暂停执行</button><button id="resumeButton" hidden>继续执行</button><button id="archiveButton" class="secondary">归档项目</button><button id="unarchiveButton" class="secondary" hidden>复原项目</button><span class="hint" id="controlHint" hidden></span></div></div></div><div id="steps" class="flow"></div><div id="statusBanner" class="status-banner"><div id="liveMessage" class="notice" role="status"></div><div id="previewReady" class="preview-actions" hidden><span id="previewReadyTitle" hidden></span><button id="previewButton" class="secondary" hidden>生成轻量预览</button><button id="openPreview">▶ 播放成片</button></div></div><nav class="tabs"><button class="tab active" data-tab="editor">标准化内容</button><button class="tab" data-tab="progress">执行进度</button><button class="tab" data-tab="review">成片预览</button></nav>
@@ -279,6 +280,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
   <div id="cutToast" role="status" hidden></div>
 </dialog>
 
+<dialog id="mosaicTrackDialog" aria-labelledby="mosaicTrackTitle"><div class="row"><h2 id="mosaicTrackTitle">动态打码预览</h2><button id="mosaicTrackClose">返回检查</button></div><p id="mosaicTrackStatus" role="status"></p><video id="mosaicTrackVideo" controls playsinline hidden></video><p class="hint">仅预览当前区域、当前片段。请检查是否漏遮或多遮；尚未合成整段成片。</p></dialog>
 <dialog id="mosaicDialog" aria-labelledby="mosaicTitle">
   <header class="mosaic-header"><div><h2 id="mosaicTitle">马赛克</h2><small>保留画面，选择需要遮挡的区域</small></div><div class="mosaic-phases"><strong>① 识别与检查</strong>　→　② 跟踪　→　③ 导出</div><button id="mosaicClose" aria-label="关闭马赛克">关闭</button></header>
   <div id="mosaicStatus" role="status" aria-live="polite"></div>
@@ -293,7 +295,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
       <section><h3>作用时间范围</h3><div class="mosaic-range"><label for="mosaicStart">开始</label><input id="mosaicStart" aria-label="马赛克开始时间"><button id="mosaicMarkStart">用当前帧</button></div><div class="mosaic-range"><label for="mosaicEnd">结束</label><input id="mosaicEnd" aria-label="马赛克结束时间"><button id="mosaicMarkEnd">用当前帧</button></div><small>分:秒:帧 · 包含结束帧。停在清晰画面，作为参考帧。</small></section>
       <section><h3>补充识别与框选</h3><button id="mosaicRecognize" disabled>识别当前帧</button><small>自动结果不准确时，可换帧识别或手动调整。</small><button id="mosaicDraw" style="margin-top:10px">手动框选</button><div id="mosaicBoxFields" hidden><label>X <input id="mosaicBoxX" type="number" min="0" aria-label="矩形左边"></label><label>Y <input id="mosaicBoxY" type="number" min="0" aria-label="矩形顶边"></label><label>宽 <input id="mosaicBoxW" type="number" min="1" aria-label="矩形宽度"></label><label>高 <input id="mosaicBoxH" type="number" min="1" aria-label="矩形高度"></label></div></section>
       </details>
-      <section id="mosaicReview"><small id="mosaicReviewInfo">点击右侧片段检查区域</small><div id="mosaicCandidates"></div><div class="mosaic-review-actions"><button id="mosaicAdjustToggle">调整区域</button><button id="mosaicPrevEvent">上一段</button><button id="mosaicNextEvent">下一段</button><button id="mosaicConfirm" disabled>采用此区域</button><button id="mosaicConfirmNext" disabled>采用并下一段</button></div></section>
+      <section id="mosaicReview"><small id="mosaicReviewInfo">点击右侧片段检查区域</small><div id="mosaicCandidates"></div><div class="mosaic-review-actions"><button id="mosaicAdjustToggle">调整区域</button><button id="mosaicPrevEvent">上一段</button><button id="mosaicNextEvent">下一段</button><button id="mosaicConfirm" disabled>采用此区域</button><button id="mosaicTrack" hidden>跟踪预览</button><button id="mosaicConfirmNext" disabled>采用并下一段</button></div></section>
 
 
     </main>
@@ -303,6 +305,6 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 
     </aside>
   </div>
-  <footer class="mosaic-footer">先自动查找时间段和区域，再检查采用。框仅对应参考帧，动态跟踪和导出后续接入。</footer>
+  <footer class="mosaic-footer">先自动查找时间段和区域，再检查采用。框仅对应参考帧，可对已采用区域生成短片段跟踪预览，完整导出后续接入。</footer>
 </dialog>
 <script src="app.js"></script><script src="cutting.js"></script><script src="mosaic.js"></script><script src="helper.js"></script></body></html>

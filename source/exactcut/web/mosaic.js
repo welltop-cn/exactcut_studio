@@ -3,6 +3,7 @@
   const dialog=$('mosaicDialog'), video=$('mosaicSource'), image=$('mosaicFrame'), overlay=$('mosaicOverlay');
   let context=null, epoch=0, token=0, wanted=0, ready=-1, candidates=[], selected=null, targets=[], editing=null;
   let loading=false, frameLoading=false, drawing=false, pointer=null, frameUrl=null, controller=null, timer;
+  let trackToken=0;
   let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
   const base=()=>`/api/batches/${context.batch}/mosaics/${context.session.id}`;
   const meta=()=>context.session.metadata;
@@ -48,6 +49,7 @@
     $('mosaicDraw').disabled=!accurate||loading||!inRange();$('mosaicDraw').textContent=drawing?'在画面拖出矩形':'手动框选';
     $('mosaicConfirm').disabled=!accurate||!validBox(c)||!inRange()||loading;
     $('mosaicConfirm').textContent=editing===null?'采用此区域':'保存调整';
+    $('mosaicTrack').hidden=!context.session.capabilities?.tracking||editing===null||targets[editing]?.adopted===false;
     $('mosaicBoxFields').hidden=!c;
     $('mosaicReview').hidden=false;
     $('mosaicConfirmNext').disabled=$('mosaicConfirm').disabled||!scanEvent;
@@ -298,6 +300,29 @@
     const remove=e.target.closest('[data-target-remove]'),view=e.target.closest('[data-target-view]');
     if(remove){const t=targets[Number(remove.dataset.targetRemove)];if(t.adopted===false&&activeCount()>=8){paint();status('最多采用 8 个区域，请先取消一个。',true);return;}t.adopted=t.adopted===false;if(save()){paint();status(t.adopted?'已恢复采用，保留原来的区域调整。':'已取消采用；框和时间已保留，可再次勾选。');}return;}
     if(view)viewTarget(Number(view.dataset.targetView));
+  };
+  $('mosaicTrackClose').onclick=()=>$('mosaicTrackDialog').close();
+  $('mosaicTrackDialog').addEventListener('close',()=>{trackToken++;$('mosaicTrackVideo').pause();$('mosaicTrackVideo').removeAttribute('src');$('mosaicTrackVideo').load();});
+  $('mosaicTrack').onclick=async()=>{
+    const saved=targets[editing],c=selectedBox();if(!saved||saved.adopted===false)return;
+    try{const r=range();if(!c||['x','y','w','h'].some(k=>c[k]!==saved[k])||r.start!==saved.start||r.end!==saved.end)throw Error('请先保存区域调整，再开始跟踪。');}catch(e){status(e.message,true);return;}
+    const request=++trackToken,version=epoch,endpoint=base(),valid=()=>active(version)&&request===trackToken&&$('mosaicTrackDialog').open;
+    $('mosaicTrackVideo').hidden=true;$('mosaicTrackStatus').textContent='SAM 2 正在跟踪当前区域。首次加载模型可能需要稍等。';$('mosaicTrackDialog').showModal();
+    try{
+      const target=Object.fromEntries(['start','end','seed_frame','x','y','w','h'].map(k=>[k,saved[k]]));
+      let job=await api(endpoint+'/track',{target,reset_at:context.session.reset_at||''});
+      while(valid()&&job.status==='running'){
+        $('mosaicTrackStatus').textContent=job.progress||'正在跟踪并生成预览…';
+        await new Promise(r=>setTimeout(r,1200));if(!valid())return;
+        job=await api(endpoint+'/track/'+job.id);
+      }
+      if(!valid())return;
+      if(job.status!=='completed')throw Error(job.error||'跟踪未完成，请重试。');
+      const warnings=job.result.warnings||[];
+      const empty=(job.result.frames||[]).filter(f=>f.box===null).length;
+      $('mosaicTrackStatus').textContent=`${clock(target.start)}–${clock(target.end-1)} · 跟踪耗时 ${job.result.elapsed_seconds} 秒。`+(empty?` 跟踪不稳定：${empty} 帧未找到目标，预览已整帧遮挡。请返回调整区域或参考帧。`:warnings.length?` ${warnings.length} 帧需检查：`+warnings.slice(0,5).map(w=>clock(w.frame)+' '+w.reason).join('；'):' 请播放检查遮挡是否准确。');
+      $('mosaicTrackVideo').src=appUrl(endpoint+'/track/'+job.id+'/preview?v='+encodeURIComponent(job.completed_at||''));$('mosaicTrackVideo').hidden=false;
+    }catch(e){if(valid())$('mosaicTrackStatus').textContent=e.message;}
   };
   $('mosaicClear').onclick=()=>{if(window.confirm('取消全部采用？区域调整会保留，可重新勾选。')){targets.forEach(t=>t.adopted=false);if(save())paint();}};
   $('mosaicDraw').onclick=()=>{if($('mosaicDraw').disabled)return;drawing=!drawing;paint();if(drawing)status('在画面内拖出矩形；也可用像素输入框微调。');};

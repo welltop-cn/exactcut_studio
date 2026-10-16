@@ -24,7 +24,8 @@ def read_session(bid,sid):
 
 
 def get_session(bid,sid):
-    return {**read_session(bid,sid),'capabilities':{'region_recognition':cutting_scan.enabled()}}
+    from . import mosaic_tracking
+    return {**read_session(bid,sid),'capabilities':{'region_recognition':cutting_scan.enabled(),'tracking':mosaic_tracking.enabled()}}
 
 
 def open_session(bid,rid,sha):
