@@ -10,10 +10,11 @@ from .preview import make_preview
 from .util import file_sha256, read_json, write_json_atomic, now_iso
 
 
-def prepare(batch, session, job):
+def prepare(batch, session, job, *, source=None):
     """Create a complete immutable pair before changing any current pointer."""
     from . import storage
-    storage.require_space(batch, max(256 * 1024**2, (cutting.session_path(batch.name, session['id']) / (job['id'] + '.mp4')).stat().st_size * 3))
+    source = Path(source) if source is not None else cutting.session_path(batch.name, session['id']) / (job['id'] + '.mp4')
+    storage.require_space(batch, max(256 * 1024**2, source.stat().st_size * 3))
     directory = batch / 'production/edits' / session['request_id'] / job['id']
     master = directory / 'master' / session['source_filename']
     preview = directory / 'preview' / session['source_filename']
@@ -24,7 +25,6 @@ def prepare(batch, session, job):
             raise cutting.CutError('编辑后视频校验失败，原成片保留')
     else:
         master.parent.mkdir(parents=True, exist_ok=True)
-        source = cutting.session_path(batch.name, session['id']) / (job['id'] + '.mp4')
         if file_sha256(source) != job['output_sha256']:
             raise cutting.CutError('剪切结果已变化，请重新生成')
         temporary = master.with_suffix('.partial.mp4')
@@ -55,7 +55,7 @@ def replacement_record(previous, session, job, master, preview, pair):
                   edited_media={'master': str(master), 'preview': str(preview), 'session_id': session['id'],
                                 'job_id': job['id'], 'source_sha256': session['source_sha256'], 'replaced_at': now_iso()},
                   qc={'allowed': True, 'expected_duration_ms': duration, 'actual_duration_ms': duration,
-                      'errors': [], 'method': 'frame-cut-validated'})
+                      'errors': [], 'method': job.get('validation_method', 'frame-cut-validated')})
     if pair.get('original_oss'): record['original_oss'] = pair['original_oss']
     return record
 
@@ -109,33 +109,7 @@ def run(batch, session, job, guard, lease):
     from . import workflow as w
     try:
         master, preview, pair = prepare(batch, session, job)
-        rid = session['request_id']
-        # Guard excludes delivery admission and legacy execution. Managed CAS also
-        # fences edits/archival/current promotion without holding a lock on I/O.
-        if m.managed(batch):
-            with m.locked(batch):
-                cutting_access.require_editable(batch, rid, source_sha=session['source_sha256'])
-                state = m._read(batch); asset = state['assets'][rid]
-                old_id = asset['current_version']; old = state['versions'][old_id]
-                vid = uuid.uuid4().hex
-                version = copy.deepcopy(old)
-                for key in ('child_id', 'execution', 'upload_job_id', 'legacy'): version.pop(key, None)
-                version.update(version_id=vid, status='current', master_path=str(master), preview_path=str(preview),
-                               record=replacement_record(old['record'], session, job, master, preview, pair),
-                               source_version_id=old_id, committed_at=now_iso())
-                old['status'] = 'history'; asset['history'].append(old_id)
-                state['versions'][vid] = version; asset['current_version'] = vid
-                state['revision'] += 1; m._write(batch, state)
-        else:
-            cutting_access.require_editable(batch, rid, source_sha=session['source_sha256'])
-            with result_store.locked(batch / 'production', rid) as file:
-                previous = read_json(file) if file.exists() else result_store.read(batch / 'production')['requests'][rid]
-                if previous.get('output_sha256') != session['source_sha256']:
-                    raise cutting.CutError('当前成片已变化，未替换', 409)
-                # A private snapshot preserves the old record/preview references.
-                backup = master.parent.parent / 'previous.json'
-                if not backup.exists(): write_json_atomic(backup, previous)
-                write_json_atomic(file, replacement_record(previous, session, job, master, preview, pair))
+        commit(batch, session, job, master, preview, pair)
         result = {'status': 'completed', 'completed_at': now_iso(), 'storage': 'oss' if preview_oss.enabled() else 'local'}
     except Exception:
         # Reconcile a lost acknowledgement after the atomic current commit.
@@ -169,3 +143,34 @@ def recover(batch_id, sid):
                 update_job(batch_id, sid, job['id'], result)
         except cutting.CutError:
             pass
+
+
+def commit(batch, session, job, master, preview, pair):
+    from . import workflow as w
+    rid = session['request_id']
+    # Guard excludes delivery admission and legacy execution. Managed CAS also
+    # fences edits/archival/current promotion without holding a lock on I/O.
+    if m.managed(batch):
+        with m.locked(batch):
+            cutting_access.require_editable(batch, rid, source_sha=session['source_sha256'])
+            state = m._read(batch); asset = state['assets'][rid]
+            old_id = asset['current_version']; old = state['versions'][old_id]
+            vid = uuid.uuid4().hex
+            version = copy.deepcopy(old)
+            for key in ('child_id', 'execution', 'upload_job_id', 'legacy'): version.pop(key, None)
+            version.update(version_id=vid, status='current', master_path=str(master), preview_path=str(preview),
+                           record=replacement_record(old['record'], session, job, master, preview, pair),
+                           source_version_id=old_id, committed_at=now_iso())
+            old['status'] = 'history'; asset['history'].append(old_id)
+            state['versions'][vid] = version; asset['current_version'] = vid
+            state['revision'] += 1; m._write(batch, state)
+    else:
+        cutting_access.require_editable(batch, rid, source_sha=session['source_sha256'])
+        with result_store.locked(batch / 'production', rid) as file:
+            previous = read_json(file) if file.exists() else result_store.read(batch / 'production')['requests'][rid]
+            if previous.get('output_sha256') != session['source_sha256']:
+                raise cutting.CutError('当前成片已变化，未替换', 409)
+            # A private snapshot preserves the old record/preview references.
+            backup = master.parent.parent / 'previous.json'
+            if not backup.exists(): write_json_atomic(backup, previous)
+            write_json_atomic(file, replacement_record(previous, session, job, master, preview, pair))

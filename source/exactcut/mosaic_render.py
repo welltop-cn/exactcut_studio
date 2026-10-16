@@ -91,14 +91,20 @@ def state(bid,sid,jid):
     with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
         job=recover(path)
         if not job:raise cutting.CutError('完整视频任务不存在',404)
-        mosaic_locate.current(bid,sid,job)
+        from . import mosaic_replace
+        job=mosaic_replace.recover(bid,sid,job)
+        session=sessions.read_session(bid,sid);cutting.require_reset(session,job['reset_at'])
+        if not mosaic_replace.is_current(bid,session,job):mosaic_locate.current(bid,sid,job)
         return job
 
 
 def latest(bid,sid):
     path=sessions.session_path(bid,sid)/'render-latest.json'
     if not path.is_file():return {'job':None}
-    return {'job':state(bid,sid,read_json(path)['id'])}
+    jid=read_json(path)['id']
+    job=read_json(path.parent/f'render-{jid}.json')
+    if job.get('reset_at','')!=sessions.read_session(bid,sid).get('reset_at',''):return {'job':None}
+    return {'job':state(bid,sid,jid)}
 
 
 def video_file(bid,sid,jid):
@@ -109,15 +115,18 @@ def video_file(bid,sid,jid):
     return output
 
 
-def start(bid,sid,targets,reset_at):
+def start(bid,sid,targets,reset_at,ranges=None):
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
-        cutting.require_reset(session,reset_at)
+        session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
         cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
-        targets=validate_targets(session['metadata'],targets)
-        if not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
+        if ranges is not None and not isinstance(ranges,list):raise cutting.CutError('删除范围格式无效')
+        ranges=cutting.normalize_ranges(ranges,session['metadata']['frame_count']) if ranges else []
+        if targets!=[]:targets=validate_targets(session['metadata'],targets)
+        if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
+        if targets and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'config':cfg,'engine':1,'fallback':'skip_region'})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':2,'fallback':'skip_region'})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)
@@ -128,7 +137,7 @@ def start(bid,sid,targets,reset_at):
                 for lock,shared in [(cutting.lock_root()/'compute.lock',False),(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
                     leases.append(cutting.lock_file(lock,shared=shared))
                 job={'schema_version':1,'id':jid,'status':'running','stage':'tracking','source_sha256':session['source_sha256'],'reset_at':reset_at,
-                     'targets':targets,'created_at':now_iso(),'progress':f'准备处理 {len(targets)} 个已采用区域','completed_regions':0,'total_regions':len(targets)}
+                     'targets':targets,'ranges':ranges,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
                 write_json_atomic(path,job);write_json_atomic(path.parent/'render-latest.json',{'id':jid})
             except Exception:
                 for lease in reversed(leases):lease.close()
@@ -171,6 +180,7 @@ def _work(bid,sid,path,job,cfg,leases):
         storage.require_space(source.parent,source.stat().st_size*3+2*1024**3)
         directory.mkdir(exist_ok=True);tracks=[];warnings=[];skipped=set()
         for index,target in enumerate(job['targets']):
+            mosaic_locate.current(bid,sid,job)
             update(progress=f"正在跟踪第 {index+1} / {len(job['targets'])} 个区域",completed_regions=index)
             try:
                 track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}')
@@ -185,13 +195,26 @@ def _work(bid,sid,path,job,cfg,leases):
                 warnings.append({'region':index+1,'frame':target['start'],'reason':'跟踪未完成，已跳过该区域'})
             tracks.append(track)
         update(stage='composing',completed_regions=len(tracks))
-        result=compose(source,directory/'mosaic.mp4',session['metadata'],tracks,lambda text:update(progress=text))
+        mosaic_locate.current(bid,sid,job)
+        result=process_video(source,directory/'mosaic.mp4',session['metadata'],tracks,job.get('ranges',[]),lambda text:update(progress=text))
         with cutting_access.gate(workflow.folder(bid),session['request_id']):
             mosaic_locate.current(bid,sid,job)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
             result.update(skipped_frames=len(skipped),warnings=warnings,region_count=len(tracks),notice='请预览检查遮挡效果；无告警不代表没有漏遮。')
-            update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='完整打码视频已生成，可预览和下载')
+            update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='处理后视频已生成，可预览和下载')
     except Exception as exc:
         update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '完整视频生成失败，请重试；原片保留')
     finally:
         for lease in reversed(leases):lease.close()
+
+
+def process_video(source,output,meta,tracks,ranges,progress=lambda text:None):
+    output=Path(output)
+    if not ranges:return compose(source,output,meta,tracks,progress)
+    intermediate=output.with_name('masked-source.mp4')
+    if tracks:compose(source,intermediate,meta,tracks,progress)
+    progress('正在删除所选片段并合成视频…')
+    actual=cutting.render_video(intermediate if tracks else source,output,ranges,meta)
+    intermediate.unlink(missing_ok=True)
+    digest=actual.pop('sha256')
+    return {'metadata':actual,'sha256':digest,'bytes':output.stat().st_size}

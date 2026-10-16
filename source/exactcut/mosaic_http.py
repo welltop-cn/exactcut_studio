@@ -23,10 +23,11 @@ def handle(handler,bid,suffix,method):
         with cutting.batch_lease(bid):
             if not handler.can_access(bid):raise cutting.CutError('项目不存在或无权访问',404)
             if method=='POST' and suffix=='open':return handler.respond(200,sessions.open_session(bid,data.get('request_id'),data.get('source_sha256')))
-            match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|scan|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/preview)?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
+            match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|scan|discard|replace|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/preview)?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
             if not match:raise cutting.CutError('打码入口不存在',404)
             sid,action=match.groups();session=sessions.read_session(bid,sid)
-            cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
+            if action!='replace' and not (method=='GET' and action and re.fullmatch(r'render/[0-9a-f]{32}',action)):
+                cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
             if method=='GET':
                 if action is None:return handler.respond(200,sessions.get_session(bid,sid))
                 if action=='render':return handler.respond(200,mosaic_render.latest(bid,sid))
@@ -43,7 +44,11 @@ def handle(handler,bid,suffix,method):
                 if action.startswith('frame/'):return handler.respond(200,sessions.frame_file(bid,sid,int(action[6:])).read_bytes(),'image/jpeg')
                 if action.startswith('locate/'):return handler.respond(200,mosaic_locate.state(bid,sid,action[7:]))
             if method=='POST' and action=='render':
-                return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at','')))
+                return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at',''),data.get('ranges')))
+            if method=='POST' and action=='replace':
+                from . import mosaic_replace
+                return handler.respond(202,mosaic_replace.start(bid,sid,data.get('job_id'),data.get('reset_at','')))
+            if method=='POST' and action=='discard':return handler.respond(200,sessions.discard(bid,sid,data.get('reset_at','')))
             if method=='POST' and action=='track':
                 return handler.respond(202,mosaic_tracking.start(bid,sid,data.get('target'),data.get('reset_at','')))
             if method=='POST' and action=='scan':

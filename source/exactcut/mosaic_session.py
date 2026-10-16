@@ -90,3 +90,23 @@ def frame_file(batch_id, session_id, index):
             for old in sorted(cache.glob('*.jpg'), key=lambda p: p.stat().st_mtime, reverse=True)[128:]:
                 old.unlink(missing_ok=True)
             return output
+
+
+def discard(bid,sid,reset_at):
+    """Fence old drafts/results while retaining completed source discovery."""
+    from . import mosaic_scan, cutting_scan
+    session=read_session(bid,sid);root=session_path(bid,sid)
+    with cutting_access.gate(workflow.folder(bid),session['request_id']):
+        cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
+        with lock_file(root/'render-state.lock',blocking=True), lock_file(root/'scan-state.lock',blocking=True):
+            session=read_session(bid,sid);cutting.require_reset(session,reset_at)
+            scan=mosaic_scan.recover(root/'scan.json')
+            if scan and scan['status']=='running':raise CutError('正在识别，请识别完成后再放弃',409)
+            previous_identity=mosaic_scan.identity(session,cutting_scan.settings())
+            session['reset_at']=now_iso()
+            write_json_atomic(root/'session.json',session)
+            if scan:
+                scan['reset_at']=session['reset_at']
+                if scan.get('identity')==previous_identity:scan['identity']=mosaic_scan.identity(session,cutting_scan.settings())
+                write_json_atomic(root/'scan.json',scan)
+    return get_session(bid,sid)

@@ -80,6 +80,7 @@ def test_batch_http_restore_download_and_immutable_source(ready,monkeypatch):
         assert call(app,'POST',base,body,auth=False)[0]==401
         assert call(app,'POST',base,body,csrf=False)[0]==403
         assert call(app,'POST',base,{**body,'targets':[]})[0]==400
+        assert call(app,'POST',base,{**body,'ranges':False})[0]==400
         assert call(app,'POST',base,{**body,'targets':[target]*9})[0]==400
         code,job=call(app,'POST',base,body);assert code==202
         finished=wait_job(bid,sid,job['id']);assert finished['status']=='completed',finished
@@ -94,3 +95,94 @@ def test_batch_http_restore_download_and_immutable_source(ready,monkeypatch):
         session['reset_at']='new';write_json_atomic(sessions.session_path(bid,sid)/'session.json',session)
         assert call(app,'GET',base+'/'+job['id']+'/video')[0]==409
     finally:app.shutdown();app.server_close()
+
+
+def test_mixed_deletion_and_mosaic_and_discard_retains_discovery(ready,monkeypatch):
+    from exactcut import mosaic_scan, cutting_scan, workflow
+    from exactcut.util import read_json
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
+    monkeypatch.setattr(tracking,'enabled',lambda:True)
+    monkeypatch.setattr(tracking,'settings',lambda:{'enabled':True})
+    monkeypatch.setattr(tracking,'run_tracker',lambda src,directory,meta,target,cfg:make_track(directory,target,meta)['result'])
+    target={'start':10,'end':20,'seed_frame':15,'x':80,'y':0,'w':20,'h':20}
+    app=serve();base=f'/api/batches/{bid}/mosaics/{sid}'
+    try:
+        code,job=call(app,'POST',base+'/render',{'targets':[target],'ranges':[[0,5],[12,16]],'reset_at':''});assert code==202
+        done=wait_job(bid,sid,job['id']);assert done['status']=='completed',done
+        assert done['result']['metadata']['frame_count']==session['metadata']['frame_count']-9
+        output=render.video_file(bid,sid,job['id'])
+        numbers=frame_numbers(output)
+        assert numbers[:7]==list(range(5,12)) and numbers[7]==16
+        scan={'status':'completed','identity':mosaic_scan.identity(session,cutting_scan.settings()),'source_sha256':sha,'reset_at':'','events':[]}
+        write_json_atomic(sessions.session_path(bid,sid)/'scan.json',scan)
+        code,reset=call(app,'POST',base+'/discard',{'reset_at':''});assert code==200
+        assert reset['reset_at']
+        assert call(app,'GET',base+'/render')[1]=={'job':None}
+        assert call(app,'GET',base+'/render/'+job['id']+'/video')[0]==409
+        assert call(app,'GET',base+'/scan')[1]['report']['status']=='completed'
+        assert call(app,'POST',base+'/render',{'targets':[target],'reset_at':''})[0]==409
+        assert call(app,'POST',base+'/discard',{'reset_at':''})[0]==409
+        assert file_sha256(source)==sha
+        code,job2=call(app,'POST',base+'/render',{'targets':[],'ranges':[[5,10]],'reset_at':reset['reset_at']});assert code==202
+        done2=wait_job(bid,sid,job2['id']);assert done2['status']=='completed',done2
+        assert done2['result']['metadata']['frame_count']==session['metadata']['frame_count']-5
+    finally:app.shutdown();app.server_close()
+
+
+@pytest.mark.parametrize('managed',[False,True])
+def test_combined_result_replaces_current_preserves_source_and_reopens_new_round(ready,monkeypatch,managed):
+    from exactcut import workflow, material_versions, preview_oss
+    bid,rid,sha,source=ready
+    if managed:material_versions.enroll(workflow.folder(bid))
+    session=sessions.open_session(bid,rid,sha);sid=session['id']
+    job=render.start(bid,sid,[],'',[[10,20]]);done=wait_job(bid,sid,job['id'])
+    assert done['status']=='completed'
+    app=serve();base=f'/api/batches/{bid}/mosaics/{sid}'
+    try:
+        assert call(app,'POST',base+'/replace',{'job_id':job['id'],'reset_at':''},csrf=False)[0]==403
+        code,replacement=call(app,'POST',base+'/replace',{'job_id':job['id'],'reset_at':''});assert code==202
+        for _ in range(400):
+            code,replacement=call(app,'GET',base+'/render/'+job['id'])
+            assert code==200,replacement
+            if replacement.get('replacement',{}).get('status')!='running':break
+            time.sleep(.025)
+        assert replacement['replacement']['status']=='completed',replacement
+        current,record=workflow.preview_file(bid,rid)
+        assert record['output_sha256']==done['result']['sha256']==file_sha256(current)
+        assert file_sha256(source)==sha
+        assert call(app,'POST',base+'/replace',{'job_id':job['id'],'reset_at':''})[0]==202
+        assert call(app,'POST',base+'/discard',{'reset_at':''})[0]==409
+        fresh=sessions.open_session(bid,rid,record['output_sha256'])
+        assert fresh['id']!=sid and fresh['metadata']['frame_count']==80
+        assert render.latest(bid,fresh['id'])=={'job':None}
+    finally:app.shutdown();app.server_close()
+
+
+def test_discard_running_job_fences_result_and_does_not_change_project(ready,monkeypatch):
+    import threading
+    from exactcut import workflow
+    from exactcut.util import read_json
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
+    entered,finish=threading.Event(),threading.Event()
+    monkeypatch.setattr(tracking,'enabled',lambda:True)
+    monkeypatch.setattr(tracking,'settings',lambda:{'enabled':True})
+    def delayed(src,directory,meta,target,cfg):
+        entered.set();assert finish.wait(5)
+        return make_track(directory,target,meta)['result']
+    monkeypatch.setattr(tracking,'run_tracker',delayed)
+    target={'start':10,'end':20,'seed_frame':15,'x':80,'y':0,'w':20,'h':20}
+    job=render.start(bid,sid,[target],'')
+    try:
+        assert entered.wait(2)
+        reset=sessions.discard(bid,sid,'')
+        assert reset['reset_at']
+        assert render.latest(bid,sid)=={'job':None}
+    finally:finish.set()
+    path=sessions.session_path(bid,sid)/f"render-{job['id']}.json"
+    for _ in range(100):
+        if read_json(path)['status']!='running':break
+        time.sleep(.025)
+    assert read_json(path)['status']=='failed'
+    from exactcut import mosaic_replace
+    with pytest.raises(cutting.CutError):mosaic_replace.start(bid,sid,job['id'],'')
+    assert workflow.preview_file(bid,rid)[0]==source and file_sha256(source)==sha
