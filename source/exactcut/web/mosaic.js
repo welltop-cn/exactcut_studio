@@ -55,14 +55,15 @@
       message=events.length?`发现 ${events.length} 个疑似时间段，${located} 段已定位，${events.length-located} 段需复核。点击一段检查。`:'本次整段抽样未发现疑似时间段，仍请检查短闪帧。可用下方手工补充。';
       if(scanReport.warnings?.length)message+='\n'+scanReport.warnings.join('；');
     }
+    if(scanLoading&&events.length)message+=`\n已发现 ${events.length} 个疑似时间段，${events.filter(e=>e.status==='localized').length} 段已定位，可先点击检查。`;
     $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
-    $('mosaicScanEvents').innerHTML=events.map(e=>`<button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong><small class="${e.status==='needs_review'?'needs-review':''}">${e.status==='localized'?`${e.candidates.length} 个候选区域 · 已定位`:'需复核 · 尚未定位区域'}</small><small>${esc(e.reason)}</small></button>`).join('');
+    $('mosaicScanEvents').innerHTML=events.map(e=>`<button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong><small class="${e.status==='needs_review'?'needs-review':''}">${e.status==='localized'?`${e.candidates.length} 个候选区域 · 已定位`:scanReport?.status==='running'?'待定位 · 可先检查时间段':'需复核 · 尚未定位区域'}</small><small>${esc(e.reason)}</small></button>`).join('');
     $('mosaicScanMarkers').innerHTML=events.map(e=>`<button data-scan-marker="${esc(e.id)}" class="${e.status==='needs_review'?'needs-review':''}" aria-label="查看 ${esc(e.label)} ${clock(e.start)}" title="${clock(e.start)}–${clock(e.end-1)} ${esc(e.label)}" style="left:${100*e.start/meta().frame_count}%;width:${100*(e.end-e.start)/meta().frame_count}%"></button>`).join('');
   }
   function checkedReport(report){
     if(!report)return null;
     if(!['running','completed','failed'].includes(report.status))throw Error('整段识别任务状态无效，请重新读取。');
-    if(report.status!=='completed')return report;
+    if(report.status!=='completed'&&!report.events?.length)return report;
     if(report.source_sha256!==context.session.source_sha256||report.reset_at!==(context.session.reset_at||'')||!Array.isArray(report.events)||report.events.length>40)throw Error('整段识别结果已过期，请重新打开。');
     const ids=new Set();
     for(const e of report.events){

@@ -78,12 +78,17 @@ def _work(bid,sid,path,job,cfg,key,leases):
         deadline=time.monotonic()+TIMEOUT
         session=locate.current(bid,sid,job);source=path.parent/'source.mp4'
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败，未进行识别')
-        result=scan.detect(source,session['metadata'],cfg,'standard',key,lambda message:update(progress=message),leases[-1],deadline=deadline)
+        result=scan.detect(source,session['metadata'],{**cfg,'max_refine_events':0},'standard',key,lambda message:update(progress=message),leases[-1],deadline=deadline)
+        locate.current(bid,sid,job)
         events=[];warnings=list(result['warnings'])
         for i,risk in enumerate(result['risk_events']):
             event={'id':str(i),'start':risk['start_frame'],'end':risk['end_frame'],'label':risk['category'],
                    'reason':risk['evidence_zh'],'status':'needs_review','candidates':[],
                    'review_note':risk.get('review_note','')}
+            event['review_note']='等待自动定位；可先检查时间段。'
+            events.append(event)
+        update(events=events,warnings=warnings,progress=f'已发现 {len(events)} 个疑似时间段，正在补充区域')
+        for i,event in enumerate(events):
             notes=[]
             if i>=MAX_LOCALIZED_EVENTS:notes.append('超出本次自动定位上限，保留时间段供人工复核。')
             else:
@@ -103,7 +108,9 @@ def _work(bid,sid,path,job,cfg,key,leases):
                         notes.append('代表帧定位失败，需人工复核。')
                 if not event['candidates']:notes.append('未获得有效区域框；时间段仍保留，不能视作无风险。')
             if event['status']=='needs_review' or any('失败' in n for n in notes):warnings.append(f'第 {i+1} 个疑似区间区域定位未完整确认')
-            event['review_note']=' '.join(filter(None,[event['review_note'],*notes]));events.append(event)
+            event['review_note']=' '.join(notes)
+            locate.current(bid,sid,job)
+            update(events=events,warnings=warnings)
         with cutting_access.gate(workflow.folder(bid),session['request_id']):
             locate.current(bid,sid,job)
             if identity(session,scan.settings())!=job['identity']:raise cutting.CutError('识别配置已变化，请重新识别',409)

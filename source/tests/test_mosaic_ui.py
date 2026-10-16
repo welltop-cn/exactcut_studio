@@ -289,3 +289,21 @@ def test_preparing_failure_can_retry_and_does_not_reopen_closed_dialog(editor):
     assert editor.evaluate("calls.filter(c=>c.url.endsWith('/open')).length")==2
     editor.evaluate('finishOpen()')
     editor.locator('#mosaicWorkspace').wait_for(state='visible')
+
+
+def test_running_scan_shows_clickable_partial_results(editor):
+    scan_result(editor)
+    editor.evaluate('''() => {
+      const original=api;
+      window.api=async(url,body)=>url.endsWith('/scan')
+        ? {enabled:true,report:{...scanJob,status:'running',progress:'正在定位第 2 个区间'}}
+        : original(url,body);
+    }''')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.locator('[data-scan-event="e1"]').wait_for()
+    assert '可先点击检查' in editor.locator('#mosaicScanStatus').inner_text()
+    assert editor.locator('#mosaicScan').is_disabled()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.locator('#mosaicOverlay').wait_for(state='visible')
+    editor.locator('#mosaicConfirm').click()
+    assert editor.locator('[data-target-view]').count()==1

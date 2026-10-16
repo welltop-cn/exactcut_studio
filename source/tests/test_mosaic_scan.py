@@ -163,3 +163,42 @@ def test_expired_coarse_deadline_skips_proxy(tmp_path,monkeypatch):
     with pytest.raises(cutting.CutError):
         cutting_scan.detect(tmp_path/'source.mp4',META,{'model':'fixture','request_timeout_ms':1000},'standard','fixture',lambda _:None,SimpleNamespace(close=lambda:closed.append(True)),deadline=time.monotonic()-1)
     assert not calls and closed
+
+
+def test_coarse_visible_before_localization_finishes(configured,monkeypatch):
+    import threading
+    m=module();bid,sid=setup(configured);entered=threading.Event();finish=threading.Event();configs=[]
+    def detect(*args,**kwargs):
+        configs.append(args[2]);return coarse(*args,**kwargs)
+    def locate(*args,**kwargs):
+        entered.set();assert finish.wait(5);return []
+    monkeypatch.setattr(cutting_scan,'detect',detect)
+    monkeypatch.setattr(mosaic_locate,'detect',locate)
+    m.start(bid,sid,'')
+    try:
+        assert entered.wait(2)
+        job=m.state(bid,sid)['report']
+        assert job['status']=='running' and len(job['events'])==10
+        assert configs[0]['max_refine_events']==0
+    finally:finish.set()
+    assert poll(m,bid,sid)['status']=='completed'
+
+
+def test_each_localized_event_is_published_before_next_finishes(configured,monkeypatch):
+    import threading
+    m=module();bid,sid=setup(configured);entered=threading.Event();finish=threading.Event();calls=[]
+    monkeypatch.setattr(cutting_scan,'detect',coarse)
+    def locate(*args,**kwargs):
+        calls.append(True)
+        if len(calls)==2:entered.set();assert finish.wait(5)
+        return [{'id':'0','box_2d':[0,0,100,100],'x':0,'y':0,'w':10,'h':10,'label':'region','reason':'visible'}]
+    monkeypatch.setattr(mosaic_locate,'detect',locate)
+    m.start(bid,sid,'')
+    try:
+        assert entered.wait(2)
+        job=m.state(bid,sid)['report']
+        assert job['status']=='running' and len(job['events'])==10
+        assert job['events'][0]['status']=='localized'
+        assert job['events'][1]['status']=='needs_review'
+    finally:finish.set()
+    poll(m,bid,sid)
