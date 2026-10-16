@@ -290,7 +290,6 @@
   }
   $('cutClose').onclick=()=>{if(!$('cutReplaceConfirm').hidden&&busy)return;dialog.close();};
   dialog.addEventListener('close',()=>{epoch++;scanToken++;clearTimeout(seekTimer);frameController?.abort();context=null;video.pause();output.pause();for(const v of [video,output]){v.removeAttribute('src');v.load();}if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=null;image.removeAttribute('src');frames.clear();});
-  $('cutMosaic').onclick=()=>notify('打码功能暂未开放，先使用删除片段。');
   for(const which of ['start','end']) {
     const input=$(which==='start'?'cutStart':'cutEnd');
     input.onchange=guarded(()=>endpoint(which,parseTimecode(input.value)+1));

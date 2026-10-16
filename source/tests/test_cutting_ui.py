@@ -55,12 +55,11 @@ def select(page, start, end):
     page.locator('#cutEnd').dispatch_event('change')
 
 
-def test_mosaic_only_toast(editor):
+def test_cutting_has_no_mosaic_controls(editor):
     editor.locator('#cutManual').click()
-    editor.get_by_role('button', name='添加打码片段', exact=True).click()
-    assert '暂未开放' in editor.locator('#cutToast').inner_text()
-    assert editor.locator('#cutRanges li').count() == 0
-    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/render'))")
+    assert editor.locator('#cutDialog #cutMosaic').count() == 0
+    assert '打码' not in editor.locator('#cutDialog').inner_text()
+    assert not editor.evaluate("calls.some(c=>c.url.includes('/mosaics/'))")
 
 
 def test_independent_endpoints_and_inclusive_render(editor):

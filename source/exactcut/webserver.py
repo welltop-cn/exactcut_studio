@@ -1051,7 +1051,7 @@ class Handler(BaseHTTPRequestHandler):
         if name == 'index.html':
             body = body.replace(b'<script src="app.js">', b'<script src="diagnostics.js"></script><script src="app.js">')
         if name == 'index.html':
-            for script in ('app.js', 'helper.js', 'diagnostics.js', 'cutting.js'):
+            for script in ('app.js', 'helper.js', 'diagnostics.js', 'cutting.js', 'mosaic.js'):
                 version = hashlib.sha256((CODE_ROOT / 'exactcut/web' / script).read_bytes()).hexdigest()[:20]
                 body = body.replace(f'src="{script}"'.encode(), f'src="{script}?v={version}"'.encode())
             app_version = hashlib.sha256((CODE_ROOT / 'exactcut/web/app.js').read_bytes()).hexdigest()[:20]
@@ -1205,6 +1205,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.normalize_path()
+        mosaic_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/mosaics/(.*)', self.path)
+        if mosaic_route:
+            from .mosaic_http import handle
+            return handle(self, *mosaic_route.groups(), 'GET')
         cut_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/cuts/(.*)', self.path)
         if cut_route:
             from .cutting_http import handle
@@ -1246,6 +1250,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200, self.web_page('index.html'), 'text/html; charset=utf-8')
         if self.path == '/helper.js':
             return self.script('helper.js')
+        if self.path == '/mosaic.js':
+            return self.script('mosaic.js')
         if self.path == '/cutting.js':
             return self.script('cutting.js')
         if self.path == '/app.js':
@@ -1405,6 +1411,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.normalize_path()
+        mosaic_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/mosaics/(.*)', self.path)
+        if mosaic_route:
+            from .mosaic_http import handle
+            return handle(self, *mosaic_route.groups(), 'POST')
         cut_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/cuts/(.*)', self.path)
         if cut_route:
             from .cutting_http import handle
