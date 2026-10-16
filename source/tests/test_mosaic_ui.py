@@ -60,7 +60,7 @@ def test_separate_entry_identify_confirm_and_restore(editor):
     editor.locator('[data-candidate="0"]').wait_for()
     assert editor.evaluate("calls.find(c=>c.url.endsWith('/locate')).body")=={'start':0,'end':300,'seed_frame':0,'reset_at':''}
     editor.locator('#mosaicConfirm').click()
-    assert '待跟踪' in editor.locator('#mosaicTargets').inner_text()
+    assert '已采用' in editor.locator('#mosaicTargets').inner_text()
     assert not editor.evaluate("calls.some(c=>c.url.includes('/cuts/')||c.url.endsWith('/render'))")
     editor.locator('#mosaicClose').click()
     open_editor(editor)
@@ -339,6 +339,8 @@ def test_adopted_regions_are_in_same_full_height_list(editor):
     assert editor.locator('#mosaicSaved').count()==0
     card.locator('[data-target-view]').click()
     assert editor.locator('#mosaicConfirm').inner_text()=='保存调整'
+    assert card.locator('[data-target-remove]').is_checked()
+    assert card.locator('.mosaic-target-row').bounding_box()['height']<=32
     card.locator('[data-target-remove]').click()
     assert editor.locator('[data-target-view]').count()==0
     assert '待检查' in card.inner_text()

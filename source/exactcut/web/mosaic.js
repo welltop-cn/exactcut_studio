@@ -60,13 +60,13 @@
     }
     if(scanLoading&&events.length)message+=`\n已发现 ${events.length} 个疑似时间段，${events.filter(e=>e.status==='localized').length} 段已定位，可先点击检查。`;
     $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
-    const targetRow=(t,i)=>`<div class="mosaic-target-row"><button data-target-view="${i}"><strong>已采用 · ${esc(t.label)}</strong><small>${clock(t.start)}–${clock(t.end-1)} · 点击回看 / 修改 · 待跟踪</small></button><button data-target-remove="${i}" aria-label="移除目标 ${i+1}">移除</button></div>`;
+    const targetRow=(t,i,standalone=false)=>`<div class="mosaic-target-row"><input type="checkbox" checked data-target-remove="${i}" aria-label="取消采用 ${esc(t.label)}"><button data-target-view="${i}" title="回看并修改区域"><span>${standalone?`${clock(t.start)}–${clock(t.end-1)} · `:""}已采用 · ${esc(t.label)}</span></button></div>`;
     const grouped=new Set();
     $('mosaicScanEvents').innerHTML=events.map(e=>{
       const adopted=targets.map((t,i)=>({t,i})).filter(({t})=>t.start===e.start&&t.end===e.end);
       adopted.forEach(({i})=>grouped.add(i));
-      return `<div class="mosaic-event-card ${adopted.length?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong><small>${adopted.length?`已采用 ${adopted.length} 个区域`:'待检查 · '+(e.status==='localized'?'已有候选框':'尚未定位区域')}</small><small>${esc(e.reason)}</small></button>${adopted.map(({t,i})=>targetRow(t,i)).join('')}</div>`;
-    }).join('')+targets.map((t,i)=>grouped.has(i)?'':targetRow(t,i)).join('');
+      return `<div class="mosaic-event-card ${adopted.length?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong>${adopted.length?'':`<small>待检查 · ${e.status==='localized'?'已有候选框':'尚未定位区域'}</small>`}<small>${esc(e.reason)}</small></button>${adopted.map(({t,i})=>targetRow(t,i)).join('')}</div>`;
+    }).join('')+targets.map((t,i)=>grouped.has(i)?'':targetRow(t,i,true)).join('');
     $('mosaicScanMarkers').innerHTML=events.map(e=>`<button data-scan-marker="${esc(e.id)}" class="${e.status==='needs_review'?'needs-review':''}" aria-label="查看 ${esc(e.label)} ${clock(e.start)}" title="${clock(e.start)}–${clock(e.end-1)} ${esc(e.label)}" style="left:${100*e.start/meta().frame_count}%;width:${100*(e.end-e.start)/meta().frame_count}%"></button>`).join('');
   }
   function checkedReport(report){
