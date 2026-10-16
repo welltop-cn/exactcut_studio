@@ -42,3 +42,9 @@ POST mosaics/{sid}/replace：{job_id,reset_at}，返回 job + replacement（runn
 右侧列表上方增加默认收起的“打码效果”。样式 pixel/blur/solid，强度 light/medium/heavy，范围扩大 none/small/medium/large；默认 pixel/medium/small，纯色固定黑色并隐藏强度。草稿沿用 schema_version=1，增加可选 effect 对象；旧草稿缺失时用默认值。POST render/track 可传 effect，后台校验枚举、保存任务快照并纳入任务身份。修改后已有结果保留，禁止将不同方案的旧结果替换成片。
 
 mosaic_effects 共用 FFmpeg 滤镜和遮罩扩张逻辑。方块约16/30/50源像素，模糊 sigma 8/16/28，扩张半径为工作遮罩短边的0/0.8%/1.6%/3%。SAM保存未扩张遮罩，合成时再扩张；engine=3 隔离旧的已扩张缓存。单区域预览使用原始分辨率和同一滤镜，包含参考帧之前/之后的跟踪，音频按原片时间截取。没有在用户素材上重新运行模型或覆盖成片。
+
+## 生成锁定与停止
+
+生成提交、后台运行、停止确认期间统一锁定删除/打码、取消全部、效果、重新识别、时间与区域编辑；播放、定位、查看片段及关闭仍可用。处理进度条说明“停止生成后可修改”。运行时用“停止生成”替代“放弃本次处理”，隐藏重复的查看进度入口；停止保留所有草稿，不推进 reset，不改原片。
+
+新增 POST mosaics/{sid}/stop {job_id,reset_at}，要求原有鉴权/CSRF与源版本校验。返回任务，cancel_requested=true 时仍为 running；客户端继续锁定，等待 cancelled 或任务实际完成。会话 capability render_stop=true 标识后端支持。停止请求只标记对应任务；线程范围内的取消检查终止本任务拥有的 SAM/FFmpeg 子进程组，合并遮罩逐帧检查，发布结果前再次检查。任务资源释放后才对外完成取消；停止后的同方案可重新生成，已完成结果不会被取消请求抹除。

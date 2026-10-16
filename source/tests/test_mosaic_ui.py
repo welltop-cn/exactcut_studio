@@ -28,7 +28,7 @@ def editor():
           window.currentUser={username:'fixture',features:{cutting:true}};
           window.current={id:'batch',assets:[{title:'测试',can_edit_video:true,request_id:'R1',sha256:'a'.repeat(64),preview:'/video'}]};
           window.calls=[];
-          window.session={id:'session',source_sha256:'a'.repeat(64),source_filename:'source.mp4',metadata:{frame_count:300,fps_num:30,fps_den:1,width:160,height:96},capabilities:{region_recognition:true},jobs:[]};
+          window.session={id:'session',source_sha256:'a'.repeat(64),source_filename:'source.mp4',metadata:{frame_count:300,fps_num:30,fps_den:1,width:160,height:96},capabilities:{region_recognition:true,render_stop:true},jobs:[]};
           window.findings=[{id:'0',label:'候选区域',reason:'需要人工确认',box_2d:[250,250,750,750],x:40,y:24,w:80,h:48}];
           window.api=async (url,body)=>{
             calls.push({url,body});
@@ -176,7 +176,7 @@ def scan_result(page, *, needs_review=False):
 def open_auto(page):
     page.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     page.locator('#mosaicScan').wait_for(state='visible')
-    page.wait_for_function("!document.getElementById('mosaicScan').disabled")
+    page.wait_for_function("!document.getElementById('mosaicScan').disabled || !document.getElementById('mosaicStop').hidden")
 
 
 def test_scan_finds_range_and_region_without_manual_frame_selection(editor):
@@ -694,7 +694,7 @@ def test_processing_keeps_workspace_and_shows_background_progress(editor):
     assert editor.locator('#mosaicStatus').is_hidden()
     assert '1 / 6' in editor.locator('#mosaicProcessingText').inner_text()
     assert '关闭后后台继续' in editor.locator('#mosaicProcessing').inner_text()
-    editor.locator('#mosaicBatchView').click()
+    assert editor.locator('#mosaicBatchView').is_hidden()
     assert editor.locator('#mosaicWorkspace').is_visible()
     assert editor.locator('#mosaicBatchClose').is_hidden()
     assert editor.locator('#mosaicClose').is_enabled()
@@ -716,3 +716,34 @@ def test_effect_settings_collapsed_persist_and_submit(editor):
     editor.locator('[data-target-remove]').click();editor.locator('[data-target-remove]').click()
     editor.locator('#mosaicBatchStart').click()
     assert editor.evaluate('effectBody.effect')=={'style':'solid','strength':'medium','expansion':'large'}
+
+
+def test_generation_locks_edits_until_stop_acknowledged(editor):
+    scan_result(editor)
+    editor.evaluate('''() => {
+      const old=api;window.stopped=false;
+      window.api=async(url,body)=>{
+        if(url.endsWith('/stop')){window.stopBody=body;stopped=true;return {id:'b'.repeat(32),status:'running',cancel_requested:true,targets:[]};}
+        if(url.endsWith('/render'))return {job:{id:'b'.repeat(32),status:'running',targets:[]}};
+        if(url.includes('/render/'))return stopped?new Promise(r=>window.finishStop=r):{id:'b'.repeat(32),status:'running',targets:[]};
+        if(url.endsWith('/scan')&&!body)return {enabled:true,report:scanJob};
+        return old(url,body);
+      };
+    }''')
+    open_auto(editor);editor.locator('#mosaicProcessing').wait_for()
+    assert editor.locator('[data-event-delete]').is_disabled()
+    assert editor.locator('[data-proposal]').is_disabled()
+    assert editor.locator('#mosaicClear').is_disabled()
+    assert editor.locator('#mosaicEffectStyle').is_disabled()
+    assert editor.locator('#mosaicAdjustToggle').is_disabled()
+    assert editor.locator('#mosaicDiscard').is_hidden()
+    assert editor.locator('#mosaicPlay').is_enabled()
+    editor.locator('#mosaicStop').click()
+    assert editor.locator('[data-event-delete]').is_disabled()
+    assert editor.locator('#mosaicStop').is_disabled()
+    editor.wait_for_function('!!window.finishStop')
+    editor.evaluate("finishStop({id:'b'.repeat(32),status:'cancelled',targets:[]})")
+    editor.wait_for_function("!document.querySelector('[data-event-delete]').disabled")
+    assert editor.locator('#mosaicEffectStyle').is_enabled()
+    assert editor.locator('#mosaicStop').is_hidden()
+    assert editor.evaluate('stopBody.job_id')=='b'*32

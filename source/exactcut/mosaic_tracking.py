@@ -6,7 +6,7 @@ import sys
 import threading
 from pathlib import Path
 from . import cutting, mosaic_session as sessions, mosaic_locate, cutting_access, workflow, storage
-from . import mosaic_effects as effects
+from . import mosaic_effects as effects, processing_cancel
 from .util import load_config, read_json, write_json_atomic, json_sha256, file_sha256, now_iso
 
 
@@ -122,7 +122,7 @@ def run_tracker(source,directory,meta,target,cfg):
     env=os.environ.copy()
     env['PYTHONPATH']=os.pathsep.join([str(Path(__file__).resolve().parents[1]),*cfg.get('dependency_paths',[])])
     with (directory/'worker.log').open('wb') as log:
-        result=subprocess.run([sys.executable,'-m','exactcut.mosaic_sam2',str(directory/'request.json')],env=env,stdout=log,stderr=log,timeout=900)
+        result=processing_cancel.run([sys.executable,'-m','exactcut.mosaic_sam2',str(directory/'request.json')],env=env,stdout=log,stderr=log,timeout=900)
     if result.returncode:raise cutting.CutError('SAM 2 跟踪失败，原片保留；请检查本机模型运行日志')
     result=read_json(directory/'result.json')
     checked_frames(target,result.get('frames'),result['width'],result['height'])

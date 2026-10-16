@@ -7,7 +7,7 @@ from PIL import Image, ImageChops
 from . import cutting, mosaic_session as sessions, mosaic_locate, mosaic_tracking as tracking
 from . import cutting_access, workflow, storage
 from .media import bounded_ffmpeg
-from . import mosaic_effects as effects
+from . import mosaic_effects as effects, processing_cancel
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 
 
@@ -51,6 +51,7 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None):
         try:
             black=bytes(width*height)
             for frame in range(meta['frame_count']):
+                processing_cancel.check()
                 active=any(t['target']['start']<=frame<t['target']['end'] for t in tracks)
                 process.stdin.write(effects.expand(union_mask(frame,tracks,size),effect['expansion']).tobytes() if active else black)
                 if frame%120==0:progress(f"合并遮罩 {frame+1} / {meta['frame_count']} 帧")
@@ -149,6 +150,20 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None):
     return job
 
 
+def stop(bid,sid,jid,reset_at):
+    session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
+    if not isinstance(jid,str) or not re.fullmatch('[0-9a-f]{32}',jid):raise cutting.CutError('生成任务不存在',404)
+    path=sessions.session_path(bid,sid)/f'render-{jid}.json'
+    with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+        job=recover(path)
+        if not job:raise cutting.CutError('生成任务不存在',404)
+        mosaic_locate.current(bid,sid,job)
+        if job['status']=='running':
+            job.update(cancel_requested=True,progress='正在停止生成…')
+            write_json_atomic(path,job)
+        return job
+
+
 def prepare_track(bid,sid,session,target,cfg,directory):
     # compute.lock is already held by this batch. Never recursively enqueue a single job.
     jid=tracking.identity(session,target,cfg);root=sessions.session_path(bid,sid)
@@ -171,9 +186,17 @@ def prepare_track(bid,sid,session,target,cfg,directory):
 
 
 def _work(bid,sid,path,job,cfg,leases):
+    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False)):
+        _work_cancelable(bid,sid,path,job,cfg,leases)
+
+
+def _work_cancelable(bid,sid,path,job,cfg,leases):
+    cancelled=False
     def update(**fields):
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
-            saved=read_json(path);saved.update(fields);write_json_atomic(path,saved)
+            saved=read_json(path)
+            if saved.get('cancel_requested'):raise processing_cancel.Cancelled()
+            saved.update(fields);write_json_atomic(path,saved)
     try:
         session=mosaic_locate.current(bid,sid,job);source=path.parent/'source.mp4';directory=path.parent/f"render-{job['id']}"
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败')
@@ -202,10 +225,19 @@ def _work(bid,sid,path,job,cfg,leases):
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
             result.update(skipped_frames=len(skipped),warnings=warnings,region_count=len(tracks),notice='请预览检查遮挡效果；无告警不代表没有漏遮。')
             update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='处理后视频已生成，可预览和下载')
+    except processing_cancel.Cancelled:
+        cancelled=True
     except Exception as exc:
-        update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '完整视频生成失败，请重试；原片保留')
+        try:update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '完整视频生成失败，请重试；原片保留')
+        except processing_cancel.Cancelled:cancelled=True
     finally:
-        for lease in reversed(leases):lease.close()
+        try:
+            if cancelled:
+                with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+                    saved=read_json(path);saved.update(status='cancelled',progress='已停止生成，当前选择已保留');saved.pop('result',None);write_json_atomic(path,saved)
+                    for lease in reversed(leases):lease.close()
+        finally:
+            for lease in reversed(leases):lease.close()
 
 
 def process_video(source,output,meta,tracks,ranges,progress=lambda text:None,effect=None):

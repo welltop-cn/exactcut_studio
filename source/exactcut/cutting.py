@@ -27,7 +27,8 @@ def enabled():
 
 def run(command, timeout=600):
     try:
-        result = subprocess.run(bounded_ffmpeg(command), capture_output=True, timeout=timeout)
+        from . import processing_cancel
+        result = processing_cancel.run(bounded_ffmpeg(command), capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise CutError('视频处理超时，请重试；原成片保留') from exc
     if result.returncode:

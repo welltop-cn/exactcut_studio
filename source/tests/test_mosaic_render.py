@@ -186,3 +186,30 @@ def test_discard_running_job_fences_result_and_does_not_change_project(ready,mon
     from exactcut import mosaic_replace
     with pytest.raises(cutting.CutError):mosaic_replace.start(bid,sid,job['id'],'')
     assert workflow.preview_file(bid,rid)[0]==source and file_sha256(source)==sha
+
+
+def test_stop_interrupts_owned_process_and_retains_session(ready,monkeypatch):
+    import sys,threading
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id'];entered=threading.Event()
+    def slow(*args,**kwargs):
+        entered.set();cutting.run([sys.executable,'-c','import time;time.sleep(60)'])
+        raise AssertionError('must stop before publishing')
+    original_process=render.process_video
+    monkeypatch.setattr(render,'process_video',slow)
+    job=render.start(bid,sid,[],'',[[1,3]])
+    assert entered.wait(3)
+    app=serve();url=f'/api/batches/{bid}/mosaics/{sid}/stop'
+    try:
+        assert call(app,'POST',url,{'job_id':job['id'],'reset_at':''},csrf=False)[0]==403
+        assert call(app,'POST',url,{'job_id':job['id'],'reset_at':''})[0]==202
+        stopped=wait_job(bid,sid,job['id']);assert stopped['status']=='cancelled',stopped
+        assert 'result' not in stopped
+        assert sessions.read_session(bid,sid).get('reset_at','')==''
+        assert file_sha256(source)==sha
+        assert render.stop(bid,sid,job['id'],'')['status']=='cancelled'
+        with cutting.lock_file(cutting.lock_root()/'compute.lock'):pass
+        monkeypatch.setattr(render,'process_video',original_process)
+        restarted=render.start(bid,sid,[],'',[[1,3]])
+        assert not restarted.get('cancel_requested')
+        assert wait_job(bid,sid,restarted['id'])['status']=='completed'
+    finally:app.shutdown();app.server_close()

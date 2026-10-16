@@ -6,6 +6,8 @@
   let batchJob=null,batchToken=0,batchLoading=false,batchError="";
   let trackToken=0,clipBounds=null;
   let deletions=[],savedDeletions=[],oldDraftRaw=null,mutationBusy=false,resultBefore=false,resultMode=false;
+  let stopPending=false;
+  const editLocked=()=>batchLoading||batchJob?.status==='running'||stopPending||mutationBusy;
   const defaultEffect={style:'pixel',strength:'medium',expansion:'small'};
   let effect={...defaultEffect},savedEffect={...defaultEffect};
   let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
@@ -51,6 +53,7 @@
   function resetCandidate(){token++;loading=false;candidates=[];selected=null;editing=null;drawing=false;pointer=null;scanEvent=null;paint();}
   function paint(){
     if(!context)return;
+    for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
     const c=selectedBox(),accurate=ready===wanted&&!image.hidden&&video.paused;
     $('mosaicPosition').textContent=`${clock(wanted)} / ${clock(meta().frame_count-1)}`;
     $('mosaicSeek').value=wanted;$('mosaicFrameNumber').value=clock(wanted);
@@ -80,6 +83,10 @@
     paintEffects();paintScan();paintBatch();
     drawOverlay();
   }
+  const mutationSelector='.mosaic-card-checks button,#mosaicClear,#mosaicScan,#mosaicAdjustToggle,#mosaicAdjust button,#mosaicAdjust input,#mosaicEffects select';
+  for(const type of ['click','change','input'])dialog.addEventListener(type,e=>{
+    if(editLocked()&&e.target.closest(mutationSelector)){e.preventDefault();e.stopImmediatePropagation();}
+  },true);
   function paintEffects(){
     for(const k of ['style','strength','expansion'])$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).value=effect[k];
     $('mosaicStrengthRow').hidden=effect.style==='solid';
@@ -239,7 +246,7 @@
   }
   async function open(batch,asset){
     const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
-    batchToken++;batchJob=null;batchLoading=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
+    batchToken++;batchJob=null;batchLoading=false;stopPending=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
     scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;$('mosaicAdjust').open=false;$('mosaicEffects').open=false;
     image.hidden=true;overlay.hidden=true;$('mosaicWorkspace').hidden=true;$('mosaicTitle').textContent='视频处理 · '+asset.title;
     for(const v of $('assets').querySelectorAll('video'))v.pause();
@@ -354,13 +361,23 @@
   const targetSignature=list=>JSON.stringify([...new Set(list.map(t=>JSON.stringify(targetFields.map(k=>t[k]))))].sort());
   function paintBatch(){
     if(!context)return;
+    for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
+    const locked=editLocked();
+    if(locked){
+      for(const el of dialog.querySelectorAll('.mosaic-card-checks button,#mosaicClear,#mosaicScan,#mosaicAdjustToggle,#mosaicAdjust button,#mosaicAdjust input,#mosaicEffects select')){el.dataset.generationLock=String(el.disabled);el.disabled=true;}
+      drawing=false;pointer=null;
+    }
+    $('mosaicStop').hidden=batchJob?.status!=='running'||context.session.capabilities?.render_stop!==true;$('mosaicStop').disabled=stopPending||!!batchJob?.cancel_requested;
+    $('mosaicStop').textContent=stopPending||batchJob?.cancel_requested?'正在停止…':'停止生成';
+    $('mosaicDiscard').hidden=locked;
+    $('mosaicProcessingHint').textContent='生成中暂不可编辑；停止生成后可修改。关闭后后台继续处理。';
     const adopted=adoptedTargets(),segments=new Set(adopted.map(t=>`${t.start}:${t.end}`)).size;
     const running=batchLoading||batchJob?.status==='running'||mutationBusy;
     const generating=batchJob?.status==='running'||(batchLoading&&!batchJob);
     const showOutput=resultMode&&batchJob?.status==='completed';
     $('mosaicWorkspace').hidden=showOutput;$('mosaicBatchDialog').hidden=!showOutput;
     $('mosaicProcessing').hidden=!generating;
-    $('mosaicProcessingText').textContent=batchJob?.progress||'正在准备处理视频…';
+    $('mosaicProcessingText').textContent=stopPending||batchJob?.cancel_requested?'正在停止生成…':batchJob?.progress||'正在准备处理视频…';
     $('mosaicStatus').hidden=generating||showOutput;
     dialog.classList.toggle('processing-result',showOutput);
     const clip=currentClip();
@@ -375,7 +392,7 @@
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
     $('mosaicBatchClose').hidden=!showOutput;
     $('mosaicBatchStart').hidden=resultMode&&batchJob?.status==='completed';
-    $('mosaicBatchView').hidden=resultMode||(!batchJob&&!batchError);
+    $('mosaicBatchView').hidden=generating||resultMode||batchJob?.status==='cancelled'||(!batchJob&&!batchError);
     $('mosaicBatchDownload').hidden=!resultMode; $('mosaicReplace').hidden=!resultMode;
     if(!resultMode)return;
     const done=batchJob?.status==='completed';
@@ -404,9 +421,28 @@
         const job=await api(endpoint+'/render/'+batchJob.id);if(!valid())return;batchJob=job;paintBatch();
       }
     }catch(e){if(valid())batchError=e.message;}
-    finally{if(valid()){batchLoading=false;paintBatch();}}
+    finally{if(valid()){batchLoading=false;paint();if(batchJob?.status==='cancelled')status('已停止生成，当前选择已保留，可以继续编辑。');}}
   }
   function restoreBatch(){batchRequest();}
+  $('mosaicStop').onclick=async()=>{
+    if(stopPending||batchJob?.status!=='running')return;
+    const version=epoch,endpoint=base(),jid=batchJob.id;stopPending=true;paintBatch();
+    try{
+      const job=await api(endpoint+'/stop',{job_id:jid,reset_at:context.session.reset_at||''});
+      if(!active(version)||batchJob?.id!==jid)return;
+      // Resume polling the acknowledged job; do not unlock until the worker exits.
+      batchToken++;batchJob=job;
+      while(active(version)&&batchJob?.id===jid&&batchJob.status==='running'){
+        paintBatch();await new Promise(r=>setTimeout(r,500));
+        if(!active(version))return;
+        const next=await api(endpoint+'/render/'+jid);
+        if(!active(version)||batchJob?.id!==jid)return;
+        batchJob=next;
+      }
+      if(active(version)){batchLoading=false;resultMode=false;status(batchJob?.status==='cancelled'?'已停止生成，当前选择已保留，可以继续编辑。':'视频已生成，可查看结果。');}
+    }catch(e){if(active(version)){status(e.message,true);batchRequest();}}
+    finally{if(active(version)){stopPending=false;paint();}}
+  };
   $('mosaicBatchStart').onclick=()=>{
     if($('mosaicBatchStart').disabled)return;
     const saved=targets[editing],c=selectedBox();
@@ -496,6 +532,7 @@
   $('mosaicDraw').onclick=()=>{if($('mosaicDraw').disabled)return;drawing=!drawing;paint();if(drawing)status('在画面内拖出矩形；也可用像素输入框微调。');};
   function point(e){const r=overlay.getBoundingClientRect();return {x:Math.max(0,Math.min(meta().width,Math.round((e.clientX-r.left)/r.width*meta().width))),y:Math.max(0,Math.min(meta().height,Math.round((e.clientY-r.top)/r.height*meta().height)))};}
   overlay.onpointerdown=e=>{
+    if(editLocked())return;
     if(!drawing){const b=e.target.closest('[data-box]');if(b){if(selected!==b.dataset.box)editing=null;selected=b.dataset.box;paint();}return;}
     e.preventDefault();const p=point(e);pointer={...p,id:e.pointerId};overlay.setPointerCapture(e.pointerId);
     // Redrawing replaces the selected candidate, preserving any other candidates.
