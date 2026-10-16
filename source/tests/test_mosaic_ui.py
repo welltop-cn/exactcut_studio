@@ -510,7 +510,7 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
       const old=api;window.batchJob=null;
       window.api=async(url,body)=>{
         if(url.endsWith('/render')){
-          if(body){window.batchBody=body;batchJob={id:'b'.repeat(32),status:'completed',targets:body.targets,result:{fallback_frames:2,warnings:[],region_count:2},completed_at:'now'};return batchJob;}
+          if(body){window.batchBody=body;batchJob={id:'b'.repeat(32),status:'completed',targets:body.targets,result:{skipped_frames:2,warnings:[{region:1,frame:10,reason:"失跟"}],region_count:2},completed_at:'now'};return batchJob;}
           return {job:batchJob};
         }
         return old(url,body);
@@ -526,10 +526,39 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     assert editor.evaluate('batchBody.targets.map(t=>t.start)')==[10,30]
     assert editor.locator('#mosaicBatchDownload').is_visible()
     assert editor.locator('#mosaicBatchVideo').is_visible()
-    assert '2 帧' in editor.locator('#mosaicBatchStatus').inner_text()
+    assert editor.locator('#mosaicBatchStatus').inner_text()=='完整视频已生成，可预览或下载。'
+    assert '失跟' not in editor.locator('#mosaicBatchDialog').inner_text()
     editor.locator('#mosaicBatchClose').click();editor.locator('#mosaicClose').click()
     open_auto(editor)
     editor.locator('#mosaicBatchView').wait_for()
     editor.locator('#mosaicBatchView').click()
     assert editor.locator('#mosaicBatchDownload').is_visible()
     assert editor.locator('#mosaicTargetCount').inner_text()=='2 个区域（上限 8 个）'
+
+
+def test_completed_clip_preview_available_after_unadopting_without_retracking(editor):
+    editor.evaluate('''() => {
+      session.capabilities.tracking=true;
+      const target={...findings[0],start:30,end:60,seed_frame:40,adopted:false};
+      localStorage.setItem('exactcut.mosaic.targets.v1.fixture.batch.session.'+'a'.repeat(64)+'.',JSON.stringify([target]));
+      const old=api;window.api=async(url,body)=>{
+        if(url.endsWith('/render'))return {job:{id:'b'.repeat(32),status:'completed',targets:[target],result:{region_count:1},completed_at:'now'}};
+        return old(url,body);
+      };
+    }''')
+    open_auto(editor)
+    button=editor.locator('#mosaicClipPreview')
+    assert button.is_visible() and not button.is_enabled()
+    editor.locator('[data-target-view="0"]').click()
+    assert button.is_enabled()
+    button.click()
+    assert editor.locator('#mosaicTrackDialog').evaluate('(el)=>el.open')
+    assert '/render/' in editor.locator('#mosaicTrackVideo').get_attribute('src')
+    assert '00:01:00–00:01:29' in editor.locator('#mosaicTrackStatus').inner_text()
+    assert '上次生成结果' in editor.locator('#mosaicTrackHint').inner_text()
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/track'))")
+    assert editor.locator('#mosaicTargetCount').inner_text()=='0 个区域（上限 8 个）'
+    editor.locator('#mosaicTrackVideo').evaluate("el=>el.dispatchEvent(new Event('loadedmetadata'))")
+    assert editor.locator('#mosaicTrackVideo').evaluate('el=>el.currentTime')==1
+    editor.locator('#mosaicTrackClose').click()
+    assert not editor.locator('#mosaicTrackDialog').evaluate('(el)=>el.open')

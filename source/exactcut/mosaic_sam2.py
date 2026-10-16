@@ -52,14 +52,14 @@ def track(request):
                 records[index]={'frame':target['start']+index,'box':list(bounds) if bounds else None,'area':area}
                 with Image.open(files[index]) as original:
                     pixel=original.resize((max(1,width//18),max(1,height//18)),Image.Resampling.BILINEAR).resize((width,height),Image.Resampling.NEAREST)
-                    # Empty masks are explicit failures; obscure the full frame in this preview.
-                    preview=Image.composite(pixel,original,mask) if bounds else pixel
+                    # Empty masks leave the original frame unchanged.
+                    preview=Image.composite(pixel,original,mask)
                     preview.save(rendered/f'{index:06d}.png')
                 write_json_atomic(output/'progress.json',{'frames_done':len(records),'frames_total':count})
     ordered=[records[i] for i in range(count)]
     warnings=[]
     for i,item in enumerate(ordered):
-        reason='未找到遮罩，预览已整帧遮挡' if not item['area'] else ''
+        reason='未找到遮罩，已跳过该区域' if not item['area'] else ''
         if i and item['area'] and ordered[i-1]['area'] and max(item['area']/ordered[i-1]['area'],ordered[i-1]['area']/item['area'])>2.5:reason='遮罩面积突变，请检查'
         if reason:warnings.append({'frame':item['frame'],'reason':reason})
     start=target['start']*meta['fps_den']/meta['fps_num'];duration=count*meta['fps_den']/meta['fps_num']

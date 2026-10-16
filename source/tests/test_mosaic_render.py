@@ -34,7 +34,11 @@ def test_mask_union_and_failure_never_erase_another_target(tmp_path):
     mask=render.union_mask(2,[a,b],(8,6))
     assert mask.getpixel((0,0))==mask.getpixel((7,0))==255
     assert mask.getpixel((4,0))==0
-    assert render.union_mask(3,[a,b],(8,6)).getextrema()==(255,255)
+    assert render.union_mask(3,[a,b],(8,6)).getbbox()==(6,0,8,2)
+    assert render.union_mask(3,[a],(8,6)).getbbox() is None
+    failed={'target':t,'failed':True}
+    assert render.union_mask(2,[failed,b],(8,6)).getbbox()==(6,0,8,2)
+    assert render.union_mask(2,[failed],(8,6)).getbbox() is None
     (tmp_path/'a/masks/000001.png').unlink()
     with pytest.raises(cutting.CutError):render.union_mask(2,[a,b],(8,6))
 
@@ -79,7 +83,7 @@ def test_batch_http_restore_download_and_immutable_source(ready,monkeypatch):
         assert call(app,'POST',base,{**body,'targets':[target]*9})[0]==400
         code,job=call(app,'POST',base,body);assert code==202
         finished=wait_job(bid,sid,job['id']);assert finished['status']=='completed',finished
-        assert finished['result']['fallback_frames']==2
+        assert finished['result']['skipped_frames']==2
         assert len(calls)==2
         assert call(app,'GET',base)[1]['job']['id']==job['id']
         assert call(app,'POST',base,body)[1]['id']==job['id']

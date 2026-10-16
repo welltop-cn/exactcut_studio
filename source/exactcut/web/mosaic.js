@@ -4,7 +4,7 @@
   let context=null, epoch=0, token=0, wanted=0, ready=-1, candidates=[], selected=null, targets=[], editing=null;
   let loading=false, frameLoading=false, drawing=false, pointer=null, frameUrl=null, controller=null, timer;
   let batchJob=null,batchToken=0,batchLoading=false,batchError="";
-  let trackToken=0;
+  let trackToken=0,clipBounds=null;
   let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
   const base=()=>`/api/batches/${context.batch}/mosaics/${context.session.id}`;
   const meta=()=>context.session.metadata;
@@ -310,6 +310,9 @@
     if(!context)return;
     const adopted=adoptedTargets(),segments=new Set(adopted.map(t=>`${t.start}:${t.end}`)).size;
     const running=batchLoading||batchJob?.status==='running';
+    const clip=currentClip();
+    $('mosaicClipPreview').disabled=batchJob?.status!=='completed'||!clip;
+    $('mosaicClipPreview').title=batchJob?.status!=='completed'?'先生成完整视频':!clip?'先点击右侧片段':'查看上次生成视频中本片段的效果';
     $('mosaicBatchStart').disabled=!context.session.capabilities?.tracking||!adopted.length||running;
     $('mosaicBatchStart').textContent=running?'正在生成完整视频…':'生成完整打码视频';
     $('mosaicBatchHint').textContent=batchError||(!context.session.capabilities?.tracking?'本机未启用动态跟踪':adopted.length?`已采用 ${segments} 个片段 · ${adopted.length} 个区域`:'先采用需要打码的区域');
@@ -318,15 +321,12 @@
     if(!$('mosaicBatchDialog').open)return;
     const done=batchJob?.status==='completed';
     $('mosaicBatchDownload').hidden=!done;$('mosaicBatchVideo').hidden=!done;
-    $('mosaicBatchWarnings').hidden=!done||!batchJob.result.warnings?.length;
     $('mosaicBatchVersion').textContent=batchJob&&targetSignature(batchJob.targets)!==targetSignature(adopted)?'采用范围已变化。此结果对应生成时的选择；要应用新选择，请重新生成。':'';
     if(done){
-      const result=batchJob.result;
-      $('mosaicBatchStatus').textContent=`完整视频已生成，包含 ${result.region_count} 个区域。`+(result.fallback_frames?`其中 ${result.fallback_frames} 帧失跟或跟踪失败，已整帧打码，请重点检查。`:'请播放检查是否漏遮或多遮。');
+      $('mosaicBatchStatus').textContent='完整视频已生成，可预览或下载。';
       const url=appUrl(base()+'/render/'+batchJob.id+'/video?v='+encodeURIComponent(batchJob.completed_at||''));
       if($('mosaicBatchVideo').getAttribute('src')!==url)$('mosaicBatchVideo').src=url;
       $('mosaicBatchDownload').href=url;$('mosaicBatchDownload').download=context.asset.title+'_打码.mp4';
-      $('mosaicBatchWarnings').querySelector('ul').innerHTML=(result.warnings||[]).map(w=>`<li>区域 ${w.region} · ${clock(w.frame)} · ${esc(w.reason)}</li>`).join('');
     }else $('mosaicBatchStatus').textContent=batchError||batchJob?.error||batchJob?.progress||'正在提交全部已采用区域…';
   }
   async function batchRequest(start=false){
@@ -354,9 +354,24 @@
   $('mosaicBatchView').onclick=()=>{$('mosaicBatchDialog').showModal();paintBatch();};
   $('mosaicBatchClose').onclick=()=>$('mosaicBatchDialog').close();
   $('mosaicBatchDialog').addEventListener('close',()=>{$('mosaicBatchVideo').pause();$('mosaicBatchVideo').removeAttribute('src');$('mosaicBatchVideo').load();});
+  function currentClip(){return scanReport?.events?.find(e=>e.id===scanEvent)||targets[editing]||null;}
+  $('mosaicClipPreview').onclick=()=>{
+    const clip=currentClip();if(!clip||batchJob?.status!=='completed')return;
+    trackToken++;clipBounds={start:clip.start/rate(),end:clip.end/rate()};
+    $('mosaicTrackTitle').textContent='本片段打码效果';
+    $('mosaicTrackStatus').textContent=`${clock(clip.start)}–${clock(clip.end-1)}`;
+    $('mosaicTrackHint').textContent='播放上次生成结果；修改采用范围后需重新生成才能生效。';
+    const player=$('mosaicTrackVideo');player.hidden=false;
+    player.src=appUrl(base()+'/render/'+batchJob.id+'/video?v='+encodeURIComponent(batchJob.completed_at||''));
+    $('mosaicTrackDialog').showModal();
+  };
+  $('mosaicTrackVideo').addEventListener('loadedmetadata',()=>{if(clipBounds)$('mosaicTrackVideo').currentTime=clipBounds.start;});
+  $('mosaicTrackVideo').addEventListener('play',()=>{const p=$('mosaicTrackVideo');if(clipBounds&&(p.currentTime<clipBounds.start||p.currentTime>=clipBounds.end))p.currentTime=clipBounds.start;});
+  $('mosaicTrackVideo').addEventListener('timeupdate',()=>{const p=$('mosaicTrackVideo');if(clipBounds&&p.currentTime>=clipBounds.end){p.pause();p.currentTime=clipBounds.start;}});
   $('mosaicTrackClose').onclick=()=>$('mosaicTrackDialog').close();
-  $('mosaicTrackDialog').addEventListener('close',()=>{trackToken++;$('mosaicTrackVideo').pause();$('mosaicTrackVideo').removeAttribute('src');$('mosaicTrackVideo').load();});
+  $('mosaicTrackDialog').addEventListener('close',()=>{trackToken++;clipBounds=null;$('mosaicTrackVideo').pause();$('mosaicTrackVideo').removeAttribute('src');$('mosaicTrackVideo').load();});
   $('mosaicTrack').onclick=async()=>{
+    clipBounds=null;$('mosaicTrackTitle').textContent='动态打码预览';$('mosaicTrackHint').textContent='仅预览当前区域、当前片段。';
     const saved=targets[editing],c=selectedBox();if(!saved||saved.adopted===false)return;
     try{const r=range();if(!c||['x','y','w','h'].some(k=>c[k]!==saved[k])||r.start!==saved.start||r.end!==saved.end)throw Error('请先保存区域调整，再开始跟踪。');}catch(e){status(e.message,true);return;}
     const request=++trackToken,version=epoch,endpoint=base(),valid=()=>active(version)&&request===trackToken&&$('mosaicTrackDialog').open;
@@ -371,9 +386,7 @@
       }
       if(!valid())return;
       if(job.status!=='completed')throw Error(job.error||'跟踪未完成，请重试。');
-      const warnings=job.result.warnings||[];
-      const empty=(job.result.frames||[]).filter(f=>f.box===null).length;
-      $('mosaicTrackStatus').textContent=`${clock(target.start)}–${clock(target.end-1)} · 跟踪耗时 ${job.result.elapsed_seconds} 秒。`+(empty?` 跟踪不稳定：${empty} 帧未找到目标，预览已整帧遮挡。请返回调整区域或参考帧。`:warnings.length?` ${warnings.length} 帧需检查：`+warnings.slice(0,5).map(w=>clock(w.frame)+' '+w.reason).join('；'):' 请播放检查遮挡是否准确。');
+      $('mosaicTrackStatus').textContent=`${clock(target.start)}–${clock(target.end-1)} · 预览已生成。`;
       $('mosaicTrackVideo').src=appUrl(endpoint+'/track/'+job.id+'/preview?v='+encodeURIComponent(job.completed_at||''));$('mosaicTrackVideo').hidden=false;
     }catch(e){if(valid())$('mosaicTrackStatus').textContent=e.message;}
   };

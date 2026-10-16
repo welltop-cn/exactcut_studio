@@ -23,9 +23,9 @@ def union_mask(frame,tracks,size):
     for track in tracks:
         target=track['target']
         if not target['start']<=frame<target['end']:continue
-        if track.get('failed'):return Image.new('L',size,255)
+        if track.get('failed'):continue
         index=frame-target['start'];record=track['result']['frames'][index]
-        if record['box'] is None:return Image.new('L',size,255)
+        if record['box'] is None:continue
         path=Path(track['directory'])/'masks'/f'{index:06d}.png'
         try:
             with Image.open(path) as image:
@@ -117,7 +117,7 @@ def start(bid,sid,targets,reset_at):
         targets=validate_targets(session['metadata'],targets)
         if not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'config':cfg,'engine':1,'fallback':'full_frame'})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'config':cfg,'engine':1,'fallback':'skip_region'})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)
@@ -169,27 +169,27 @@ def _work(bid,sid,path,job,cfg,leases):
         session=mosaic_locate.current(bid,sid,job);source=path.parent/'source.mp4';directory=path.parent/f"render-{job['id']}"
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败')
         storage.require_space(source.parent,source.stat().st_size*3+2*1024**3)
-        directory.mkdir(exist_ok=True);tracks=[];warnings=[];fallback=set()
+        directory.mkdir(exist_ok=True);tracks=[];warnings=[];skipped=set()
         for index,target in enumerate(job['targets']):
             update(progress=f"正在跟踪第 {index+1} / {len(job['targets'])} 个区域",completed_regions=index)
             try:
                 track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}')
                 for frame in track['result']['frames']:
-                    if frame['box'] is None:fallback.add(frame['frame'])
+                    if frame['box'] is None:skipped.add(frame['frame'])
                 for warning in track['result'].get('warnings',[]):warnings.append({'region':index+1,**warning})
                 empty=sum(f['box'] is None for f in track['result']['frames'])
-                if empty:warnings.append({'region':index+1,'frame':target['start'],'reason':f'{empty} 帧失跟，已整帧打码'})
+                if empty:warnings.append({'region':index+1,'frame':target['start'],'reason':f'{empty} 帧失跟，已跳过该区域'})
             except (cutting.CutError,subprocess.TimeoutExpired):
                 track={'target':target,'failed':True}
-                fallback.update(range(target['start'],target['end']))
-                warnings.append({'region':index+1,'frame':target['start'],'reason':'跟踪未完成，该区域整个作用时间已整帧打码'})
+                skipped.update(range(target['start'],target['end']))
+                warnings.append({'region':index+1,'frame':target['start'],'reason':'跟踪未完成，已跳过该区域'})
             tracks.append(track)
         update(stage='composing',completed_regions=len(tracks))
         result=compose(source,directory/'mosaic.mp4',session['metadata'],tracks,lambda text:update(progress=text))
         with cutting_access.gate(workflow.folder(bid),session['request_id']):
             mosaic_locate.current(bid,sid,job)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
-            result.update(fallback_frames=len(fallback),warnings=warnings,region_count=len(tracks),notice='请预览检查遮挡效果；无告警不代表没有漏遮。')
+            result.update(skipped_frames=len(skipped),warnings=warnings,region_count=len(tracks),notice='请预览检查遮挡效果；无告警不代表没有漏遮。')
             update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='完整打码视频已生成，可预览和下载')
     except Exception as exc:
         update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '完整视频生成失败，请重试；原片保留')
