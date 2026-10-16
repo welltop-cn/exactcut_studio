@@ -391,7 +391,7 @@
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
     $('mosaicBatchClose').hidden=!showOutput;
-    $('mosaicBatchStart').hidden=resultMode&&batchJob?.status==='completed';
+    $('mosaicBatchStart').hidden=generating||(resultMode&&batchJob?.status==='completed');
     $('mosaicBatchView').hidden=generating||resultMode||batchJob?.status==='cancelled'||(!batchJob&&!batchError);
     $('mosaicBatchDownload').hidden=!resultMode; $('mosaicReplace').hidden=!resultMode;
     if(!resultMode)return;

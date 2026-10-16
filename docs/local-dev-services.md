@@ -114,3 +114,9 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 ## 2026-10-16 打码效果设置（8801）
 
 独立 mosaic-gemini 工作树提交 `63ca7a5` 增加样式/强度/范围扩大。确认 8801 原 PID 95652 的 cwd，取得 compute/scan 排他锁后正常重启，当前 PID 78076（历史记录，操作前仍须核验）。原启动器 source/.dev-state/mosaic-gemini-20261016/start.py、隔离开发数据与配置沿用，release 为 development-effects-63ca7a5；8793/8800 未动。54 项相关效果/交互/渲染/跟踪测试通过，真实 FFmpeg 覆盖三种效果及短片帧数。浏览器确认默认收起、展开三项设置、原删除3段/打码4段草稿保留。未重新生成或替换用户视频。
+
+## 2026-10-16 生成锁定与停止（8801）
+
+提交 `0f09503` 增加生成期间编辑锁与保留草稿的停止生成接口。67 项相关测试通过，另复查精简后的运行中按钮；测试包含真实子进程终止、资源释放、同方案重试、停止确认前禁止编辑。浏览器实看当前任务运行时选择/取消/效果/区域编辑禁用，播放与查看可用。
+
+等待用户任务 render-b63091de29500d5e2d16a26dd2d79a2f 自然 completed，取得 compute/scan 锁后从已验证 PID 78076 重启为 PID 14916（历史记录，操作前核验）。release development-stop-0f09503，healthz ok/development；用户本次结果完整保留，未替换成片或变更选择。8793/8800 未动。
