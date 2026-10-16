@@ -1,5 +1,6 @@
 """Asynchronous single-frame Gemini region suggestions, without rendering."""
 import json
+from copy import deepcopy
 import math
 import re
 import threading
@@ -52,7 +53,7 @@ def detect(jpeg,meta,cfg,key,*,deadline=None):
             try:scan.ai_rate.acquire();break
             except ResourceDeferred as exc:time.sleep(min(1,max(.05,exc.not_before-time.time())))
         response=client.models.generate_content(model=cfg['model'],contents=[types.Part.from_bytes(data=jpeg,mime_type='image/jpeg'),types.Part.from_text(text=PROMPT)],
-            config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=SCHEMA))
+            config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=deepcopy(SCHEMA)))
         if not response.text:raise cutting.CutError('模型未返回可用结果（可能被拦截），区域识别未完成')
         return checked_candidates(response.text,meta)
     finally:client.close()

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from copy import deepcopy
 import math
 import os
 import tempfile
@@ -125,7 +126,7 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
             try:ai_rate.acquire();break
             except ResourceDeferred as exc:time.sleep(min(1,max(.05,exc.not_before-time.time())))
         response=client.models.generate_content(model=cfg['model'],contents=[*parts,types.Part.from_text(text=prompt+extra)],
-                    config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=SCHEMA))
+                    config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=deepcopy(SCHEMA)))
         if not response.text:raise cutting.CutError('模型未返回可用结果（可能被拦截），识别未完成')
         return checked_events(response.text,meta)
 

@@ -137,3 +137,19 @@ def test_modified_snapshot_never_reaches_provider(configured,monkeypatch):
     calls=[];monkeypatch.setattr(m,'detect',lambda *args:calls.append(True) or [])
     job=m.start(bid,sid,0,20,5,'')
     assert poll(m,bid,sid,job['id'])['status']=='failed' and not calls
+
+
+def test_sdk_normalization_does_not_change_shared_schema(monkeypatch):
+    from copy import deepcopy
+    from google import genai
+    from google.genai import _transformers
+    m=module();before=deepcopy(m.SCHEMA)
+    def ask(**kwargs):
+        _transformers.t_schema(SimpleNamespace(vertexai=False),kwargs['config'].response_schema)
+        return SimpleNamespace(text='{"candidates":[]}')
+    monkeypatch.setattr(genai,'Client',lambda **kwargs:SimpleNamespace(models=SimpleNamespace(generate_content=ask),close=lambda:None))
+    monkeypatch.setattr(scan.ai_rate,'acquire',lambda:None)
+    try:
+        assert m.detect(b'jpeg',{'width':100,'height':100},{'model':'fixture','request_timeout_ms':1000},'fixture')==[]
+        assert m.SCHEMA==before
+    finally:m.SCHEMA.clear();m.SCHEMA.update(before)
