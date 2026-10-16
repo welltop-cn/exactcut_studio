@@ -71,6 +71,7 @@ def test_boxes_only_on_reference_frame_and_manual_adjustment(editor):
     open_editor(editor)
     editor.locator('#mosaicRecognize').click()
     editor.locator('[data-candidate="0"]').wait_for()
+    if not editor.locator('#mosaicBoxX').is_visible():editor.locator('#mosaicAdjustToggle').click()
     editor.locator('#mosaicBoxX').fill('20')
     editor.locator('#mosaicBoxX').dispatch_event('change')
     editor.locator('#mosaicConfirm').click()
@@ -81,7 +82,8 @@ def test_boxes_only_on_reference_frame_and_manual_adjustment(editor):
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     assert editor.locator('#mosaicBoxX').input_value()=='20'
     editor.locator('[data-target-remove]').click()
-    assert editor.locator('[data-target-view]').count()==0
+    assert editor.locator('[data-target-view]').count()==1
+    assert not editor.locator('[data-target-remove]').is_checked()
 
 
 def test_empty_and_error_are_distinct_retryable_states(editor):
@@ -189,7 +191,7 @@ def test_unlocalized_segment_remains_for_review(editor):
     open_auto(editor)
     editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').wait_for()
-    assert '待检查 · 尚未定位区域' in editor.locator('#mosaicScanEvents').inner_text()
+    assert '请先框选区域' in editor.locator('#mosaicScanEvents').inner_text()
     editor.locator('[data-scan-event="e1"]').click()
     assert editor.locator('#mosaicStart').input_value()=='00:01:00'
     assert editor.locator('#mosaicConfirm').is_disabled()
@@ -342,5 +344,115 @@ def test_adopted_regions_are_in_same_full_height_list(editor):
     assert card.locator('[data-target-remove]').is_checked()
     assert card.locator('.mosaic-target-row').bounding_box()['height']<=32
     card.locator('[data-target-remove]').click()
-    assert editor.locator('[data-target-view]').count()==0
-    assert '待检查' in card.inner_text()
+    assert editor.locator('[data-target-view]').count()==1
+    assert not card.locator('[data-target-remove]').is_checked()
+
+
+def test_toggle_retains_adjustment_across_reopen(editor):
+    scan_result(editor)
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    card=editor.locator('[data-mosaic-card="e1"]')
+    assert card.locator('input[type=checkbox]').is_visible()
+    card.locator('input[type=checkbox]').click()
+    assert card.locator('input[type=checkbox]').is_checked()
+    card.locator('[data-target-view]').click()
+    editor.locator('#mosaicAdjustToggle').click()
+    if not editor.locator('#mosaicBoxX').is_visible():editor.locator('#mosaicAdjustToggle').click()
+    editor.locator('#mosaicBoxX').fill('20')
+    editor.locator('#mosaicBoxX').dispatch_event('change')
+    editor.locator('#mosaicConfirm').click()
+    card.locator('input[type=checkbox]').click()
+    assert not card.locator('input[type=checkbox]').is_checked()
+    editor.locator('#mosaicClose').click()
+    open_auto(editor)
+    row=editor.locator('[data-target-view]').locator('..')
+    assert not row.locator('input').is_checked()
+    row.locator('input').click()
+    row.locator('[data-target-view]').click()
+    editor.locator('#mosaicAdjustToggle').click()
+    assert editor.locator('#mosaicBoxX').input_value()=='20'
+
+
+def test_draft_storage_failure_rolls_back_checkbox(editor):
+    scan_result(editor);open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.evaluate("() => {Storage.prototype.setItem=function(){throw Error('存储不可用')}}")
+    editor.locator('[data-proposal]').click()
+    assert not editor.locator('[data-proposal]').is_checked()
+    assert '存储不可用' in editor.locator('#mosaicStatus').inner_text()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='0 / 8'
+
+
+def test_legacy_draft_import_and_cross_page_conflict(editor):
+    editor.evaluate('''() => {
+      localStorage.setItem('exactcut.mosaic.targets.v1.fixture.batch.session.'+'a'.repeat(64)+'.',JSON.stringify([{...findings[0],start:30,end:90,seed_frame:60}]));
+    }''')
+    open_auto(editor)
+    assert editor.locator('[data-target-remove]').is_checked()
+    editor.locator('[data-target-remove]').click()
+    assert not editor.locator('[data-target-remove]').is_checked()
+    editor.evaluate('''() => {
+      const key=Object.keys(localStorage).find(k=>k.includes('workbench.v2'));
+      const data=JSON.parse(localStorage.getItem(key));data[0].x=20;localStorage.setItem(key,JSON.stringify(data));
+    }''')
+    editor.locator('[data-target-remove]').click()
+    assert '其他页面更新' in editor.locator('#mosaicStatus').inner_text()
+    assert not editor.locator('[data-target-remove]').is_checked()
+    assert editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v2'))))[0].x")==20
+
+
+def test_adjustment_keeps_stage_and_actions_fixed(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    before=editor.locator('#mosaicStage').bounding_box()
+    action=editor.locator('#mosaicConfirmNext').bounding_box()
+    editor.locator('#mosaicAdjustToggle').click()
+    assert editor.locator('#mosaicStage').bounding_box()==before
+    assert editor.locator('#mosaicConfirmNext').bounding_box()==action
+
+
+def test_multiple_regions_independent(editor):
+    scan_result(editor)
+    editor.evaluate("scanJob.events[0].candidates.push({...findings[0],id:'1',x:10,w:20,label:'区域二'})")
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').first.click()
+    editor.locator('[data-proposal="e1:0"]').click()
+    editor.locator('[data-proposal="e1:1"]').click()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='2 / 8'
+    editor.locator('[data-target-remove="0"]').click()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'
+    assert editor.locator('[data-target-remove="1"]').is_checked()
+
+
+def test_edit_time_keeps_record_in_same_card(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click();editor.locator('[data-target-view]').click()
+    editor.locator('#mosaicAdjustToggle').click()
+    editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicStart').dispatch_event('change')
+    editor.locator('#mosaicConfirm').click()
+    assert editor.locator('[data-mosaic-card="e1"] [data-target-view]').count()==1
+    assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'
+
+
+def test_eight_active_limit_allows_cancel_and_restore(editor):
+    editor.evaluate('''() => {
+      localStorage.setItem('exactcut.mosaic.targets.v1.fixture.batch.session.'+'a'.repeat(64)+'.',JSON.stringify(Array.from({length:8},(_,i)=>({...findings[0],start:i,end:20,seed_frame:10}))));
+    }''')
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    assert editor.locator('[data-proposal]').is_disabled()
+    editor.locator('[data-target-remove="0"]').click()
+    assert editor.locator('[data-proposal]').is_enabled()
+    editor.locator('[data-proposal]').click()
+    assert editor.locator('[data-target-remove="0"]').is_disabled()
+    editor.locator('[data-target-remove="8"]').click()
+    editor.locator('[data-target-remove="0"]').click()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='8 / 8'
+
+
+def test_checkbox_then_confirm_does_not_duplicate_region(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.wait_for_function("!document.getElementById('mosaicConfirm').disabled")
+    editor.locator('[data-proposal]').click();editor.locator('#mosaicConfirm').click()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'

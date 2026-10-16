@@ -9,13 +9,32 @@
   const rate=()=>meta().fps_num/meta().fps_den;
   const active=v=>context&&dialog.open&&epoch===v;
   const key=()=>`exactcut.mosaic.targets.v1.${currentUser?.username}.${context.batch}.${context.session.id}.${context.session.source_sha256}.${context.session.reset_at||''}`;
+  const regionId=()=>Array.from(crypto.getRandomValues(new Uint32Array(4)),n=>n.toString(16).padStart(8,'0')).join('');
+  let savedRaw=null,legacyRaw=null,savedTargets=[];
+  const draftKey=()=>key().replace('targets.v1.','workbench.v2.');
+  const activeCount=()=>targets.filter(t=>t.adopted!==false).length;
+  const belongs=(t,e)=>(t.originStart??t.start)===e.start&&(t.originEnd??t.end)===e.end;
+  const validTarget=t=>validBox(t)&&[t.start,t.end,t.seed_frame].every(Number.isInteger)&&t.start>=0&&t.start<=t.seed_frame&&t.seed_frame<t.end&&t.end<=meta().frame_count&&typeof t.label==='string'&&typeof t.reason==='string'&&(t.adopted===undefined||typeof t.adopted==='boolean');
+  function loadDraft(){
+    savedRaw=localStorage.getItem(draftKey());legacyRaw=localStorage.getItem(key());
+    const data=savedRaw===null?JSON.parse(legacyRaw||'[]'):JSON.parse(savedRaw);
+    if(!Array.isArray(data)||data.length>320||!data.every(validTarget)||data.filter(t=>t.adopted!==false).length>8)throw Error('本机草稿格式无效，未覆盖原数据。');
+    targets=data.map(t=>({...t,uid:t.uid||regionId(),adopted:t.adopted!==false}));
+    savedTargets=structuredClone(targets);
+  }
   const status=(text,error=false)=>{$('mosaicStatus').textContent=text;$('mosaicStatus').classList.toggle('error',error);};
   const guard=fn=>(...args)=>{try{return fn(...args);}catch(e){status(e.message,true);}};
   function clock(frame){const {fps_num:n,fps_den:d}=meta(),s=Math.floor(frame*d/n);return [Math.floor(s/60),s%60,frame-Math.ceil(s*n/d)].map(v=>String(v).padStart(2,'0')).join(':');}
   function parse(value){const m=/^(\d+):([0-5]\d):(\d{2})$/.exec(value.trim());if(!m)throw Error('请填写 分:秒:帧，例如 00:01:05');const s=+m[1]*60+(+m[2]),f=+m[3],{fps_num:n,fps_den:d}=meta(),first=Math.ceil(s*n/d);if(f>=Math.ceil((s+1)*n/d)-first||first+f>=meta().frame_count)throw Error('时间超出原片范围');return first+f;}
   function range(){const start=parse($('mosaicStart').value),end=parse($('mosaicEnd').value)+1;if(start>=end)throw Error('开始帧不能晚于结束帧');return {start,end};}
   function inRange(){try{const r=range();return wanted>=r.start&&wanted<r.end;}catch{return false;}}
-  function save(){try{localStorage.setItem(key(),JSON.stringify(targets));return true;}catch{status('浏览器无法保存草稿，关闭后可能丢失，请保持窗口打开。',true);return false;}}
+  function save(){
+    try{
+      if(localStorage.getItem(draftKey())!==savedRaw||localStorage.getItem(key())!==legacyRaw)throw Error('草稿已在其他页面更新，请关闭后重新进入，避免覆盖。');
+      const value=JSON.stringify(targets);localStorage.setItem(draftKey(),value);
+      savedRaw=value;savedTargets=structuredClone(targets);return true;
+    }catch(e){targets=structuredClone(savedTargets);editing=null;paint();status(e.message||'无法保存草稿，请保持窗口打开。',true);return false;}
+  }
   function validBox(c){return c&&[c.x,c.y,c.w,c.h].every(Number.isInteger)&&c.x>=0&&c.y>=0&&c.w>0&&c.h>0&&c.x+c.w<=meta().width&&c.y+c.h<=meta().height;}
   function selectedBox(){return candidates.find(c=>c.id===selected);}
   function resetCandidate(){token++;loading=false;candidates=[];selected=null;editing=null;drawing=false;pointer=null;scanEvent=null;paint();}
@@ -38,9 +57,9 @@
     $('mosaicReviewInfo').textContent=`参考帧 ${clock(wanted)} · 检查区域后采用，或采用并进入下一段。`;
     for(const axis of ['X','Y','W','H'])$('mosaicBox'+axis).value=c?c[axis.toLowerCase()]:'';
     $('mosaicCandidates').innerHTML=candidates.map(c=>`<button data-candidate="${esc(c.id)}" aria-pressed="${c.id===selected}"><strong>${esc(c.label)}</strong><small>${esc(c.reason)}</small></button>`).join('');
-    $('mosaicTargetCount').textContent=`${targets.length} / 8`;
+    $('mosaicTargetCount').textContent=`${activeCount()} / 8`;
     $('mosaicEmpty').hidden=!!targets.length;
-    $('mosaicClear').disabled=!targets.length;
+    $('mosaicClear').disabled=!activeCount();
     paintScan();
     drawOverlay();
   }
@@ -59,14 +78,18 @@
       if(scanReport.warnings?.length)message+='\n'+scanReport.warnings.join('；');
     }
     if(scanLoading&&events.length)message+=`\n已发现 ${events.length} 个疑似时间段，${events.filter(e=>e.status==='localized').length} 段已定位，可先点击检查。`;
-    $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
-    const targetRow=(t,i,standalone=false)=>`<div class="mosaic-target-row"><input type="checkbox" checked data-target-remove="${i}" aria-label="取消采用 ${esc(t.label)}"><button data-target-view="${i}" title="回看并修改区域"><span>${standalone?`${clock(t.start)}–${clock(t.end-1)} · `:""}已采用</span></button></div>`;
+    $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').title=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
+    const targetRow=(t,i,standalone=false,multiple=false)=>`<div class="mosaic-target-row"><input type="checkbox" ${t.adopted!==false?'checked':''} ${t.adopted===false&&activeCount()>=8?'disabled':''} data-target-remove="${i}" aria-label="${t.adopted!==false?'取消采用':'采用'} ${esc(t.label)}"><button data-target-view="${i}" title="回看并修改区域"><span>${standalone?`${clock(t.start)}–${clock(t.end-1)} · `:''}${multiple?esc(t.label)+' · ':''}已采用</span></button></div>`;
     const grouped=new Set();
-    $('mosaicScanEvents').innerHTML=events.map(e=>{
-      const adopted=targets.map((t,i)=>({t,i})).filter(({t})=>t.start===e.start&&t.end===e.end);
-      adopted.forEach(({i})=>grouped.add(i));
-      return `<div class="mosaic-event-card ${adopted.length?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong>${adopted.length?'':`<small>待检查 · ${e.status==='localized'?'已有候选框':'尚未定位区域'}</small>`}<small>${esc(e.reason)}</small></button>${adopted.map(({t,i})=>targetRow(t,i)).join('')}</div>`;
+    const html=events.map(e=>{
+      const records=targets.map((t,i)=>({t,i})).filter(({t})=>belongs(t,e));
+      records.forEach(({i})=>grouped.add(i));
+      const suggestions=e.candidates.map((c,i)=>({c,i})).filter(({c})=>!records.some(({t})=>t.proposal===c.id||(!t.proposal&&t.seed_frame===e.seed_frame&&t.x===c.x&&t.y===c.y&&t.w===c.w&&t.h===c.h)));
+      const total=records.length+suggestions.length,multiple=total>1,adopted=records.filter(({t})=>t.adopted!==false).length;
+      const controls=records.map(({t,i})=>targetRow(t,i,false,multiple)).join('')+suggestions.map(({c,i})=>`<label class="mosaic-target-row"><input type="checkbox" data-proposal="${esc(e.id)}:${i}" ${activeCount()>=8?'disabled':''} aria-label="采用 ${esc(c.label)}"><span>${multiple?esc(c.label)+' · ':''}已采用</span></label>`).join('');
+      return `<div class="mosaic-event-card ${adopted?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong>${total?'':'<small>请先框选区域</small>'}<small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-checks">${multiple&&scanEvent!==e.id?`<button data-scan-event="${esc(e.id)}">${adopted}/${total} 已采用 · 展开</button>`:controls||'<label class="mosaic-target-row" title="请先框选区域"><input type="checkbox" disabled>已采用</label>'}</div></div>`;
     }).join('')+targets.map((t,i)=>grouped.has(i)?'':targetRow(t,i,true)).join('');
+    if($('mosaicScanEvents').innerHTML!==html)$('mosaicScanEvents').innerHTML=html;
     $('mosaicScanMarkers').innerHTML=events.map(e=>`<button data-scan-marker="${esc(e.id)}" class="${e.status==='needs_review'?'needs-review':''}" aria-label="查看 ${esc(e.label)} ${clock(e.start)}" title="${clock(e.start)}–${clock(e.end-1)} ${esc(e.label)}" style="left:${100*e.start/meta().frame_count}%;width:${100*(e.end-e.start)/meta().frame_count}%"></button>`).join('');
   }
   function checkedReport(report){
@@ -95,7 +118,7 @@
       while(valid()){
         if(typeof state.enabled!=='boolean')throw Error('整段识别响应无效，请重试读取。');
         context.session.capabilities.region_recognition=state.enabled;
-        scanReport=checkedReport(state.report);paint();
+        const firstReport=!scanReport;scanReport=checkedReport(state.report);paint();if(firstReport&&scanReport)status('点击片段查看区域，右侧勾选决定是否采用。');
         if(scanReport?.status!=='running')break;
         await new Promise(r=>setTimeout(r,1000));if(!valid())return;
         state=await api(endpoint+'/scan');
@@ -105,6 +128,8 @@
   }
   function viewScanEvent(id){
     const event=scanReport?.events?.find(e=>e.id===id);if(!event)return;
+    const savedIndex=targets.findIndex(t=>belongs(t,event));
+    if(savedIndex>=0){viewTarget(savedIndex,id);return;}
     resetCandidate();scanEvent=id;
     $('mosaicStart').value=clock(event.start);$('mosaicEnd').value=clock(event.end-1);$('mosaicAdjust').open=event.status==='needs_review';
     candidates=event.candidates.map(c=>({...c}));selected=candidates[0]?.id??null;
@@ -159,7 +184,7 @@
       if(!valid())return;
       if(job.status!=='completed')throw Error(job.error||'识别未完成，请重试');
       if(job.seed_frame!==frame||job.start!==r.start||job.end!==r.end||!Array.isArray(job.candidates)||job.candidates.length>8||job.candidates.some(c=>!validBox(c)))throw Error('识别结果与当前参考帧不匹配，请重试');
-      candidates=job.candidates.map(c=>({...c}));selected=candidates[0]?.id??null;
+      candidates=job.candidates.map(c=>({...c}));selected=candidates[0]?.id??null;if(candidates.length)$('mosaicAdjust').open=false;
       status(candidates.length?'选中候选框，可调整位置和大小，确认后加入待跟踪目标。':'本帧未找到候选区域。可换一帧识别，或手动框选。');
     }catch(e){if(valid())status(e.message,true);}
     finally{if(valid()){loading=false;paint();}}
@@ -187,7 +212,7 @@
       const session=await prepare(batch,asset);
       if(version!==epoch||!dialog.open)return;context={batch,asset,session};
       $('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);$('mosaicSeek').max=meta().frame_count-1;
-      try{const saved=JSON.parse(localStorage.getItem(key())||'[]');if(Array.isArray(saved)&&saved.length<=8&&saved.every(t=>validBox(t)&&[t.start,t.end,t.seed_frame].every(Number.isInteger)&&t.start>=0&&t.start<=t.seed_frame&&t.seed_frame<t.end&&t.end<=meta().frame_count&&typeof t.label==='string'&&typeof t.reason==='string'))targets=saved;}catch{}
+      loadDraft();
       $('mosaicWorkspace').hidden=false;video.src=appUrl(base()+'/source');video.load();
       status(session.capabilities?.region_recognition?'点击“识别整段视频”，自动查找需要打码的时间段和区域。':'本机未启用 Gemini 识别，可先手动框选目标。');
       paint();loadFrame();scanVideo();
@@ -223,24 +248,42 @@
   $('mosaicPrevious').onclick=()=>seek(wanted-1);$('mosaicNext').onclick=()=>seek(wanted+1);
   $('mosaicSeek').oninput=e=>seek(Number(e.target.value));
   $('mosaicFrameNumber').onchange=guard(e=>seek(parse(e.target.value)));
-  for(const id of ['mosaicStart','mosaicEnd'])$(id).onchange=guard(()=>{resetCandidate();range();status(inRange()?'范围已更新，请识别参考帧。':'请将参考帧移到所选时间范围内。');paint();});
+  for(const id of ['mosaicStart','mosaicEnd'])$(id).onchange=guard(()=>{range();if(editing===null)resetCandidate();status(inRange()?'范围已更新，请识别参考帧。':'请将参考帧移到所选时间范围内。');paint();});
   $('mosaicMarkStart').onclick=()=>{$('mosaicStart').value=clock(wanted);$('mosaicStart').dispatchEvent(new Event('change'));};
   $('mosaicMarkEnd').onclick=()=>{$('mosaicEnd').value=clock(wanted);$('mosaicEnd').dispatchEvent(new Event('change'));};
   $('mosaicCandidates').onclick=e=>{const b=e.target.closest('[data-candidate]');if(b){if(selected!==b.dataset.candidate)editing=null;selected=b.dataset.candidate;paint();}};
   for(const axis of ['X','Y','W','H'])$('mosaicBox'+axis).onchange=guard(e=>{const c=selectedBox();if(!c)return;const next={...c,[axis.toLowerCase()]:Number(e.target.value)};if(!validBox(next)){paint();throw Error('矩形必须位于画面内，宽高至少 1 像素');}Object.assign(c,next);paint();});
   $('mosaicConfirm').onclick=guard(()=>{
     if($('mosaicConfirm').disabled)return;const c=selectedBox(),r=range();
-    if(editing===null&&targets.length>=8)throw Error('最多保存 8 个待跟踪目标');
-    const target={label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,...r,seed_frame:wanted};
+    const currentEvent=scanReport?.events?.find(e=>e.id===scanEvent);
+    if(editing===null&&currentEvent){const existing=targets.findIndex(t=>belongs(t,currentEvent)&&t.proposal===c.id);if(existing>=0)editing=existing;}
+    if((editing===null||targets[editing]?.adopted===false)&&activeCount()>=8)throw Error('最多采用 8 个区域，请先取消一个。');
+    if(editing===null&&targets.length>=320)throw Error('本机草稿区域已达上限。');
+    const event=scanReport?.events?.find(e=>e.id===scanEvent);
+    const target={...(editing===null?{uid:regionId(),originStart:event?.start,originEnd:event?.end,proposal:c.id}:targets[editing]),adopted:true,label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,...r,seed_frame:wanted};
     if(editing===null){targets.push(target);editing=targets.length-1;}else targets[editing]=target;
     paint();if(save()){status('目标已保存为待跟踪；当前只确认参考帧，尚未生成马赛克。');return true;}
   });
+  function viewTarget(i,eventId){
+    const t=targets[i];if(!t)return;
+    resetCandidate();editing=i;scanEvent=eventId??scanReport?.events?.find(e=>belongs(t,e))?.id??null;
+    candidates=[{...t,id:'saved'}];selected='saved';$('mosaicAdjust').open=false;
+    $('mosaicStart').value=clock(t.start);$('mosaicEnd').value=clock(t.end-1);seek(t.seed_frame,true);
+    status('正在查看保存的区域；取消勾选不会丢失调整。');
+  }
   $('mosaicTargets').onclick=e=>{
+    const proposal=e.target.closest('[data-proposal]');
+    if(proposal){
+      const [id,index]=proposal.dataset.proposal.split(':'),event=scanReport?.events?.find(v=>v.id===id),c=event?.candidates[Number(index)];
+      if(!c||activeCount()>=8||targets.length>=320){paint();return;}
+      targets.push({...c,uid:regionId(),adopted:true,proposal:c.id,originStart:event.start,originEnd:event.end,start:event.start,end:event.end,seed_frame:event.seed_frame});
+      if(save()){paint();status('已采用并保存；点击片段可继续检查。');}return;
+    }
     const remove=e.target.closest('[data-target-remove]'),view=e.target.closest('[data-target-view]');
-    if(remove){targets.splice(Number(remove.dataset.targetRemove),1);resetCandidate();save();return;}
-    if(view){const i=Number(view.dataset.targetView),t=targets[i];resetCandidate();editing=i;candidates=[{...t,id:'saved'}];selected='saved';$('mosaicAdjust').open=false;$('mosaicStart').value=clock(t.start);$('mosaicEnd').value=clock(t.end-1);seek(t.seed_frame,true);status('正在查看已确认的参考帧，可调整后保存。');}
+    if(remove){const t=targets[Number(remove.dataset.targetRemove)];if(t.adopted===false&&activeCount()>=8){paint();status('最多采用 8 个区域，请先取消一个。',true);return;}t.adopted=t.adopted===false;if(save()){paint();status(t.adopted?'已恢复采用，保留原来的区域调整。':'已取消采用；框和时间已保留，可再次勾选。');}return;}
+    if(view)viewTarget(Number(view.dataset.targetView));
   };
-  $('mosaicClear').onclick=()=>{if(window.confirm('清空本机保存的马赛克目标？原片不会改变。')){targets=[];resetCandidate();save();}};
+  $('mosaicClear').onclick=()=>{if(window.confirm('取消全部采用？区域调整会保留，可重新勾选。')){targets.forEach(t=>t.adopted=false);if(save())paint();}};
   $('mosaicDraw').onclick=()=>{if($('mosaicDraw').disabled)return;drawing=!drawing;paint();if(drawing)status('在画面内拖出矩形；也可用像素输入框微调。');};
   function point(e){const r=overlay.getBoundingClientRect();return {x:Math.max(0,Math.min(meta().width,Math.round((e.clientX-r.left)/r.width*meta().width))),y:Math.max(0,Math.min(meta().height,Math.round((e.clientY-r.top)/r.height*meta().height)))};}
   overlay.onpointerdown=e=>{
