@@ -57,6 +57,9 @@
     $('mosaicReviewInfo').textContent=`参考帧 ${clock(wanted)} · 检查区域后采用，或采用并进入下一段。`;
     for(const axis of ['X','Y','W','H'])$('mosaicBox'+axis).value=c?c[axis.toLowerCase()]:'';
     $('mosaicCandidates').innerHTML=candidates.map(c=>`<button data-candidate="${esc(c.id)}" aria-pressed="${c.id===selected}"><strong>${esc(c.label)}</strong><small>${esc(c.reason)}</small></button>`).join('');
+    const currentEvent=scanReport?.events?.find(e=>e.id===scanEvent);
+    const savedRegions=currentEvent?targets.map((t,i)=>({t,i})).filter(({t})=>belongs(t,currentEvent)):[];
+    if(editing!==null&&savedRegions.length>1)$('mosaicCandidates').innerHTML=savedRegions.map(({t,i})=>`<button data-saved-adjust="${i}" aria-pressed="${i===editing}">${esc(t.label)}</button>`).join('');
     $('mosaicTargetCount').textContent=`${activeCount()} / 8`;
     $('mosaicEmpty').hidden=!!targets.length;
     $('mosaicClear').disabled=!activeCount();
@@ -79,15 +82,15 @@
     }
     if(scanLoading&&events.length)message+=`\n已发现 ${events.length} 个疑似时间段，${events.filter(e=>e.status==='localized').length} 段已定位，可先点击检查。`;
     $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').title=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
-    const targetRow=(t,i,standalone=false,multiple=false)=>`<div class="mosaic-target-row"><input type="checkbox" ${t.adopted!==false?'checked':''} ${t.adopted===false&&activeCount()>=8?'disabled':''} data-target-remove="${i}" aria-label="${t.adopted!==false?'取消采用':'采用'} ${esc(t.label)}"><button data-target-view="${i}" title="回看并修改区域"><span>${standalone?`${clock(t.start)}–${clock(t.end-1)} · `:''}${multiple?esc(t.label)+' · ':''}已采用</span></button></div>`;
+    const targetRow=(t,i,standalone=false,multiple=false)=>`<div class="mosaic-target-row"><input type="checkbox" ${t.adopted!==false?'checked':''} ${t.adopted===false&&activeCount()>=8?'disabled':''} data-target-remove="${i}" aria-label="${t.adopted!==false?'取消采用':'采用'} ${esc(t.label)}"><button data-target-view="${i}" title="回看并修改区域"><span>${standalone?`${clock(t.start)}–${clock(t.end-1)} · `:''}${multiple?esc(t.label)+' · ':''}${t.adopted!==false?'已采用':'采用'}</span></button></div>`;
     const grouped=new Set();
     const html=events.map(e=>{
       const records=targets.map((t,i)=>({t,i})).filter(({t})=>belongs(t,e));
       records.forEach(({i})=>grouped.add(i));
       const suggestions=e.candidates.map((c,i)=>({c,i})).filter(({c})=>!records.some(({t})=>t.proposal===c.id||(!t.proposal&&t.seed_frame===e.seed_frame&&t.x===c.x&&t.y===c.y&&t.w===c.w&&t.h===c.h)));
       const total=records.length+suggestions.length,multiple=total>1,adopted=records.filter(({t})=>t.adopted!==false).length;
-      const controls=records.map(({t,i})=>targetRow(t,i,false,multiple)).join('')+suggestions.map(({c,i})=>`<label class="mosaic-target-row"><input type="checkbox" data-proposal="${esc(e.id)}:${i}" ${activeCount()>=8?'disabled':''} aria-label="采用 ${esc(c.label)}"><span>${multiple?esc(c.label)+' · ':''}已采用</span></label>`).join('');
-      return `<div class="mosaic-event-card ${adopted?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong>${total?'':'<small>请先框选区域</small>'}<small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-checks">${multiple&&scanEvent!==e.id?`<button data-scan-event="${esc(e.id)}">${adopted}/${total} 已采用 · 展开</button>`:controls||'<label class="mosaic-target-row" title="请先框选区域"><input type="checkbox" disabled>已采用</label>'}</div></div>`;
+      const controls=records.map(({t,i})=>targetRow(t,i,false,multiple)).join('')+suggestions.map(({c,i})=>`<label class="mosaic-target-row"><input type="checkbox" data-proposal="${esc(e.id)}:${i}" ${activeCount()>=8?'disabled':''} aria-label="采用 ${esc(c.label)}"><span>${multiple?esc(c.label)+' · ':''}采用</span></label>`).join('');
+      return `<div class="mosaic-event-card ${adopted?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong>${total?'':'<small>请先框选区域</small>'}<small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-checks">${multiple?`<label class="mosaic-target-row"><input type="checkbox" data-event-adopt="${esc(e.id)}" ${adopted===total?'checked':''} aria-label="${adopted===total?'取消采用':'采用'} ${esc(e.label)}"><span>${adopted===total?'已采用':adopted?'部分采用':'采用'}</span></label>`:controls||`<button data-event-draw="${esc(e.id)}">框选区域</button>`}</div></div>`;
     }).join('')+targets.map((t,i)=>grouped.has(i)?'':targetRow(t,i,true)).join('');
     if($('mosaicScanEvents').innerHTML!==html)$('mosaicScanEvents').innerHTML=html;
     $('mosaicScanMarkers').innerHTML=events.map(e=>`<button data-scan-marker="${esc(e.id)}" class="${e.status==='needs_review'?'needs-review':''}" aria-label="查看 ${esc(e.label)} ${clock(e.start)}" title="${clock(e.start)}–${clock(e.end-1)} ${esc(e.label)}" style="left:${100*e.start/meta().frame_count}%;width:${100*(e.end-e.start)/meta().frame_count}%"></button>`).join('');
@@ -251,7 +254,7 @@
   for(const id of ['mosaicStart','mosaicEnd'])$(id).onchange=guard(()=>{range();if(editing===null)resetCandidate();status(inRange()?'范围已更新，请识别参考帧。':'请将参考帧移到所选时间范围内。');paint();});
   $('mosaicMarkStart').onclick=()=>{$('mosaicStart').value=clock(wanted);$('mosaicStart').dispatchEvent(new Event('change'));};
   $('mosaicMarkEnd').onclick=()=>{$('mosaicEnd').value=clock(wanted);$('mosaicEnd').dispatchEvent(new Event('change'));};
-  $('mosaicCandidates').onclick=e=>{const b=e.target.closest('[data-candidate]');if(b){if(selected!==b.dataset.candidate)editing=null;selected=b.dataset.candidate;paint();}};
+  $('mosaicCandidates').onclick=e=>{const saved=e.target.closest('[data-saved-adjust]');if(saved){viewTarget(Number(saved.dataset.savedAdjust));return;}const b=e.target.closest('[data-candidate]');if(b){if(selected!==b.dataset.candidate)editing=null;selected=b.dataset.candidate;paint();}};
   for(const axis of ['X','Y','W','H'])$('mosaicBox'+axis).onchange=guard(e=>{const c=selectedBox();if(!c)return;const next={...c,[axis.toLowerCase()]:Number(e.target.value)};if(!validBox(next)){paint();throw Error('矩形必须位于画面内，宽高至少 1 像素');}Object.assign(c,next);paint();});
   $('mosaicConfirm').onclick=guard(()=>{
     if($('mosaicConfirm').disabled)return;const c=selectedBox(),r=range();
@@ -272,6 +275,19 @@
     status('正在查看保存的区域；取消勾选不会丢失调整。');
   }
   $('mosaicTargets').onclick=e=>{
+    const draw=e.target.closest('[data-event-draw]');
+    if(draw){viewScanEvent(draw.dataset.eventDraw);drawing=true;paint();status('在预览画面拖出需要遮挡的区域，然后点击采用。');return;}
+    const group=e.target.closest('[data-event-adopt]');
+    if(group){
+      const event=scanReport.events.find(v=>v.id===group.dataset.eventAdopt);
+      const records=targets.filter(t=>belongs(t,event));
+      const missing=event.candidates.filter(c=>!records.some(t=>t.proposal===c.id||(!t.proposal&&t.seed_frame===event.seed_frame&&t.x===c.x&&t.y===c.y&&t.w===c.w&&t.h===c.h)));
+      const adopt=group.checked;
+      if(adopt&&(activeCount()+records.filter(t=>t.adopted===false).length+missing.length>8||targets.length+missing.length>320)){paint();status('最多采用 8 个区域，请先取消其他片段。',true);return;}
+      records.forEach(t=>t.adopted=adopt);
+      if(adopt)missing.forEach(c=>targets.push({...c,uid:regionId(),adopted:true,proposal:c.id,originStart:event.start,originEnd:event.end,start:event.start,end:event.end,seed_frame:event.seed_frame}));
+      if(save()){paint();status(adopt?'已采用该片段的全部区域。':'已取消该片段；区域调整已保留。');}return;
+    }
     const proposal=e.target.closest('[data-proposal]');
     if(proposal){
       const [id,index]=proposal.dataset.proposal.split(':'),event=scanReport?.events?.find(v=>v.id===id),c=event?.candidates[Number(index)];

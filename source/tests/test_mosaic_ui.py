@@ -402,27 +402,49 @@ def test_legacy_draft_import_and_cross_page_conflict(editor):
     assert editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v2'))))[0].x")==20
 
 
-def test_adjustment_keeps_stage_and_actions_fixed(editor):
+def test_compact_review_prioritizes_preview_and_keeps_actions_fixed(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').click()
     before=editor.locator('#mosaicStage').bounding_box()
     action=editor.locator('#mosaicConfirmNext').bounding_box()
     editor.locator('#mosaicAdjustToggle').click()
-    assert editor.locator('#mosaicStage').bounding_box()==before
+    assert before['height'] >= 350
+    assert editor.locator('.mosaic-header').bounding_box()['height'] <= 60
+    assert editor.locator('#mosaicStage').bounding_box()['height'] >= 200
     assert editor.locator('#mosaicConfirmNext').bounding_box()==action
 
 
-def test_multiple_regions_independent(editor):
+def test_multiple_regions_toggle_together_and_keep_saved_geometry(editor):
     scan_result(editor)
     editor.evaluate("scanJob.events[0].candidates.push({...findings[0],id:'1',x:10,w:20,label:'区域二'})")
     open_auto(editor);editor.locator('#mosaicScan').click()
-    editor.locator('[data-scan-event="e1"]').first.click()
-    editor.locator('[data-proposal="e1:0"]').click()
-    editor.locator('[data-proposal="e1:1"]').click()
+    toggle=editor.locator('[data-event-adopt="e1"]')
+    assert toggle.count()==1
+    assert toggle.locator('..').inner_text()=='采用'
+    toggle.click()
     assert editor.locator('#mosaicTargetCount').inner_text()=='2 / 8'
-    editor.locator('[data-target-remove="0"]').click()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'
-    assert editor.locator('[data-target-remove="1"]').is_checked()
+    assert toggle.locator('..').inner_text()=='已采用'
+    toggle.click()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='0 / 8'
+    assert toggle.locator('..').inner_text()=='采用'
+    toggle.click()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='2 / 8'
+    assert editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v2')))).length")==2
+
+
+def test_missing_box_offers_action_instead_of_disabled_adopted(editor):
+    scan_result(editor,needs_review=True);open_auto(editor);editor.locator('#mosaicScan').click()
+    card=editor.locator('[data-mosaic-card="e1"]')
+    assert card.locator('input[type=checkbox]').count()==0
+    card.locator('[data-event-draw]').click()
+    assert editor.locator('#mosaicDraw').inner_text()=='在画面拖出矩形'
+
+
+def test_unchecked_saved_region_label(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click()
+    editor.locator('[data-target-remove]').click()
+    assert editor.locator('[data-target-view]').inner_text()=='采用'
 
 
 def test_edit_time_keeps_record_in_same_card(editor):
