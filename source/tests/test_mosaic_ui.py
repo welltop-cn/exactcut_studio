@@ -191,7 +191,7 @@ def test_unlocalized_segment_remains_for_review(editor):
     open_auto(editor)
     editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').wait_for()
-    assert '请先框选区域' in editor.locator('#mosaicScanEvents').inner_text()
+    assert '未采用 · 尚无区域，请先框选' in editor.locator('#mosaicScanEvents').inner_text()
     editor.locator('[data-scan-event="e1"]').click()
     assert editor.locator('#mosaicStart').input_value()=='00:01:00'
     assert editor.locator('#mosaicConfirm').is_disabled()
@@ -381,7 +381,7 @@ def test_draft_storage_failure_rolls_back_checkbox(editor):
     editor.locator('[data-proposal]').click()
     assert not editor.locator('[data-proposal]').is_checked()
     assert '存储不可用' in editor.locator('#mosaicStatus').inner_text()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='0 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='0 个区域（上限 8 个）'
 
 
 def test_legacy_draft_import_and_cross_page_conflict(editor):
@@ -422,13 +422,13 @@ def test_multiple_regions_toggle_together_and_keep_saved_geometry(editor):
     assert toggle.count()==1
     assert toggle.locator('..').inner_text()=='采用'
     toggle.click()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='2 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='2 个区域（上限 8 个）'
     assert toggle.locator('..').inner_text()=='已采用'
     toggle.click()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='0 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='0 个区域（上限 8 个）'
     assert toggle.locator('..').inner_text()=='采用'
     toggle.click()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='2 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='2 个区域（上限 8 个）'
     assert editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v2')))).length")==2
 
 
@@ -454,7 +454,7 @@ def test_edit_time_keeps_record_in_same_card(editor):
     editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicStart').dispatch_event('change')
     editor.locator('#mosaicConfirm').click()
     assert editor.locator('[data-mosaic-card="e1"] [data-target-view]').count()==1
-    assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='1 个区域（上限 8 个）'
 
 
 def test_eight_active_limit_allows_cancel_and_restore(editor):
@@ -469,7 +469,7 @@ def test_eight_active_limit_allows_cancel_and_restore(editor):
     assert editor.locator('[data-target-remove="0"]').is_disabled()
     editor.locator('[data-target-remove="8"]').click()
     editor.locator('[data-target-remove="0"]').click()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='8 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='8 个区域（上限 8 个）'
 
 
 def test_checkbox_then_confirm_does_not_duplicate_region(editor):
@@ -477,7 +477,7 @@ def test_checkbox_then_confirm_does_not_duplicate_region(editor):
     editor.locator('[data-scan-event="e1"]').click()
     editor.wait_for_function("!document.getElementById('mosaicConfirm').disabled")
     editor.locator('[data-proposal]').click();editor.locator('#mosaicConfirm').click()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='1 个区域（上限 8 个）'
 
 
 def test_tracking_preview_uses_saved_region_without_changing_adoption(editor):
@@ -496,7 +496,7 @@ def test_tracking_preview_uses_saved_region_without_changing_adoption(editor):
     assert editor.locator('#mosaicTrackVideo').is_visible()
     assert editor.evaluate('trackBody.target')=={'start':0,'end':300,'seed_frame':0,'x':40,'y':24,'w':80,'h':48}
     editor.locator('#mosaicTrackClose').click()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='1 个区域（上限 8 个）'
 
 
 def test_complete_video_submits_all_adopted_regions_and_restores_download(editor):
@@ -532,4 +532,4 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     editor.locator('#mosaicBatchView').wait_for()
     editor.locator('#mosaicBatchView').click()
     assert editor.locator('#mosaicBatchDownload').is_visible()
-    assert editor.locator('#mosaicTargetCount').inner_text()=='2 / 8'
+    assert editor.locator('#mosaicTargetCount').inner_text()=='2 个区域（上限 8 个）'

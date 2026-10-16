@@ -63,7 +63,7 @@
     const currentEvent=scanReport?.events?.find(e=>e.id===scanEvent);
     const savedRegions=currentEvent?targets.map((t,i)=>({t,i})).filter(({t})=>belongs(t,currentEvent)):[];
     if(editing!==null&&savedRegions.length>1)$('mosaicCandidates').innerHTML=savedRegions.map(({t,i})=>`<button data-saved-adjust="${i}" aria-pressed="${i===editing}">${esc(t.label)}</button>`).join('');
-    $('mosaicTargetCount').textContent=`${activeCount()} / 8`;
+    $('mosaicTargetCount').textContent=`${activeCount()} 个区域（上限 8 个）`;
     $('mosaicEmpty').hidden=!!targets.length;
     $('mosaicClear').disabled=!activeCount();
     paintScan();paintBatch();
@@ -93,7 +93,7 @@
       const suggestions=e.candidates.map((c,i)=>({c,i})).filter(({c})=>!records.some(({t})=>t.proposal===c.id||(!t.proposal&&t.seed_frame===e.seed_frame&&t.x===c.x&&t.y===c.y&&t.w===c.w&&t.h===c.h)));
       const total=records.length+suggestions.length,multiple=total>1,adopted=records.filter(({t})=>t.adopted!==false).length;
       const controls=records.map(({t,i})=>targetRow(t,i,false,multiple)).join('')+suggestions.map(({c,i})=>`<label class="mosaic-target-row"><input type="checkbox" data-proposal="${esc(e.id)}:${i}" ${activeCount()>=8?'disabled':''} aria-label="采用 ${esc(c.label)}"><span>${multiple?esc(c.label)+' · ':''}采用</span></label>`).join('');
-      return `<div class="mosaic-event-card ${adopted?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong>${total?'':'<small>请先框选区域</small>'}<small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-checks">${multiple?`<label class="mosaic-target-row"><input type="checkbox" data-event-adopt="${esc(e.id)}" ${adopted===total?'checked':''} aria-label="${adopted===total?'取消采用':'采用'} ${esc(e.label)}"><span>${adopted===total?'已采用':adopted?'部分采用':'采用'}</span></label>`:controls||`<button data-event-draw="${esc(e.id)}">框选区域</button>`}</div></div>`;
+      return `<div class="mosaic-event-card ${adopted?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong>${total?'':'<small>未采用 · 尚无区域，请先框选</small>'}<small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-checks">${multiple?`<label class="mosaic-target-row"><input type="checkbox" data-event-adopt="${esc(e.id)}" ${adopted===total?'checked':''} aria-label="${adopted===total?'取消采用':'采用'} ${esc(e.label)}"><span>${adopted===total?'已采用':adopted?'部分采用':'采用'}</span></label>`:controls||`<button data-event-draw="${esc(e.id)}">框选区域</button>`}</div></div>`;
     }).join('')+targets.map((t,i)=>grouped.has(i)?'':targetRow(t,i,true)).join('');
     if($('mosaicScanEvents').innerHTML!==html)$('mosaicScanEvents').innerHTML=html;
     $('mosaicScanMarkers').innerHTML=events.map(e=>`<button data-scan-marker="${esc(e.id)}" class="${e.status==='needs_review'?'needs-review':''}" aria-label="查看 ${esc(e.label)} ${clock(e.start)}" title="${clock(e.start)}–${clock(e.end-1)} ${esc(e.label)}" style="left:${100*e.start/meta().frame_count}%;width:${100*(e.end-e.start)/meta().frame_count}%"></button>`).join('');
