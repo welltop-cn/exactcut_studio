@@ -3,6 +3,7 @@
   const dialog=$('mosaicDialog'), video=$('mosaicSource'), image=$('mosaicFrame'), overlay=$('mosaicOverlay');
   let context=null, epoch=0, token=0, wanted=0, ready=-1, candidates=[], selected=null, targets=[], editing=null;
   let loading=false, frameLoading=false, drawing=false, pointer=null, frameUrl=null, controller=null, timer;
+  let batchJob=null,batchToken=0,batchLoading=false,batchError="";
   let trackToken=0;
   let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
   const base=()=>`/api/batches/${context.batch}/mosaics/${context.session.id}`;
@@ -65,7 +66,7 @@
     $('mosaicTargetCount').textContent=`${activeCount()} / 8`;
     $('mosaicEmpty').hidden=!!targets.length;
     $('mosaicClear').disabled=!activeCount();
-    paintScan();
+    paintScan();paintBatch();
     drawOverlay();
   }
   function paintScan(){
@@ -209,6 +210,7 @@
   }
   async function open(batch,asset){
     const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
+    batchToken++;batchJob=null;batchLoading=false;batchError='';
     scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;$('mosaicAdjust').open=false;
     image.hidden=true;overlay.hidden=true;$('mosaicWorkspace').hidden=true;$('mosaicTitle').textContent='马赛克 · '+asset.title;
     for(const v of $('assets').querySelectorAll('video'))v.pause();
@@ -220,7 +222,7 @@
       loadDraft();
       $('mosaicWorkspace').hidden=false;video.src=appUrl(base()+'/source');video.load();
       status(session.capabilities?.region_recognition?'点击“识别整段视频”，自动查找需要打码的时间段和区域。':'本机未启用 Gemini 识别，可先手动框选目标。');
-      paint();loadFrame();scanVideo();
+      paint();loadFrame();scanVideo();restoreBatch();
     }catch(e){if(version===epoch)status(e.message,true);}
   }
   function mount(){
@@ -301,6 +303,57 @@
     if(remove){const t=targets[Number(remove.dataset.targetRemove)];if(t.adopted===false&&activeCount()>=8){paint();status('最多采用 8 个区域，请先取消一个。',true);return;}t.adopted=t.adopted===false;if(save()){paint();status(t.adopted?'已恢复采用，保留原来的区域调整。':'已取消采用；框和时间已保留，可再次勾选。');}return;}
     if(view)viewTarget(Number(view.dataset.targetView));
   };
+  const targetFields=['start','end','seed_frame','x','y','w','h'];
+  const adoptedTargets=()=>targets.filter(t=>t.adopted!==false).map(t=>Object.fromEntries(targetFields.map(k=>[k,t[k]])));
+  const targetSignature=list=>JSON.stringify([...new Set(list.map(t=>JSON.stringify(targetFields.map(k=>t[k]))))].sort());
+  function paintBatch(){
+    if(!context)return;
+    const adopted=adoptedTargets(),segments=new Set(adopted.map(t=>`${t.start}:${t.end}`)).size;
+    const running=batchLoading||batchJob?.status==='running';
+    $('mosaicBatchStart').disabled=!context.session.capabilities?.tracking||!adopted.length||running;
+    $('mosaicBatchStart').textContent=running?'正在生成完整视频…':'生成完整打码视频';
+    $('mosaicBatchHint').textContent=batchError||(!context.session.capabilities?.tracking?'本机未启用动态跟踪':adopted.length?`已采用 ${segments} 个片段 · ${adopted.length} 个区域`:'先采用需要打码的区域');
+    $('mosaicBatchView').hidden=!batchJob&&!batchError;
+    $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
+    if(!$('mosaicBatchDialog').open)return;
+    const done=batchJob?.status==='completed';
+    $('mosaicBatchDownload').hidden=!done;$('mosaicBatchVideo').hidden=!done;
+    $('mosaicBatchWarnings').hidden=!done||!batchJob.result.warnings?.length;
+    $('mosaicBatchVersion').textContent=batchJob&&targetSignature(batchJob.targets)!==targetSignature(adopted)?'采用范围已变化。此结果对应生成时的选择；要应用新选择，请重新生成。':'';
+    if(done){
+      const result=batchJob.result;
+      $('mosaicBatchStatus').textContent=`完整视频已生成，包含 ${result.region_count} 个区域。`+(result.fallback_frames?`其中 ${result.fallback_frames} 帧失跟或跟踪失败，已整帧打码，请重点检查。`:'请播放检查是否漏遮或多遮。');
+      const url=appUrl(base()+'/render/'+batchJob.id+'/video?v='+encodeURIComponent(batchJob.completed_at||''));
+      if($('mosaicBatchVideo').getAttribute('src')!==url)$('mosaicBatchVideo').src=url;
+      $('mosaicBatchDownload').href=url;$('mosaicBatchDownload').download=context.asset.title+'_打码.mp4';
+      $('mosaicBatchWarnings').querySelector('ul').innerHTML=(result.warnings||[]).map(w=>`<li>区域 ${w.region} · ${clock(w.frame)} · ${esc(w.reason)}</li>`).join('');
+    }else $('mosaicBatchStatus').textContent=batchError||batchJob?.error||batchJob?.progress||'正在提交全部已采用区域…';
+  }
+  async function batchRequest(start=false){
+    if(!context)return;
+    const version=epoch,request=++batchToken,endpoint=base(),valid=()=>active(version)&&request===batchToken;
+    batchLoading=true;batchError='';paintBatch();
+    try{
+      const result=await api(endpoint+'/render',start?{targets:adoptedTargets(),reset_at:context.session.reset_at||''}:undefined);
+      if(!valid())return;batchJob=start?result:result.job||null;paintBatch();
+      while(valid()&&batchJob?.status==='running'){
+        await new Promise(r=>setTimeout(r,1200));if(!valid())return;
+        const job=await api(endpoint+'/render/'+batchJob.id);if(!valid())return;batchJob=job;paintBatch();
+      }
+    }catch(e){if(valid())batchError=e.message;}
+    finally{if(valid()){batchLoading=false;paintBatch();}}
+  }
+  function restoreBatch(){if(context.session.capabilities?.tracking)batchRequest();}
+  $('mosaicBatchStart').onclick=()=>{
+    if($('mosaicBatchStart').disabled)return;
+    const saved=targets[editing],c=selectedBox();
+    if(saved&&saved.adopted!==false){try{const r=range();if(!c||['x','y','w','h'].some(k=>c[k]!==saved[k])||r.start!==saved.start||r.end!==saved.end)throw Error('请先保存当前区域调整，再生成完整视频。');}catch(e){status(e.message,true);return;}}
+    batchJob=null;$('mosaicBatchVideo').pause();$('mosaicBatchVideo').removeAttribute('src');$('mosaicBatchVideo').load();
+    $('mosaicBatchDialog').showModal();batchRequest(true);
+  };
+  $('mosaicBatchView').onclick=()=>{$('mosaicBatchDialog').showModal();paintBatch();};
+  $('mosaicBatchClose').onclick=()=>$('mosaicBatchDialog').close();
+  $('mosaicBatchDialog').addEventListener('close',()=>{$('mosaicBatchVideo').pause();$('mosaicBatchVideo').removeAttribute('src');$('mosaicBatchVideo').load();});
   $('mosaicTrackClose').onclick=()=>$('mosaicTrackDialog').close();
   $('mosaicTrackDialog').addEventListener('close',()=>{trackToken++;$('mosaicTrackVideo').pause();$('mosaicTrackVideo').removeAttribute('src');$('mosaicTrackVideo').load();});
   $('mosaicTrack').onclick=async()=>{

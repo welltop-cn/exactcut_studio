@@ -1,0 +1,197 @@
+"""Full-length mosaic artifacts from a frozen set of adopted regions."""
+import re
+import subprocess
+import threading
+from pathlib import Path
+from PIL import Image, ImageChops
+from . import cutting, mosaic_session as sessions, mosaic_locate, mosaic_tracking as tracking
+from . import cutting_access, workflow, storage
+from .media import bounded_ffmpeg
+from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
+
+
+def validate_targets(meta,targets):
+    if not isinstance(targets,list) or not 1<=len(targets)<=8:
+        raise cutting.CutError('请采用 1～8 个区域后生成完整视频')
+    checked=[tracking.validate_target(meta,t) for t in targets]
+    unique={json_sha256(t):t for t in checked}
+    return sorted(unique.values(),key=lambda t:(t['start'],t['end'],t['seed_frame'],t['x'],t['y'],t['w'],t['h']))
+
+
+def union_mask(frame,tracks,size):
+    mask=Image.new('L',size)
+    for track in tracks:
+        target=track['target']
+        if not target['start']<=frame<target['end']:continue
+        if track.get('failed'):return Image.new('L',size,255)
+        index=frame-target['start'];record=track['result']['frames'][index]
+        if record['box'] is None:return Image.new('L',size,255)
+        path=Path(track['directory'])/'masks'/f'{index:06d}.png'
+        try:
+            with Image.open(path) as image:
+                if image.size!=(track['result']['width'],track['result']['height']):raise ValueError('mask size')
+                current=image.convert('L').resize(size,Image.Resampling.NEAREST)
+                if not current.getbbox():raise ValueError('missing foreground')
+                mask=ImageChops.lighter(mask,current)
+        except (OSError,ValueError):raise cutting.CutError('跟踪遮罩文件不完整，请重新生成') from None
+    return mask
+
+
+def compose(source,output,meta,tracks,progress=lambda text:None):
+    output=Path(output);output.parent.mkdir(parents=True,exist_ok=True)
+    width=min(640,meta['width']);height=max(2,round(meta['height']*width/meta['width']/2)*2)
+    size=(width,height);rate=f"{meta['fps_num']}/{meta['fps_den']}"
+    mask_video=output.parent/'combined-mask.mkv';partial=output.with_name(output.stem+'.partial.mp4')
+    progress('正在合并全部区域遮罩…')
+    with (output.parent/'mask-encode.log').open('wb') as log:
+        process=subprocess.Popen(bounded_ffmpeg(['ffmpeg','-y','-v','error','-f','rawvideo','-pix_fmt','gray','-s',f'{width}x{height}','-r',rate,'-i','pipe:0','-an','-c:v','ffv1',str(mask_video)]),stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
+        timer=threading.Timer(600,process.kill);timer.start()
+        try:
+            black=bytes(width*height)
+            for frame in range(meta['frame_count']):
+                active=any(t['target']['start']<=frame<t['target']['end'] for t in tracks)
+                process.stdin.write(union_mask(frame,tracks,size).tobytes() if active else black)
+                if frame%120==0:progress(f"合并遮罩 {frame+1} / {meta['frame_count']} 帧")
+            process.stdin.close()
+            if process.wait(timeout=60):raise cutting.CutError('遮罩视频生成失败，未生成成片')
+        except Exception:
+            process.kill();process.wait()
+            raise
+        finally:timer.cancel()
+    progress('正在合成完整视频并保留原音频…')
+    w,h=meta['width'],meta['height']
+    # RGB planar masks avoid limited-range luma turning white masks into partial blends.
+    graph=(f'[0:v]format=gbrp,split=2[original][small];'
+           f'[small]scale={max(1,w//30)}:{max(1,h//30)}:flags=area,scale={w}:{h}:flags=neighbor[pixel];'
+           f'[1:v]settb=expr={meta["fps_den"]}/{meta["fps_num"]},setpts=N,scale={w}:{h}:flags=neighbor,format=gbrp[mask];'
+           '[original][pixel][mask]maskedmerge,format=yuv420p[out]')
+    cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-i',str(mask_video),'-filter_complex',graph,
+                 '-map','[out]','-map','0:a:0?','-c:v','libx264','-crf','18','-preset','fast','-c:a','copy','-movflags','+faststart',str(partial)],900)
+    progress('正在校验完整视频的帧数、分辨率和音频…')
+    actual=cutting.probe_source(partial)
+    if actual!=meta:raise cutting.CutError('完整视频校验未通过，原片保留')
+    partial.replace(output);mask_video.unlink(missing_ok=True)
+    return {'metadata':actual,'sha256':file_sha256(output),'bytes':output.stat().st_size}
+
+
+def recover(path):
+    if not path.is_file():return None
+    job=read_json(path)
+    if job['status']=='running':
+        try:lease=cutting.lock_file(path.with_suffix('.worker.lock'))
+        except cutting.CutError:return job
+        lease.close();job.update(status='failed',error='上次完整视频生成已中断，请重新生成')
+        write_json_atomic(path,job)
+    return job
+
+
+def state(bid,sid,jid):
+    if not isinstance(jid,str) or not re.fullmatch('[0-9a-f]{32}',jid):raise cutting.CutError('完整视频任务不存在',404)
+    path=sessions.session_path(bid,sid)/f'render-{jid}.json'
+    with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+        job=recover(path)
+        if not job:raise cutting.CutError('完整视频任务不存在',404)
+        mosaic_locate.current(bid,sid,job)
+        return job
+
+
+def latest(bid,sid):
+    path=sessions.session_path(bid,sid)/'render-latest.json'
+    if not path.is_file():return {'job':None}
+    return {'job':state(bid,sid,read_json(path)['id'])}
+
+
+def video_file(bid,sid,jid):
+    job=state(bid,sid,jid)
+    if job['status']!='completed':raise cutting.CutError('完整打码视频尚未生成',409)
+    output=sessions.session_path(bid,sid)/f'render-{jid}'/'mosaic.mp4'
+    if not output.is_file():raise cutting.CutError('成片文件已失效，请重新生成',410)
+    return output
+
+
+def start(bid,sid,targets,reset_at):
+    session=sessions.read_session(bid,sid)
+    with cutting_access.gate(workflow.folder(bid),session['request_id']):
+        cutting.require_reset(session,reset_at)
+        cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
+        targets=validate_targets(session['metadata'],targets)
+        if not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
+        cfg=tracking.settings()
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'config':cfg,'engine':1,'fallback':'full_frame'})[:32]
+        path=sessions.session_path(bid,sid)/f'render-{jid}.json'
+        with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+            old=recover(path)
+            if old and (old['status']=='running' or old['status']=='completed' and (path.parent/f'render-{jid}'/'mosaic.mp4').is_file()):
+                write_json_atomic(path.parent/'render-latest.json',{'id':jid});return old
+            leases=[]
+            try:
+                for lock,shared in [(cutting.lock_root()/'compute.lock',False),(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
+                    leases.append(cutting.lock_file(lock,shared=shared))
+                job={'schema_version':1,'id':jid,'status':'running','stage':'tracking','source_sha256':session['source_sha256'],'reset_at':reset_at,
+                     'targets':targets,'created_at':now_iso(),'progress':f'准备处理 {len(targets)} 个已采用区域','completed_regions':0,'total_regions':len(targets)}
+                write_json_atomic(path,job);write_json_atomic(path.parent/'render-latest.json',{'id':jid})
+            except Exception:
+                for lease in reversed(leases):lease.close()
+                raise
+    try:threading.Thread(target=_work,args=(bid,sid,path,job,cfg,leases),daemon=True).start()
+    except Exception:
+        for lease in reversed(leases):lease.close()
+        raise
+    return job
+
+
+def prepare_track(bid,sid,session,target,cfg,directory):
+    # compute.lock is already held by this batch. Never recursively enqueue a single job.
+    jid=tracking.identity(session,target,cfg);root=sessions.session_path(bid,sid)
+    cached=root/f'track-{jid}.json';cache_dir=root/f'track-{jid}'
+    if cached.is_file():
+        previous=read_json(cached)
+        if previous['status']=='completed' and (cache_dir/'result.json').is_file():
+            result=read_json(cache_dir/'result.json')
+            tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
+            if all((cache_dir/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
+                return {'target':target,'directory':cache_dir,'result':result}
+    # A retry of this batch can reuse its own completed per-target inference.
+    if (directory/'result.json').is_file():
+        result=read_json(directory/'result.json')
+        tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
+        if all((directory/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
+            return {'target':target,'directory':directory,'result':result}
+    result=tracking.run_tracker(root/'source.mp4',directory,session['metadata'],target,cfg)
+    return {'target':target,'directory':directory,'result':result}
+
+
+def _work(bid,sid,path,job,cfg,leases):
+    def update(**fields):
+        with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+            saved=read_json(path);saved.update(fields);write_json_atomic(path,saved)
+    try:
+        session=mosaic_locate.current(bid,sid,job);source=path.parent/'source.mp4';directory=path.parent/f"render-{job['id']}"
+        if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败')
+        storage.require_space(source.parent,source.stat().st_size*3+2*1024**3)
+        directory.mkdir(exist_ok=True);tracks=[];warnings=[];fallback=set()
+        for index,target in enumerate(job['targets']):
+            update(progress=f"正在跟踪第 {index+1} / {len(job['targets'])} 个区域",completed_regions=index)
+            try:
+                track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}')
+                for frame in track['result']['frames']:
+                    if frame['box'] is None:fallback.add(frame['frame'])
+                for warning in track['result'].get('warnings',[]):warnings.append({'region':index+1,**warning})
+                empty=sum(f['box'] is None for f in track['result']['frames'])
+                if empty:warnings.append({'region':index+1,'frame':target['start'],'reason':f'{empty} 帧失跟，已整帧打码'})
+            except (cutting.CutError,subprocess.TimeoutExpired):
+                track={'target':target,'failed':True}
+                fallback.update(range(target['start'],target['end']))
+                warnings.append({'region':index+1,'frame':target['start'],'reason':'跟踪未完成，该区域整个作用时间已整帧打码'})
+            tracks.append(track)
+        update(stage='composing',completed_regions=len(tracks))
+        result=compose(source,directory/'mosaic.mp4',session['metadata'],tracks,lambda text:update(progress=text))
+        with cutting_access.gate(workflow.folder(bid),session['request_id']):
+            mosaic_locate.current(bid,sid,job)
+            if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
+            result.update(fallback_frames=len(fallback),warnings=warnings,region_count=len(tracks),notice='请预览检查遮挡效果；无告警不代表没有漏遮。')
+            update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='完整打码视频已生成，可预览和下载')
+    except Exception as exc:
+        update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '完整视频生成失败，请重试；原片保留')
+    finally:
+        for lease in reversed(leases):lease.close()

@@ -78,6 +78,10 @@ def preview_file(bid,sid,jid):
     return path
 
 
+def identity(session,target,cfg):
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':1})[:32]
+
+
 def start(bid,sid,target,reset_at):
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
@@ -86,7 +90,7 @@ def start(bid,sid,target,reset_at):
         target=validate_target(session['metadata'],target)
         if not enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'target':target,'config':cfg,'engine':1})[:32]
+        jid=identity(session,target,cfg)
         path=sessions.session_path(bid,sid)/f'track-{jid}.json'
         with cutting.lock_file(path.parent/'track-state.lock',blocking=True):
             previous=recover(path)

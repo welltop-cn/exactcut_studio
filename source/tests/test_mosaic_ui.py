@@ -497,3 +497,39 @@ def test_tracking_preview_uses_saved_region_without_changing_adoption(editor):
     assert editor.evaluate('trackBody.target')=={'start':0,'end':300,'seed_frame':0,'x':40,'y':24,'w':80,'h':48}
     editor.locator('#mosaicTrackClose').click()
     assert editor.locator('#mosaicTargetCount').inner_text()=='1 / 8'
+
+
+def test_complete_video_submits_all_adopted_regions_and_restores_download(editor):
+    editor.evaluate('''() => {
+      session.capabilities.tracking=true;
+      localStorage.setItem('exactcut.mosaic.targets.v1.fixture.batch.session.'+'a'.repeat(64)+'.',JSON.stringify([
+        {...findings[0],start:10,end:20,seed_frame:15},
+        {...findings[0],x:10,start:30,end:40,seed_frame:35},
+        {...findings[0],start:50,end:60,seed_frame:55,adopted:false}
+      ]));
+      const old=api;window.batchJob=null;
+      window.api=async(url,body)=>{
+        if(url.endsWith('/render')){
+          if(body){window.batchBody=body;batchJob={id:'b'.repeat(32),status:'completed',targets:body.targets,result:{fallback_frames:2,warnings:[],region_count:2},completed_at:'now'};return batchJob;}
+          return {job:batchJob};
+        }
+        return old(url,body);
+      };
+    }''')
+    open_auto(editor)
+    button=editor.locator('#mosaicBatchStart')
+    assert button.is_visible() and button.is_enabled()
+    assert '2 个区域' in editor.locator('#mosaicBatchHint').inner_text()
+    button.click()
+    assert editor.locator('#mosaicBatchDialog').evaluate('(el)=>el.open')
+    assert editor.evaluate('batchBody.targets.length')==2
+    assert editor.evaluate('batchBody.targets.map(t=>t.start)')==[10,30]
+    assert editor.locator('#mosaicBatchDownload').is_visible()
+    assert editor.locator('#mosaicBatchVideo').is_visible()
+    assert '2 帧' in editor.locator('#mosaicBatchStatus').inner_text()
+    editor.locator('#mosaicBatchClose').click();editor.locator('#mosaicClose').click()
+    open_auto(editor)
+    editor.locator('#mosaicBatchView').wait_for()
+    editor.locator('#mosaicBatchView').click()
+    assert editor.locator('#mosaicBatchDownload').is_visible()
+    assert editor.locator('#mosaicTargetCount').inner_text()=='2 / 8'
