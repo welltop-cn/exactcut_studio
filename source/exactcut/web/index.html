@@ -203,6 +203,26 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 @media(max-width:900px){#mosaicWorkspace{grid-template-columns:minmax(0,1fr) 340px}}
 @media(max-width:700px){.mosaic-side{min-height:360px;max-height:65dvh}.mosaic-main{height:65dvh}.mosaic-review-actions{flex-wrap:wrap}#mosaicReviewInfo{white-space:normal}}
 
+
+/* One full-height list for both suggested intervals and adopted regions. */
+#mosaicTargets{flex:1;min-height:0;max-height:none;overflow:auto;margin:8px 0 0}
+#mosaicScanEvents{overflow:visible;max-height:none;margin:0;display:flex;gap:8px}
+.mosaic-main{position:relative}
+#mosaicAdjust{position:static;flex:none;width:100%;max-height:180px;overflow:auto;background:#202730;border:1px solid #68dec8;border-radius:8px}
+#mosaicAdjust[open]{display:grid;grid-template-columns:1fr 1fr}
+#mosaicAdjust summary{grid-column:1/-1;padding:6px 10px}
+#mosaicStage{min-height:80px}
+#mosaicAdjust:not([open]){display:none}
+#mosaicAdjust section{padding:12px}
+#mosaicDialog .mosaic-event-card{border:1px solid #3b4853;border-radius:8px;padding:6px;flex:none}
+#mosaicDialog .mosaic-event-card.adopted{border-color:#398b7a}
+#mosaicDialog .mosaic-event-card>[data-scan-event]{width:100%;border:0;background:transparent}
+#mosaicDialog .mosaic-target-row{display:flex;align-items:center;gap:6px;padding:6px;background:#163a32;border-radius:5px;margin-top:4px}
+#mosaicTargets [data-target-view]{font-size:12px;padding:7px;min-height:40px}
+#mosaicScanStatus{max-height:45px}
+#mosaicDialog #mosaicScan{width:auto;align-self:flex-start;background:transparent;color:#9bdfd2;border-color:#3b4853;font-weight:400}
+.mosaic-review-actions{flex-wrap:wrap}
+
 </style></head><body><header><div><strong>素材工作台</strong></div><div class="actions"><div class="header-group"><button id="helpNav" class="helper-nav-btn" type="button" title="制作流程与疑难解答">🤖 制作助手</button><button id="feedbackNav" class="header-btn" title="查看成片反馈汇总">📊 反馈汇总</button></div><span id="connection" class="header-connection">正在连接</span><span class="header-divider" aria-hidden="true"></span><div class="header-group"><span id="accountName" class="account-pill"></span><button id="usageNav" class="header-btn" hidden>用量</button><button id="storageNav" class="header-btn" hidden>磁盘与缓存</button><button id="accountsNav" class="header-btn" hidden>账户管理</button><button id="logoutButton" class="header-btn logout-btn">退出登录</button></div></div></header><div class="shell"><aside><button id="newBatch">＋ 新建项目</button><div class="eyebrow">制作批次</div><nav class="tabs"><button class="tab active" id="currentBatches">当前项目</button><button class="tab" id="archivedBatches">已归档</button></nav><div id="batchList"><p class="hint">正在加载…</p></div></aside><main>
 <section id="emptyWorkspace"><h1 id="emptyWorkspaceTitle">正在打开项目…</h1><p id="emptyWorkspaceHint" class="hint">正在恢复你的工作台。</p><button id="retryWorkspace" class="secondary" hidden>重试</button></section>
 <section id="workspace" hidden><div class="topline"><div><div class="eyebrow" id="batchName"></div><h1 id="batchTitle"></h1></div><div class="workspace-header-right"><span id="batchStatus" class="badge"></span><div class="actions project-actions"><button id="pauseButton" class="secondary" hidden>暂停执行</button><button id="resumeButton" hidden>继续执行</button><button id="archiveButton" class="secondary">归档项目</button><button id="unarchiveButton" class="secondary" hidden>复原项目</button><span class="hint" id="controlHint" hidden></span></div></div></div><div id="steps" class="flow"></div><div id="statusBanner" class="status-banner"><div id="liveMessage" class="notice" role="status"></div><div id="previewReady" class="preview-actions" hidden><span id="previewReadyTitle" hidden></span><button id="previewButton" class="secondary" hidden>生成轻量预览</button><button id="openPreview">▶ 播放成片</button></div></div><nav class="tabs"><button class="tab active" data-tab="editor">标准化内容</button><button class="tab" data-tab="progress">执行进度</button><button class="tab" data-tab="review">成片预览</button></nav>
@@ -245,16 +265,18 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
       <input id="mosaicSeek" type="range" min="0" max="0" value="0" step="1" aria-label="马赛克播放头">
       <div id="mosaicScanMarkers" aria-label="疑似时间段"></div>
       <div class="mosaic-frame-status"><small id="mosaicFrameHint"></small><button id="mosaicFrameRetry" hidden>重试画面</button></div>
-      <section id="mosaicReview"><small id="mosaicReviewInfo">点击右侧片段检查区域</small><div id="mosaicCandidates"></div><div class="mosaic-review-actions"><button id="mosaicPrevEvent">上一段</button><button id="mosaicNextEvent">下一段</button><button id="mosaicConfirm" disabled>采用此区域</button><button id="mosaicConfirmNext" disabled>采用并下一段</button></div></section>
-
-    </main>
-    <aside class="mosaic-side">
-      <section class="mosaic-scan-section"><h3>自动查找打码片段</h3><button id="mosaicScan" disabled>识别整段视频</button><small id="mosaicScanStatus" role="status">自动查找疑似时间段和目标区域，无需先手动找帧。</small><div id="mosaicScanEvents"></div></section>
-      <details id="mosaicAdjust"><summary>手工补充与调整</summary>
+      <details id="mosaicAdjust"><summary>调整区域 · 点击收起</summary>
       <section><h3>作用时间范围</h3><div class="mosaic-range"><label for="mosaicStart">开始</label><input id="mosaicStart" aria-label="马赛克开始时间"><button id="mosaicMarkStart">用当前帧</button></div><div class="mosaic-range"><label for="mosaicEnd">结束</label><input id="mosaicEnd" aria-label="马赛克结束时间"><button id="mosaicMarkEnd">用当前帧</button></div><small>分:秒:帧 · 包含结束帧。停在清晰画面，作为参考帧。</small></section>
       <section><h3>补充识别与框选</h3><button id="mosaicRecognize" disabled>识别当前帧</button><small>自动结果不准确时，可换帧识别或手动调整。</small><button id="mosaicDraw" style="margin-top:10px">手动框选</button><div id="mosaicBoxFields" hidden><label>X <input id="mosaicBoxX" type="number" min="0" aria-label="矩形左边"></label><label>Y <input id="mosaicBoxY" type="number" min="0" aria-label="矩形顶边"></label><label>宽 <input id="mosaicBoxW" type="number" min="1" aria-label="矩形宽度"></label><label>高 <input id="mosaicBoxH" type="number" min="1" aria-label="矩形高度"></label></div></section>
       </details>
-      <details id="mosaicSaved"><summary>已采用的区域</summary><section><div class="mosaic-list-title"><h3>待跟踪目标 <span id="mosaicTargetCount">0 / 8</span></h3><button id="mosaicClear" disabled>清空</button></div><small id="mosaicEmpty">确认后的目标会保存在这里。</small><ul id="mosaicTargets"></ul><small>已确认目标自动保存在本浏览器，点击可回看和调整。</small></section></details>
+      <section id="mosaicReview"><small id="mosaicReviewInfo">点击右侧片段检查区域</small><div id="mosaicCandidates"></div><div class="mosaic-review-actions"><button id="mosaicAdjustToggle">调整区域</button><button id="mosaicPrevEvent">上一段</button><button id="mosaicNextEvent">下一段</button><button id="mosaicConfirm" disabled>采用此区域</button><button id="mosaicConfirmNext" disabled>采用并下一段</button></div></section>
+
+
+    </main>
+    <aside class="mosaic-side">
+      <section class="mosaic-scan-section"><div class="mosaic-list-title"><h3>片段清单 · 已采用 <span id="mosaicTargetCount">0 / 8</span></h3><button id="mosaicClear" disabled>清空已采用</button></div><button id="mosaicScan" disabled>识别整段视频</button><small id="mosaicScanStatus" role="status">自动查找疑似时间段和目标区域，无需先手动找帧。</small><small id="mosaicEmpty">点击片段检查，已采用区域会显示在对应片段内。</small><div id="mosaicTargets"><div id="mosaicScanEvents"></div></div></section>
+
+
     </aside>
   </div>
   <footer class="mosaic-footer">先自动查找时间段和区域，再检查采用。框仅对应参考帧，动态跟踪和导出后续接入。</footer>

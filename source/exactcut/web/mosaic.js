@@ -38,8 +38,6 @@
     $('mosaicReviewInfo').textContent=`参考帧 ${clock(wanted)} · 检查区域后采用，或采用并进入下一段。`;
     for(const axis of ['X','Y','W','H'])$('mosaicBox'+axis).value=c?c[axis.toLowerCase()]:'';
     $('mosaicCandidates').innerHTML=candidates.map(c=>`<button data-candidate="${esc(c.id)}" aria-pressed="${c.id===selected}"><strong>${esc(c.label)}</strong><small>${esc(c.reason)}</small></button>`).join('');
-    $('mosaicTargets').innerHTML=targets.map((t,i)=>`<li><button data-target-view="${i}"><strong>${esc(t.label)} <em>待跟踪</em></strong><small>${clock(t.start)}–${clock(t.end-1)} · 参考帧 ${clock(t.seed_frame)}</small></button><button data-target-remove="${i}" aria-label="移除目标 ${i+1}">×</button></li>`).join('');
-    $('mosaicSaved').querySelector('summary').textContent=`已采用 ${targets.length} 个区域 · 展开管理`;
     $('mosaicTargetCount').textContent=`${targets.length} / 8`;
     $('mosaicEmpty').hidden=!!targets.length;
     $('mosaicClear').disabled=!targets.length;
@@ -62,7 +60,13 @@
     }
     if(scanLoading&&events.length)message+=`\n已发现 ${events.length} 个疑似时间段，${events.filter(e=>e.status==='localized').length} 段已定位，可先点击检查。`;
     $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
-    $('mosaicScanEvents').innerHTML=events.map(e=>`<button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong><small class="${e.status==='needs_review'?'needs-review':''}">${e.status==='localized'?`${e.candidates.length} 个候选区域 · 已定位`:scanReport?.status==='running'?'待定位 · 可先检查时间段':'需复核 · 尚未定位区域'}</small><small>${esc(e.reason)}</small></button>`).join('');
+    const targetRow=(t,i)=>`<div class="mosaic-target-row"><button data-target-view="${i}"><strong>已采用 · ${esc(t.label)}</strong><small>${clock(t.start)}–${clock(t.end-1)} · 点击回看 / 修改 · 待跟踪</small></button><button data-target-remove="${i}" aria-label="移除目标 ${i+1}">移除</button></div>`;
+    const grouped=new Set();
+    $('mosaicScanEvents').innerHTML=events.map(e=>{
+      const adopted=targets.map((t,i)=>({t,i})).filter(({t})=>t.start===e.start&&t.end===e.end);
+      adopted.forEach(({i})=>grouped.add(i));
+      return `<div class="mosaic-event-card ${adopted.length?'adopted':''}" data-mosaic-card="${esc(e.id)}"><button data-scan-event="${esc(e.id)}" aria-pressed="${scanEvent===e.id}"><strong>${clock(e.start)}–${clock(e.end-1)} · ${esc(e.label)}</strong><small>${adopted.length?`已采用 ${adopted.length} 个区域`:'待检查 · '+(e.status==='localized'?'已有候选框':'尚未定位区域')}</small><small>${esc(e.reason)}</small></button>${adopted.map(({t,i})=>targetRow(t,i)).join('')}</div>`;
+    }).join('')+targets.map((t,i)=>grouped.has(i)?'':targetRow(t,i)).join('');
     $('mosaicScanMarkers').innerHTML=events.map(e=>`<button data-scan-marker="${esc(e.id)}" class="${e.status==='needs_review'?'needs-review':''}" aria-label="查看 ${esc(e.label)} ${clock(e.start)}" title="${clock(e.start)}–${clock(e.end-1)} ${esc(e.label)}" style="left:${100*e.start/meta().frame_count}%;width:${100*(e.end-e.start)/meta().frame_count}%"></button>`).join('');
   }
   function checkedReport(report){
@@ -213,6 +217,7 @@
   $('mosaicPrevEvent').onclick=()=>nextEvent(-1);
   $('mosaicNextEvent').onclick=()=>nextEvent(1);
   $('mosaicConfirmNext').onclick=()=>{if($('mosaicConfirmNext').disabled)return;if($('mosaicConfirm').onclick())nextEvent(1);};
+  $('mosaicAdjustToggle').onclick=()=>{$('mosaicAdjust').open=!$('mosaicAdjust').open;};
   $('mosaicRecognize').onclick=recognize;
   $('mosaicFrameRetry').onclick=loadFrame;
   $('mosaicPrevious').onclick=()=>seek(wanted-1);$('mosaicNext').onclick=()=>seek(wanted+1);
@@ -233,7 +238,7 @@
   $('mosaicTargets').onclick=e=>{
     const remove=e.target.closest('[data-target-remove]'),view=e.target.closest('[data-target-view]');
     if(remove){targets.splice(Number(remove.dataset.targetRemove),1);resetCandidate();save();return;}
-    if(view){const i=Number(view.dataset.targetView),t=targets[i];resetCandidate();editing=i;candidates=[{...t,id:'saved'}];selected='saved';$('mosaicAdjust').open=true;$('mosaicStart').value=clock(t.start);$('mosaicEnd').value=clock(t.end-1);seek(t.seed_frame,true);status('正在查看已确认的参考帧，可调整后保存。');}
+    if(view){const i=Number(view.dataset.targetView),t=targets[i];resetCandidate();editing=i;candidates=[{...t,id:'saved'}];selected='saved';$('mosaicAdjust').open=false;$('mosaicStart').value=clock(t.start);$('mosaicEnd').value=clock(t.end-1);seek(t.seed_frame,true);status('正在查看已确认的参考帧，可调整后保存。');}
   };
   $('mosaicClear').onclick=()=>{if(window.confirm('清空本机保存的马赛克目标？原片不会改变。')){targets=[];resetCandidate();save();}};
   $('mosaicDraw').onclick=()=>{if($('mosaicDraw').disabled)return;drawing=!drawing;paint();if(drawing)status('在画面内拖出矩形；也可用像素输入框微调。');};

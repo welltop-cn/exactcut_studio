@@ -60,7 +60,6 @@ def test_separate_entry_identify_confirm_and_restore(editor):
     editor.locator('[data-candidate="0"]').wait_for()
     assert editor.evaluate("calls.find(c=>c.url.endsWith('/locate')).body")=={'start':0,'end':300,'seed_frame':0,'reset_at':''}
     editor.locator('#mosaicConfirm').click()
-    editor.locator('#mosaicSaved summary').click()
     assert '待跟踪' in editor.locator('#mosaicTargets').inner_text()
     assert not editor.evaluate("calls.some(c=>c.url.includes('/cuts/')||c.url.endsWith('/render'))")
     editor.locator('#mosaicClose').click()
@@ -77,8 +76,8 @@ def test_boxes_only_on_reference_frame_and_manual_adjustment(editor):
     editor.locator('#mosaicConfirm').click()
     editor.locator('#mosaicNext').click()
     assert editor.locator('#mosaicOverlay').is_hidden()
-    editor.locator('#mosaicSaved summary').click()
     editor.locator('[data-target-view]').click()
+    editor.locator('#mosaicAdjustToggle').click()
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     assert editor.locator('#mosaicBoxX').input_value()=='20'
     editor.locator('[data-target-remove]').click()
@@ -190,7 +189,7 @@ def test_unlocalized_segment_remains_for_review(editor):
     open_auto(editor)
     editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').wait_for()
-    assert '需复核' in editor.locator('#mosaicScanEvents').inner_text()
+    assert '待检查 · 尚未定位区域' in editor.locator('#mosaicScanEvents').inner_text()
     editor.locator('[data-scan-event="e1"]').click()
     assert editor.locator('#mosaicStart').input_value()=='00:01:00'
     assert editor.locator('#mosaicConfirm').is_disabled()
@@ -324,3 +323,22 @@ def test_wide_list_and_fixed_adopt_next(editor):
     assert editor.locator('[data-scan-event="e2"]').get_attribute('aria-pressed')=='true'
     assert editor.locator('[data-target-view]').count()==1
     assert editor.locator('#mosaicConfirmNext').is_visible()
+
+
+def test_adopted_regions_are_in_same_full_height_list(editor):
+    scan_result(editor)
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.wait_for_function("!document.getElementById('mosaicConfirm').disabled")
+    editor.locator('#mosaicConfirm').click()
+    card=editor.locator('[data-mosaic-card="e1"]')
+    assert '已采用' in card.inner_text()
+    assert card.locator('[data-target-view]').is_visible()
+    assert editor.locator('.mosaic-side #mosaicAdjust').count()==0
+    assert editor.locator('#mosaicSaved').count()==0
+    card.locator('[data-target-view]').click()
+    assert editor.locator('#mosaicConfirm').inner_text()=='保存调整'
+    card.locator('[data-target-remove]').click()
+    assert editor.locator('[data-target-view]').count()==0
+    assert '待检查' in card.inner_text()
