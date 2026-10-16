@@ -230,7 +230,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 #mosaicTargets .mosaic-target-row [data-target-view]:hover{text-decoration:underline;background:transparent}
 
 #mosaicDialog .mosaic-event-card{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start}
-#mosaicDialog .mosaic-event-card>[data-scan-event]{grid-column:1;grid-row:1 / span 8}
+#mosaicDialog .mosaic-event-card>[data-scan-event]{grid-column:1;grid-row:1}
 #mosaicDialog .mosaic-event-card .mosaic-target-row{grid-column:2;justify-self:end;padding:0 6px;white-space:nowrap}
 #mosaicTargets .mosaic-event-card .mosaic-target-row [data-target-view]{flex:none}
 
@@ -249,6 +249,41 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 @media(max-width:700px){#mosaicReview{height:auto}#mosaicReview .mosaic-review-actions{flex-wrap:wrap}}
 #mosaicTrackDialog{width:90vw;max-width:1100px;max-height:94dvh;padding:16px;background:#151c22;color:#e0e9ef}#mosaicTrackVideo{width:100%;height:65dvh;object-fit:contain;background:#080b0e}#mosaicTrackStatus{color:#c2d5d9;font-size:13px;max-height:90px;overflow:auto}
 .mosaic-batch-footer{display:flex;align-items:center;gap:10px}.mosaic-batch-footer>div{flex:1;min-width:0}.mosaic-batch-footer small{display:block;margin-top:3px;font-size:11px}#mosaicDialog #mosaicBatchStart{background:#47dbc4;color:#102c27;white-space:nowrap}#mosaicBatchDialog{width:90vw;max-width:1100px;max-height:94dvh;overflow:auto;padding:16px;background:#151c22;color:#e0e9ef}#mosaicBatchVideo{width:100%;height:58dvh;object-fit:contain;background:#080b0e}#mosaicBatchStatus{color:#c2d5d9;font-size:14px}#mosaicBatchDownload{display:inline-block;padding:10px 16px;background:#47dbc4;color:#102c27;border-radius:7px;margin-top:12px;font-weight:600;text-decoration:none}@media(max-width:700px){.mosaic-batch-footer{flex-wrap:wrap}.mosaic-batch-footer>div{flex-basis:100%}}
+.mosaic-card-checks button[aria-pressed="true"]{background:#b54c45;color:white}.mosaic-card-checks{gap:8px}#mosaicReplace{margin-left:12px;background:#47dbc4;color:#102c27}
+
+/* Unified processing: one decision lane, optional inspector, one result surface. */
+#mosaicDialog .processing-autosave{display:block;margin-left:auto;color:#8fa4ad;font-size:12px}
+#mosaicDialog .mosaic-event-card{grid-template-columns:minmax(0,1fr) 132px;align-items:center;gap:12px;padding:12px;border:1px solid #36434d;border-radius:8px;background:#202a32;min-height:90px}
+#mosaicDialog .mosaic-event-card.selected{background:#28383f;border-left:3px solid #47dbc4;padding-left:10px}
+#mosaicDialog .mosaic-event-card>[data-scan-event],#mosaicDialog .mosaic-event-card>[data-target-view]{padding:0;background:transparent;border:0;outline:0!important;box-shadow:none;text-align:left;min-height:0}
+#mosaicDialog .mosaic-event-card strong{font-size:14px}#mosaicDialog .mosaic-event-card small{font-size:12px;line-height:1.5}
+#mosaicDialog .mosaic-event-card>[data-scan-event] small:last-child{-webkit-line-clamp:1;color:#91a5af}
+#mosaicDialog .mosaic-card-checks{display:flex;align-items:center;align-self:center;padding:0;gap:3px;border:1px solid #374750;border-radius:10px;overflow:hidden;width:132px;padding:3px;background:#172128}
+#mosaicDialog .mosaic-card-checks button{flex:1;width:66px;min-width:0;height:32px;min-height:32px;padding:0;border:1px solid transparent;border-radius:7px;background:transparent;color:#92a5b0;font-size:12px;white-space:nowrap;margin:0;text-align:center}
+#mosaicDialog .mosaic-card-checks button:hover{background:#293840;color:#e8f0f3}
+#mosaicDialog .mosaic-card-checks button{transition:background .15s ease,color .15s ease,box-shadow .15s ease}
+#mosaicDialog .mosaic-card-checks button[aria-pressed="true"]{background:#31534e;border-color:#446b63;color:#c0f0e5;font-weight:600;box-shadow:0 1px 3px #0003}
+#mosaicDialog .mosaic-card-checks [data-event-delete][aria-pressed="true"]{background:#514047;border-color:#6b5158;color:#f1d4d8}
+#mosaicDialog button:focus-visible{outline:2px solid #99f2e3!important;outline-offset:2px}
+#mosaicReview{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:4px 0;border:0;background:transparent;min-height:42px}
+#mosaicReviewInfo{white-space:nowrap;font-size:12px}.mosaic-review-actions{display:flex;gap:7px;min-height:36px;padding:0;flex-wrap:wrap}
+#mosaicReview .mosaic-review-actions button{min-height:36px;padding:6px 10px;font-size:12px;background:#26313a;color:#d6e2e6;border:1px solid #43535e}
+#mosaicAdjust{max-height:210px;padding:10px;border:1px solid #3a4c57;border-radius:8px;overflow:auto}
+#mosaicAdjust:not([open]){display:none}.processing-adjust-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:8px}
+#mosaicCandidates{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}#mosaicCandidates button{flex:none;padding:5px 9px;min-height:30px}#mosaicCandidates small{display:none}
+#mosaicDialog:not(.adjusting) #mosaicPrevious,#mosaicDialog:not(.adjusting) #mosaicNext{display:none}
+#mosaicDialog .mosaic-list-title{align-items:center}#mosaicDialog .mosaic-list-title h3{font-size:15px;margin:0}
+#mosaicDialog #mosaicScanStatus{font-size:12px;line-height:1.5;margin:6px 0;color:#94a9b3}
+#mosaicDialog #mosaicClear,#mosaicDialog #mosaicScan{font-size:12px;min-height:30px;padding:5px 9px;background:transparent}
+#mosaicDialog #mosaicBatchDialog{width:auto;max-width:none;margin:0;padding:10px 16px;background:transparent;flex:1;min-height:0;overflow:auto}
+.processing-compare{display:flex;justify-content:center;gap:0}.processing-compare button{border-radius:0;min-width:90px}.processing-compare button[aria-pressed="true"]{background:#47dbc4;color:#102c27}
+#mosaicDialog #mosaicBatchVideo{height:60dvh;width:100%;object-fit:contain}#mosaicBatchStatus,#mosaicBatchVersion{text-align:center;margin:6px 0}
+#mosaicDialog #mosaicBatchDownload{margin:0;padding:9px 12px;background:#26313a;color:#d6e2e6;border:1px solid #43535e;border-radius:6px;font-size:13px;font-weight:400}
+#mosaicDialog #mosaicDiscard{color:#abb9c0;background:transparent;border-color:transparent;font-size:12px}
+#mosaicDialog #mosaicReplace{margin:0;background:#47dbc4;color:#102c27}
+#mosaicDialog .mosaic-batch-footer{min-height:62px}#mosaicDialog .mosaic-batch-footer>button{font-size:13px}
+@media(max-width:900px){#mosaicReview{flex-wrap:wrap}.mosaic-review-actions{gap:4px}#mosaicDialog .processing-autosave{display:none}}
+
 </style></head><body><header><div><strong>素材工作台</strong></div><div class="actions"><div class="header-group"><button id="helpNav" class="helper-nav-btn" type="button" title="制作流程与疑难解答">🤖 制作助手</button><button id="feedbackNav" class="header-btn" title="查看成片反馈汇总">📊 反馈汇总</button></div><span id="connection" class="header-connection">正在连接</span><span class="header-divider" aria-hidden="true"></span><div class="header-group"><span id="accountName" class="account-pill"></span><button id="usageNav" class="header-btn" hidden>用量</button><button id="storageNav" class="header-btn" hidden>磁盘与缓存</button><button id="accountsNav" class="header-btn" hidden>账户管理</button><button id="logoutButton" class="header-btn logout-btn">退出登录</button></div></div></header><div class="shell"><aside><button id="newBatch">＋ 新建项目</button><div class="eyebrow">制作批次</div><nav class="tabs"><button class="tab active" id="currentBatches">当前项目</button><button class="tab" id="archivedBatches">已归档</button></nav><div id="batchList"><p class="hint">正在加载…</p></div></aside><main>
 <section id="emptyWorkspace"><h1 id="emptyWorkspaceTitle">正在打开项目…</h1><p id="emptyWorkspaceHint" class="hint">正在恢复你的工作台。</p><button id="retryWorkspace" class="secondary" hidden>重试</button></section>
 <section id="workspace" hidden><div class="topline"><div><div class="eyebrow" id="batchName"></div><h1 id="batchTitle"></h1></div><div class="workspace-header-right"><span id="batchStatus" class="badge"></span><div class="actions project-actions"><button id="pauseButton" class="secondary" hidden>暂停执行</button><button id="resumeButton" hidden>继续执行</button><button id="archiveButton" class="secondary">归档项目</button><button id="unarchiveButton" class="secondary" hidden>复原项目</button><span class="hint" id="controlHint" hidden></span></div></div></div><div id="steps" class="flow"></div><div id="statusBanner" class="status-banner"><div id="liveMessage" class="notice" role="status"></div><div id="previewReady" class="preview-actions" hidden><span id="previewReadyTitle" hidden></span><button id="previewButton" class="secondary" hidden>生成轻量预览</button><button id="openPreview">▶ 播放成片</button></div></div><nav class="tabs"><button class="tab active" data-tab="editor">标准化内容</button><button class="tab" data-tab="progress">执行进度</button><button class="tab" data-tab="review">成片预览</button></nav>
@@ -281,10 +316,10 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
   <div id="cutToast" role="status" hidden></div>
 </dialog>
 
-<dialog id="mosaicBatchDialog" aria-labelledby="mosaicBatchTitle"><div class="row"><h2 id="mosaicBatchTitle">完整打码视频</h2><button id="mosaicBatchClose">返回检查</button></div><p id="mosaicBatchStatus" role="status"></p><p id="mosaicBatchVersion" class="hint"></p><video id="mosaicBatchVideo" controls playsinline hidden></video><a id="mosaicBatchDownload" hidden download>下载完整打码视频</a><p class="hint">关闭窗口后后台会继续生成，重新打开可查看进度与结果。生成的文件不覆盖原片，也不会自动上传。</p></dialog>
+
 <dialog id="mosaicTrackDialog" aria-labelledby="mosaicTrackTitle"><div class="row"><h2 id="mosaicTrackTitle">动态打码预览</h2><button id="mosaicTrackClose">返回检查</button></div><p id="mosaicTrackStatus" role="status"></p><video id="mosaicTrackVideo" controls playsinline hidden></video><p id="mosaicTrackHint" class="hint">仅预览当前区域、当前片段。</p></dialog>
 <dialog id="mosaicDialog" aria-labelledby="mosaicTitle">
-  <header class="mosaic-header"><div><h2 id="mosaicTitle">马赛克</h2><small>保留画面，选择需要遮挡的区域</small></div><div class="mosaic-phases"><strong>① 识别与检查</strong>　→　② 跟踪　→　③ 导出</div><button id="mosaicClose" aria-label="关闭马赛克">关闭</button></header>
+  <header class="mosaic-header"><div><h2 id="mosaicTitle">视频处理</h2><small>选择片段删除或打码，生成后确认替换</small></div><small class="processing-autosave">自动保存 · 关闭后可继续</small><button id="mosaicClose" aria-label="关闭视频处理">关闭</button></header>
   <div id="mosaicStatus" role="status" aria-live="polite"></div>
   <div id="mosaicWorkspace" hidden>
     <main class="mosaic-main">
@@ -294,19 +329,20 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
       <div id="mosaicScanMarkers" aria-label="疑似时间段"></div>
       <div class="mosaic-frame-status"><small id="mosaicFrameHint"></small><button id="mosaicFrameRetry" hidden>重试画面</button></div>
       <details id="mosaicAdjust"><summary>调整区域 · 点击收起</summary>
-      <section><h3>作用时间范围</h3><div class="mosaic-range"><label for="mosaicStart">开始</label><input id="mosaicStart" aria-label="马赛克开始时间"><button id="mosaicMarkStart">用当前帧</button></div><div class="mosaic-range"><label for="mosaicEnd">结束</label><input id="mosaicEnd" aria-label="马赛克结束时间"><button id="mosaicMarkEnd">用当前帧</button></div><small>分:秒:帧 · 包含结束帧。停在清晰画面，作为参考帧。</small></section>
+      <section><h3>作用时间范围</h3><div class="mosaic-range"><label for="mosaicStart">开始</label><input id="mosaicStart" aria-label="马赛克开始时间"><button id="mosaicMarkStart">用当前帧</button></div><div class="mosaic-range"><label for="mosaicEnd">结束</label><input id="mosaicEnd" aria-label="马赛克结束时间"><button id="mosaicMarkEnd">用当前帧</button></div><button id="mosaicSaveDelete" hidden>设为删除范围</button><small>分:秒:帧 · 包含结束帧。停在清晰画面，作为参考帧。</small></section>
       <section><h3>补充识别与框选</h3><button id="mosaicRecognize" disabled>识别当前帧</button><small>自动结果不准确时，可换帧识别或手动调整。</small><button id="mosaicDraw" style="margin-top:10px">手动框选</button><div id="mosaicBoxFields" hidden><label>X <input id="mosaicBoxX" type="number" min="0" aria-label="矩形左边"></label><label>Y <input id="mosaicBoxY" type="number" min="0" aria-label="矩形顶边"></label><label>宽 <input id="mosaicBoxW" type="number" min="1" aria-label="矩形宽度"></label><label>高 <input id="mosaicBoxH" type="number" min="1" aria-label="矩形高度"></label></div></section>
-      </details>
-      <section id="mosaicReview"><small id="mosaicReviewInfo">点击右侧片段检查区域</small><div id="mosaicCandidates"></div><div class="mosaic-review-actions"><button id="mosaicAdjustToggle">调整区域</button><button id="mosaicPrevEvent">上一段</button><button id="mosaicNextEvent">下一段</button><button id="mosaicConfirm" disabled>采用此区域</button><button id="mosaicClipPreview" disabled title="先生成完整视频，再选择片段">预览本片段效果</button><button id="mosaicTrack" hidden>跟踪预览</button><button id="mosaicConfirmNext" disabled>采用并下一段</button></div></section>
+      <div id="mosaicCandidates"></div><div class="processing-adjust-actions"><button id="mosaicTrack" hidden>单区域预览</button><button id="mosaicConfirm" disabled>保存区域</button></div></details>
+      <section id="mosaicReview"><small id="mosaicReviewInfo">点击右侧片段检查区域</small><div class="mosaic-review-actions"><button id="mosaicAdjustToggle">调整时间 / 区域</button><button id="mosaicPrevEvent">上一段</button><button id="mosaicNextEvent">下一段</button><button id="mosaicClipPreview" disabled title="先生成完整视频，再选择片段">预览本片段效果</button><button id="mosaicConfirmNext" hidden disabled>打码并下一段</button></div></section>
 
 
     </main>
     <aside class="mosaic-side">
-      <section class="mosaic-scan-section"><div class="mosaic-list-title"><h3>片段清单 · 已采用 <span id="mosaicTargetCount">0 个区域（上限 8 个）</span></h3><button id="mosaicClear" disabled>取消全部采用</button></div><button id="mosaicScan" disabled>识别整段视频</button><small id="mosaicScanStatus" role="status">自动查找疑似时间段和目标区域，无需先手动找帧。</small><small id="mosaicEmpty">点击片段检查，已采用区域会显示在对应片段内。</small><div id="mosaicTargets"><div id="mosaicScanEvents"></div></div></section>
+      <section class="mosaic-scan-section"><div class="mosaic-list-title"><h3>片段 <span id="mosaicTargetCount">0</span></h3><button id="mosaicClear" disabled>取消全部选择</button></div><button id="mosaicScan" disabled>识别整段视频</button><small id="mosaicScanStatus" role="status">自动查找疑似时间段和目标区域，无需先手动找帧。</small><small id="mosaicEmpty">选择删除或打码，再点一次取消。</small><div id="mosaicTargets"><div id="mosaicScanEvents"></div></div></section>
 
 
     </aside>
   </div>
-  <footer class="mosaic-footer mosaic-batch-footer"><div><strong id="mosaicBatchHint">先采用需要打码的区域</strong><small>生成新视频，原视频保留</small></div><button id="mosaicBatchView" hidden>查看生成结果</button><button id="mosaicBatchStart" disabled>生成完整打码视频</button></footer>
+  <section id="mosaicBatchDialog" hidden aria-label="处理结果"><div class="processing-compare"><button id="mosaicBatchBefore" hidden>处理前</button><button id="mosaicBatchAfter" hidden>处理后</button></div><p id="mosaicBatchStatus" role="status"></p><p id="mosaicBatchVersion" class="hint"></p><video id="mosaicBatchVideo" controls playsinline hidden></video></section>
+  <footer class="mosaic-footer mosaic-batch-footer"><div><strong id="mosaicBatchHint">先选择删除或打码的片段</strong><small>生成新视频，原视频保留</small></div><button id="mosaicBatchClose" hidden>返回调整</button><button id="mosaicDiscard">放弃本次处理</button><button id="mosaicBatchView" hidden>查看生成结果</button><button id="mosaicBatchStart" disabled>生成处理后视频</button><a id="mosaicBatchDownload" hidden download>下载视频</a><button id="mosaicReplace" hidden>替换项目成片</button></footer>
 </dialog>
 <script src="app.js"></script><script src="cutting.js"></script><script src="mosaic.js"></script><script src="helper.js"></script></body></html>
