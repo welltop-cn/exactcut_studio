@@ -278,7 +278,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 #mosaicDialog #mosaicScanStatus{font-size:12px;line-height:1.5;margin:6px 0;color:#94a9b3}
 #mosaicDialog #mosaicClear,#mosaicDialog #mosaicScan{font-size:12px;min-height:30px;padding:5px 9px;background:transparent}
 #mosaicDialog #mosaicBatchDialog{width:auto;max-width:none;margin:0;padding:10px 16px;background:transparent;flex:1;min-height:0;overflow:auto}
-.processing-compare{display:flex;justify-content:center;gap:0}.processing-compare button{border-radius:0;min-width:90px}.processing-compare button[aria-pressed="true"]{background:#47dbc4;color:#102c27}
+.processing-compare{display:flex;justify-content:center;gap:0}.processing-compare button{border-radius:0;min-width:90px}#mosaicDialog .processing-compare button{background:#202b34;color:#a9bbc5;border:1px solid #4a5d69;border-radius:7px;min-width:110px;margin:0 3px;transition:background .15s ease}#mosaicDialog .processing-compare button[aria-pressed="true"]{background:#47dbc4;color:#102c27;border-color:#7ef3de;font-weight:700;box-shadow:0 0 0 2px #47dbc433}#mosaicDialog .processing-compare button[aria-pressed="true"]::before{content:"✓ ";font-weight:700}#mosaicResultLabel{text-align:center;color:#8cebd9;font-size:14px;font-weight:600;margin:12px 0 4px}
 #mosaicDialog #mosaicBatchVideo{height:60dvh;width:100%;object-fit:contain}#mosaicBatchStatus,#mosaicBatchVersion{text-align:center;margin:6px 0}
 #mosaicDialog #mosaicBatchDownload{margin:0;padding:9px 12px;background:#26313a;color:#d6e2e6;border:1px solid #43535e;border-radius:6px;font-size:13px;font-weight:400}
 #mosaicDialog #mosaicDiscard{color:#abb9c0;background:transparent;border-color:transparent;font-size:12px}
@@ -344,7 +344,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 
     </aside>
   </div>
-  <section id="mosaicBatchDialog" hidden aria-label="处理结果"><div class="processing-compare"><button id="mosaicBatchBefore" hidden>处理前</button><button id="mosaicBatchAfter" hidden>处理后</button></div><p id="mosaicBatchStatus" role="status"></p><p id="mosaicBatchVersion" class="hint"></p><video id="mosaicBatchVideo" controls playsinline hidden></video></section>
+  <section id="mosaicBatchDialog" hidden aria-label="处理结果"><div class="processing-compare"><button id="mosaicBatchBefore" hidden>处理前</button><button id="mosaicBatchAfter" hidden>处理后</button></div><p id="mosaicResultLabel" role="status" hidden></p><p id="mosaicBatchStatus" role="status"></p><p id="mosaicBatchVersion" class="hint"></p><video id="mosaicBatchVideo" controls playsinline hidden></video></section>
   <div id="mosaicProcessing" hidden role="status"><span class="processing-spinner" aria-hidden="true"></span><div><strong id="mosaicProcessingText"></strong><small id="mosaicProcessingHint">生成中暂不可编辑；停止生成后可修改。关闭后后台继续处理。</small></div></div><footer class="mosaic-footer mosaic-batch-footer"><div><strong id="mosaicBatchHint">先选择删除或打码的片段</strong><small>生成新视频，原视频保留</small></div><button id="mosaicBatchClose" hidden>返回调整</button><button id="mosaicStop" hidden>停止生成</button><button id="mosaicDiscard">放弃本次处理</button><button id="mosaicBatchView" hidden>查看生成结果</button><button id="mosaicBatchStart" disabled>生成处理后视频</button><a id="mosaicBatchDownload" hidden download>下载视频</a><button id="mosaicReplace" hidden>替换项目成片</button></footer>
 </dialog>
 <script src="app.js"></script><script src="cutting.js"></script><script src="mosaic.js"></script><script src="helper.js"></script></body></html>

@@ -398,6 +398,7 @@
     const done=batchJob?.status==='completed';
     $('mosaicReplace').hidden=!done;$('mosaicReplace').disabled=mutationBusy||!sameBatch();
     $('mosaicBatchBefore').hidden=!done;$('mosaicBatchAfter').hidden=!done;
+    $('mosaicResultLabel').hidden=!done;$('mosaicResultLabel').textContent=resultBefore?'正在查看：处理前 · 原视频':'正在查看：处理后 · 生成结果';
     $('mosaicBatchBefore').setAttribute('aria-pressed',String(resultBefore));$('mosaicBatchAfter').setAttribute('aria-pressed',String(!resultBefore));
     $('mosaicBatchDownload').hidden=!done;$('mosaicBatchVideo').hidden=!done;
     $('mosaicBatchVersion').textContent=batchJob&&!sameBatch()?'处理方案已变化。此结果对应生成时的选择；要应用新选择，请重新生成。':'';
