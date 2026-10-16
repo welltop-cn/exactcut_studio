@@ -60,6 +60,7 @@ def test_separate_entry_identify_confirm_and_restore(editor):
     editor.locator('[data-candidate="0"]').wait_for()
     assert editor.evaluate("calls.find(c=>c.url.endsWith('/locate')).body")=={'start':0,'end':300,'seed_frame':0,'reset_at':''}
     editor.locator('#mosaicConfirm').click()
+    editor.locator('#mosaicSaved summary').click()
     assert '待跟踪' in editor.locator('#mosaicTargets').inner_text()
     assert not editor.evaluate("calls.some(c=>c.url.includes('/cuts/')||c.url.endsWith('/render'))")
     editor.locator('#mosaicClose').click()
@@ -76,6 +77,7 @@ def test_boxes_only_on_reference_frame_and_manual_adjustment(editor):
     editor.locator('#mosaicConfirm').click()
     editor.locator('#mosaicNext').click()
     assert editor.locator('#mosaicOverlay').is_hidden()
+    editor.locator('#mosaicSaved summary').click()
     editor.locator('[data-target-view]').click()
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     assert editor.locator('#mosaicBoxX').input_value()=='20'
@@ -307,3 +309,18 @@ def test_running_scan_shows_clickable_partial_results(editor):
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     editor.locator('#mosaicConfirm').click()
     assert editor.locator('[data-target-view]').count()==1
+
+
+def test_wide_list_and_fixed_adopt_next(editor):
+    scan_result(editor)
+    editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:100,end:150,seed_frame:120})")
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.wait_for_function("!document.getElementById('mosaicConfirm').disabled")
+    assert editor.locator('.mosaic-side').bounding_box()['width']>=400
+    assert editor.locator('#mosaicReview').evaluate("e=>!!e.closest('.mosaic-main')")
+    editor.locator('#mosaicConfirmNext').click()
+    assert editor.locator('[data-scan-event="e2"]').get_attribute('aria-pressed')=='true'
+    assert editor.locator('[data-target-view]').count()==1
+    assert editor.locator('#mosaicConfirmNext').is_visible()

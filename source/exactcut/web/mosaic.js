@@ -10,7 +10,7 @@
   const active=v=>context&&dialog.open&&epoch===v;
   const key=()=>`exactcut.mosaic.targets.v1.${currentUser?.username}.${context.batch}.${context.session.id}.${context.session.source_sha256}.${context.session.reset_at||''}`;
   const status=(text,error=false)=>{$('mosaicStatus').textContent=text;$('mosaicStatus').classList.toggle('error',error);};
-  const guard=fn=>(...args)=>{try{fn(...args);}catch(e){status(e.message,true);}};
+  const guard=fn=>(...args)=>{try{return fn(...args);}catch(e){status(e.message,true);}};
   function clock(frame){const {fps_num:n,fps_den:d}=meta(),s=Math.floor(frame*d/n);return [Math.floor(s/60),s%60,frame-Math.ceil(s*n/d)].map(v=>String(v).padStart(2,'0')).join(':');}
   function parse(value){const m=/^(\d+):([0-5]\d):(\d{2})$/.exec(value.trim());if(!m)throw Error('请填写 分:秒:帧，例如 00:01:05');const s=+m[1]*60+(+m[2]),f=+m[3],{fps_num:n,fps_den:d}=meta(),first=Math.ceil(s*n/d);if(f>=Math.ceil((s+1)*n/d)-first||first+f>=meta().frame_count)throw Error('时间超出原片范围');return first+f;}
   function range(){const start=parse($('mosaicStart').value),end=parse($('mosaicEnd').value)+1;if(start>=end)throw Error('开始帧不能晚于结束帧');return {start,end};}
@@ -30,11 +30,16 @@
     $('mosaicConfirm').disabled=!accurate||!validBox(c)||!inRange()||loading;
     $('mosaicConfirm').textContent=editing===null?'采用此区域':'保存调整';
     $('mosaicBoxFields').hidden=!c;
-    $('mosaicReview').hidden=!candidates.length;
-    $('mosaicReviewInfo').textContent=`参考帧 ${clock(wanted)} · 选择候选区域后采用，必要时展开下方手工调整。`;
+    $('mosaicReview').hidden=false;
+    $('mosaicConfirmNext').disabled=$('mosaicConfirm').disabled||!scanEvent;
+    const eventIndex=(scanReport?.events||[]).findIndex(e=>e.id===scanEvent);
+    $('mosaicPrevEvent').disabled=eventIndex<=0;
+    $('mosaicNextEvent').disabled=eventIndex<0||eventIndex>=(scanReport?.events?.length||0)-1;
+    $('mosaicReviewInfo').textContent=`参考帧 ${clock(wanted)} · 检查区域后采用，或采用并进入下一段。`;
     for(const axis of ['X','Y','W','H'])$('mosaicBox'+axis).value=c?c[axis.toLowerCase()]:'';
     $('mosaicCandidates').innerHTML=candidates.map(c=>`<button data-candidate="${esc(c.id)}" aria-pressed="${c.id===selected}"><strong>${esc(c.label)}</strong><small>${esc(c.reason)}</small></button>`).join('');
     $('mosaicTargets').innerHTML=targets.map((t,i)=>`<li><button data-target-view="${i}"><strong>${esc(t.label)} <em>待跟踪</em></strong><small>${clock(t.start)}–${clock(t.end-1)} · 参考帧 ${clock(t.seed_frame)}</small></button><button data-target-remove="${i}" aria-label="移除目标 ${i+1}">×</button></li>`).join('');
+    $('mosaicSaved').querySelector('summary').textContent=`已采用 ${targets.length} 个区域 · 展开管理`;
     $('mosaicTargetCount').textContent=`${targets.length} / 8`;
     $('mosaicEmpty').hidden=!!targets.length;
     $('mosaicClear').disabled=!targets.length;
@@ -101,6 +106,7 @@
     candidates=event.candidates.map(c=>({...c}));selected=candidates[0]?.id??null;
     const seed=event.status==='localized'?event.seed_frame:Math.floor((event.start+event.end-1)/2);
     seek(seed,true);
+    $('mosaicScanEvents').querySelector('[aria-pressed="true"]')?.scrollIntoView({block:'nearest'});
     status(event.status==='localized'?'时间段和候选区域已自动定位。检查后采用，必要时再调整。':event.review_note||'该段需复核：尚未定位区域，可换一帧识别或手动框选。');
   }
   function geometry(){const rect=$('mosaicStage').getBoundingClientRect(),scale=Math.min(rect.width/meta().width,rect.height/meta().height);return {left:(rect.width-meta().width*scale)/2,top:(rect.height-meta().height*scale)/2,width:meta().width*scale,height:meta().height*scale,scale,rect};}
@@ -200,6 +206,13 @@
   $('mosaicScan').onclick=()=>scanVideo(!scanError&&scanReport?.status!=='running');
   $('mosaicScanEvents').onclick=e=>{const b=e.target.closest('[data-scan-event]');if(b)viewScanEvent(b.dataset.scanEvent);};
   $('mosaicScanMarkers').onclick=e=>{const b=e.target.closest('[data-scan-marker]');if(b)viewScanEvent(b.dataset.scanMarker);};
+  function nextEvent(offset){
+    const events=scanReport?.events||[],index=events.findIndex(e=>e.id===scanEvent),next=events[index+offset];
+    if(index>=0&&next)viewScanEvent(next.id);
+  }
+  $('mosaicPrevEvent').onclick=()=>nextEvent(-1);
+  $('mosaicNextEvent').onclick=()=>nextEvent(1);
+  $('mosaicConfirmNext').onclick=()=>{if($('mosaicConfirmNext').disabled)return;if($('mosaicConfirm').onclick())nextEvent(1);};
   $('mosaicRecognize').onclick=recognize;
   $('mosaicFrameRetry').onclick=loadFrame;
   $('mosaicPrevious').onclick=()=>seek(wanted-1);$('mosaicNext').onclick=()=>seek(wanted+1);
@@ -215,7 +228,7 @@
     if(editing===null&&targets.length>=8)throw Error('最多保存 8 个待跟踪目标');
     const target={label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,...r,seed_frame:wanted};
     if(editing===null){targets.push(target);editing=targets.length-1;}else targets[editing]=target;
-    paint();if(save())status('目标已保存为待跟踪；当前只确认参考帧，尚未生成马赛克。');
+    paint();if(save()){status('目标已保存为待跟踪；当前只确认参考帧，尚未生成马赛克。');return true;}
   });
   $('mosaicTargets').onclick=e=>{
     const remove=e.target.closest('[data-target-remove]'),view=e.target.closest('[data-target-view]');
