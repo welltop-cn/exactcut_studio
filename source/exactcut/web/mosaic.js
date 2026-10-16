@@ -153,14 +153,27 @@
     }catch(e){if(valid())status(e.message,true);}
     finally{if(valid()){loading=false;paint();}}
   }
+  // Closing the dialog does not cancel server-side snapshot preparation.
+  // Keep only in-flight requests so re-entry joins the same preparation, while
+  // later opens still validate the current source and editing permissions.
+  const preparing=new Map();
+  function prepare(batch,asset){
+    const id=JSON.stringify([currentUser?.username,batch,asset.request_id,asset.sha256]);
+    if(!preparing.has(id)){
+      const pending=api(`/api/batches/${batch}/mosaics/open`,{request_id:asset.request_id,source_sha256:asset.sha256})
+        .finally(()=>preparing.delete(id));
+      preparing.set(id,pending);
+    }
+    return preparing.get(id);
+  }
   async function open(batch,asset){
     const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
     scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;$('mosaicAdjust').open=false;
     image.hidden=true;overlay.hidden=true;$('mosaicWorkspace').hidden=true;$('mosaicTitle').textContent='马赛克 · '+asset.title;
     for(const v of $('assets').querySelectorAll('video'))v.pause();
-    if(!dialog.open)dialog.showModal();status('正在准备原片…');
+    if(!dialog.open)dialog.showModal();status('正在准备原片，首次打开需要一些时间；关闭后重新进入会继续等待…');
     try{
-      const session=await api(`/api/batches/${batch}/mosaics/open`,{request_id:asset.request_id,source_sha256:asset.sha256});
+      const session=await prepare(batch,asset);
       if(version!==epoch||!dialog.open)return;context={batch,asset,session};
       $('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);$('mosaicSeek').max=meta().frame_count-1;
       try{const saved=JSON.parse(localStorage.getItem(key())||'[]');if(Array.isArray(saved)&&saved.length<=8&&saved.every(t=>validBox(t)&&[t.start,t.end,t.seed_frame].every(Number.isInteger)&&t.start>=0&&t.start<=t.seed_frame&&t.seed_frame<t.end&&t.end<=meta().frame_count&&typeof t.label==='string'&&typeof t.reason==='string'))targets=saved;}catch{}

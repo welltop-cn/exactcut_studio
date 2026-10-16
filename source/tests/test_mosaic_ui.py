@@ -255,3 +255,37 @@ def test_late_whole_scan_cannot_overwrite_reopened_results(editor):
     editor.evaluate('finishScan(scanJob)')
     editor.wait_for_timeout(100)
     assert '新任务结果' in editor.locator('#mosaicScanEvents').inner_text()
+
+
+def test_reopen_while_source_preparing_shares_request(editor):
+    editor.evaluate('''() => {
+      const original=window.api;
+      window.api=(url,body)=>url.endsWith('/open') ? new Promise((resolve,reject)=>{
+        calls.push({url,body});window.finishOpen=()=>resolve(session);window.failOpen=reject;
+      }) : original(url,body);
+    }''')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.locator('#mosaicClose').click()
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    assert editor.evaluate("calls.filter(c=>c.url.endsWith('/open')).length")==1
+    assert not editor.locator('#mosaicStatus').evaluate("e=>e.classList.contains('error')")
+    editor.evaluate('finishOpen()')
+    editor.locator('#mosaicWorkspace').wait_for(state='visible')
+    assert editor.evaluate("calls.filter(c=>c.url.endsWith('/scan')).length")==1
+
+
+def test_preparing_failure_can_retry_and_does_not_reopen_closed_dialog(editor):
+    editor.evaluate('''() => {
+      const original=window.api;
+      window.api=(url,body)=>url.endsWith('/open') ? new Promise((resolve,reject)=>{
+        calls.push({url,body});window.finishOpen=()=>resolve(session);window.failOpen=()=>reject(Error('初始化失败'));
+      }) : original(url,body);
+    }''')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.locator('#mosaicClose').click()
+    editor.evaluate('failOpen()')
+    assert not editor.locator('#mosaicDialog').evaluate('e=>e.open')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    assert editor.evaluate("calls.filter(c=>c.url.endsWith('/open')).length")==2
+    editor.evaluate('finishOpen()')
+    editor.locator('#mosaicWorkspace').wait_for(state='visible')
