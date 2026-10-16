@@ -698,3 +698,21 @@ def test_processing_keeps_workspace_and_shows_background_progress(editor):
     assert editor.locator('#mosaicWorkspace').is_visible()
     assert editor.locator('#mosaicBatchClose').is_hidden()
     assert editor.locator('#mosaicClose').is_enabled()
+
+
+def test_effect_settings_collapsed_persist_and_submit(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    assert not editor.locator('#mosaicEffects').evaluate('el=>el.open')
+    editor.locator('#mosaicEffects summary').click()
+    editor.locator('#mosaicEffectStyle').select_option('solid')
+    assert editor.locator('#mosaicEffectStrength').is_hidden()
+    editor.locator('#mosaicEffectExpansion').select_option('large')
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    assert editor.locator('#mosaicEffectStyle').input_value()=='solid'
+    assert editor.locator('#mosaicEffectExpansion').input_value()=='large'
+    assert '纯色' in editor.locator('#mosaicEffectSummary').inner_text()
+    editor.locator('#mosaicScan').click();editor.locator('[data-proposal]').click()
+    editor.evaluate('''() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}''')
+    editor.locator('[data-target-remove]').click();editor.locator('[data-target-remove]').click()
+    editor.locator('#mosaicBatchStart').click()
+    assert editor.evaluate('effectBody.effect')=={'style':'solid','strength':'medium','expansion':'large'}

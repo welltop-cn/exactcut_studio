@@ -252,6 +252,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 .mosaic-card-checks button[aria-pressed="true"]{background:#b54c45;color:white}.mosaic-card-checks{gap:8px}#mosaicReplace{margin-left:12px;background:#47dbc4;color:#102c27}
 
 #mosaicProcessing{display:flex;align-items:center;gap:12px;padding:12px 20px;background:#203631;border-top:1px solid #36574f}#mosaicProcessing strong{font-size:14px}#mosaicProcessing small{display:block;margin-top:4px;color:#a4bcb5;font-size:12px}.processing-spinner{width:20px;height:20px;border:2px solid #43675e;border-top-color:#70dfc6;border-radius:50%;animation:processing-spin 1s linear infinite;flex:none}@keyframes processing-spin{to{transform:rotate(360deg)}}@media(prefers-reduced-motion:reduce){.processing-spinner{animation:none}}
+#mosaicEffects{flex:none;border-bottom:1px solid #374750;padding:0 12px}#mosaicEffects summary{padding:11px 0;cursor:pointer;font-size:13px;color:#dbe8ed}#mosaicEffectSummary{float:right;color:#91a7af;font-size:12px}.mosaic-effect-options{padding:0 0 10px;display:grid;gap:8px}.mosaic-effect-options label{display:flex;align-items:center;justify-content:space-between;margin:0;font-size:12px}.mosaic-effect-options select{width:65%;min-height:32px;padding:4px 8px;background:#172128;color:#dbe8ed;border:1px solid #455761;border-radius:6px}.mosaic-effect-options small{color:#91a7af;font-size:11px}
 /* Unified processing: one decision lane, optional inspector, one result surface. */
 #mosaicDialog .processing-autosave{display:block;margin-left:auto;color:#8fa4ad;font-size:12px}
 #mosaicDialog .mosaic-event-card{grid-template-columns:minmax(0,1fr) 132px;align-items:center;gap:12px;padding:12px;border:1px solid #36434d;border-radius:8px;background:#202a32;min-height:90px}
@@ -337,7 +338,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 
 
     </main>
-    <aside class="mosaic-side">
+    <aside class="mosaic-side"><details id="mosaicEffects"><summary>打码效果 <span id="mosaicEffectSummary">方块 · 中 · 扩大小</span></summary><div class="mosaic-effect-options"><label>样式<select id="mosaicEffectStyle" aria-label="打码样式"><option value="pixel">方块马赛克</option><option value="blur">模糊</option><option value="solid">纯色（黑色）</option></select></label><label id="mosaicStrengthRow">强度<select id="mosaicEffectStrength" aria-label="打码强度"><option value="light">轻</option><option value="medium" selected>中</option><option value="heavy">重</option></select></label><label>范围扩大<select id="mosaicEffectExpansion" aria-label="打码范围扩大"><option value="none">无</option><option value="small" selected>小</option><option value="medium">中</option><option value="large">大</option></select></label><small>应用于所有打码片段 · 自动保存</small></div></details>
       <section class="mosaic-scan-section"><div class="mosaic-list-title"><h3>片段 <span id="mosaicTargetCount">0</span></h3><button id="mosaicClear" disabled>取消全部选择</button></div><button id="mosaicScan" disabled>识别整段视频</button><small id="mosaicScanStatus" role="status">自动查找疑似时间段和目标区域，无需先手动找帧。</small><small id="mosaicEmpty">选择删除或打码，再点一次取消。</small><div id="mosaicTargets"><div id="mosaicScanEvents"></div></div></section>
 
 

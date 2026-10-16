@@ -7,6 +7,7 @@ from PIL import Image, ImageChops
 from . import cutting, mosaic_session as sessions, mosaic_locate, mosaic_tracking as tracking
 from . import cutting_access, workflow, storage
 from .media import bounded_ffmpeg
+from . import mosaic_effects as effects
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 
 
@@ -37,7 +38,8 @@ def union_mask(frame,tracks,size):
     return mask
 
 
-def compose(source,output,meta,tracks,progress=lambda text:None):
+def compose(source,output,meta,tracks,progress=lambda text:None,effect=None):
+    effect=effects.validate(effect)
     output=Path(output);output.parent.mkdir(parents=True,exist_ok=True)
     width=min(640,meta['width']);height=max(2,round(meta['height']*width/meta['width']/2)*2)
     size=(width,height);rate=f"{meta['fps_num']}/{meta['fps_den']}"
@@ -50,7 +52,7 @@ def compose(source,output,meta,tracks,progress=lambda text:None):
             black=bytes(width*height)
             for frame in range(meta['frame_count']):
                 active=any(t['target']['start']<=frame<t['target']['end'] for t in tracks)
-                process.stdin.write(union_mask(frame,tracks,size).tobytes() if active else black)
+                process.stdin.write(effects.expand(union_mask(frame,tracks,size),effect['expansion']).tobytes() if active else black)
                 if frame%120==0:progress(f"合并遮罩 {frame+1} / {meta['frame_count']} 帧")
             process.stdin.close()
             if process.wait(timeout=60):raise cutting.CutError('遮罩视频生成失败，未生成成片')
@@ -61,10 +63,7 @@ def compose(source,output,meta,tracks,progress=lambda text:None):
     progress('正在合成完整视频并保留原音频…')
     w,h=meta['width'],meta['height']
     # RGB planar masks avoid limited-range luma turning white masks into partial blends.
-    graph=(f'[0:v]format=gbrp,split=2[original][small];'
-           f'[small]scale={max(1,w//30)}:{max(1,h//30)}:flags=area,scale={w}:{h}:flags=neighbor[pixel];'
-           f'[1:v]settb=expr={meta["fps_den"]}/{meta["fps_num"]},setpts=N,scale={w}:{h}:flags=neighbor,format=gbrp[mask];'
-           '[original][pixel][mask]maskedmerge,format=yuv420p[out]')
+    graph=effects.graph(meta,effect)
     cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-i',str(mask_video),'-filter_complex',graph,
                  '-map','[out]','-map','0:a:0?','-c:v','libx264','-crf','18','-preset','fast','-c:a','copy','-movflags','+faststart',str(partial)],900)
     progress('正在校验完整视频的帧数、分辨率和音频…')
@@ -115,7 +114,8 @@ def video_file(bid,sid,jid):
     return output
 
 
-def start(bid,sid,targets,reset_at,ranges=None):
+def start(bid,sid,targets,reset_at,ranges=None,effect=None):
+    effect=effects.validate(effect)
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
         session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
@@ -126,7 +126,7 @@ def start(bid,sid,targets,reset_at,ranges=None):
         if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
         if targets and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':2,'fallback':'skip_region'})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':3,'effect':effect,'fallback':'skip_region'})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)
@@ -137,7 +137,7 @@ def start(bid,sid,targets,reset_at,ranges=None):
                 for lock,shared in [(cutting.lock_root()/'compute.lock',False),(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
                     leases.append(cutting.lock_file(lock,shared=shared))
                 job={'schema_version':1,'id':jid,'status':'running','stage':'tracking','source_sha256':session['source_sha256'],'reset_at':reset_at,
-                     'targets':targets,'ranges':ranges,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
+                     'targets':targets,'ranges':ranges,'effect':effect,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
                 write_json_atomic(path,job);write_json_atomic(path.parent/'render-latest.json',{'id':jid})
             except Exception:
                 for lease in reversed(leases):lease.close()
@@ -196,7 +196,7 @@ def _work(bid,sid,path,job,cfg,leases):
             tracks.append(track)
         update(stage='composing',completed_regions=len(tracks))
         mosaic_locate.current(bid,sid,job)
-        result=process_video(source,directory/'mosaic.mp4',session['metadata'],tracks,job.get('ranges',[]),lambda text:update(progress=text))
+        result=process_video(source,directory/'mosaic.mp4',session['metadata'],tracks,job.get('ranges',[]),lambda text:update(progress=text),effect=job.get('effect'))
         with cutting_access.gate(workflow.folder(bid),session['request_id']):
             mosaic_locate.current(bid,sid,job)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
@@ -208,11 +208,11 @@ def _work(bid,sid,path,job,cfg,leases):
         for lease in reversed(leases):lease.close()
 
 
-def process_video(source,output,meta,tracks,ranges,progress=lambda text:None):
+def process_video(source,output,meta,tracks,ranges,progress=lambda text:None,effect=None):
     output=Path(output)
-    if not ranges:return compose(source,output,meta,tracks,progress)
+    if not ranges:return compose(source,output,meta,tracks,progress,effect)
     intermediate=output.with_name('masked-source.mp4')
-    if tracks:compose(source,intermediate,meta,tracks,progress)
+    if tracks:compose(source,intermediate,meta,tracks,progress,effect)
     progress('正在删除所选片段并合成视频…')
     actual=cutting.render_video(intermediate if tracks else source,output,ranges,meta)
     intermediate.unlink(missing_ok=True)

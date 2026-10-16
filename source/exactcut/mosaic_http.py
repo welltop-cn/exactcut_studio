@@ -44,13 +44,13 @@ def handle(handler,bid,suffix,method):
                 if action.startswith('frame/'):return handler.respond(200,sessions.frame_file(bid,sid,int(action[6:])).read_bytes(),'image/jpeg')
                 if action.startswith('locate/'):return handler.respond(200,mosaic_locate.state(bid,sid,action[7:]))
             if method=='POST' and action=='render':
-                return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at',''),data.get('ranges')))
+                return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at',''),data.get('ranges'),data.get('effect')))
             if method=='POST' and action=='replace':
                 from . import mosaic_replace
                 return handler.respond(202,mosaic_replace.start(bid,sid,data.get('job_id'),data.get('reset_at','')))
             if method=='POST' and action=='discard':return handler.respond(200,sessions.discard(bid,sid,data.get('reset_at','')))
             if method=='POST' and action=='track':
-                return handler.respond(202,mosaic_tracking.start(bid,sid,data.get('target'),data.get('reset_at','')))
+                return handler.respond(202,mosaic_tracking.start(bid,sid,data.get('target'),data.get('reset_at',''),data.get('effect')))
             if method=='POST' and action=='scan':
                 return handler.respond(202,mosaic_scan.start(bid,sid,data.get('reset_at',''),force=data.get('force',False)))
             if method=='POST' and action=='locate':

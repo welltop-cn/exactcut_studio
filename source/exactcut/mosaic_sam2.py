@@ -4,6 +4,7 @@ import sys
 import time
 from pathlib import Path
 from .cutting import run
+from . import mosaic_effects as effects
 from .util import write_json_atomic, file_sha256
 
 
@@ -46,15 +47,11 @@ def track(request):
                 raw=logits[ids.index(1),0].to('cpu').numpy()
                 mask=binary_mask(raw)
                 if mask.shape!=(height,width):raise ValueError('Unexpected mask dimensions')
-                mask=Image.fromarray(mask).filter(ImageFilter.MaxFilter(11))
+                mask=Image.fromarray(mask)
                 mask.save(masks/f'{index:06d}.png')
                 bounds=mask.getbbox();area=int(np.count_nonzero(np.asarray(mask)))
                 records[index]={'frame':target['start']+index,'box':list(bounds) if bounds else None,'area':area}
-                with Image.open(files[index]) as original:
-                    pixel=original.resize((max(1,width//18),max(1,height//18)),Image.Resampling.BILINEAR).resize((width,height),Image.Resampling.NEAREST)
-                    # Empty masks leave the original frame unchanged.
-                    preview=Image.composite(pixel,original,mask)
-                    preview.save(rendered/f'{index:06d}.png')
+                effects.expand(mask,effects.validate(cfg.get('effect'))['expansion']).save(rendered/f'{index:06d}.png')
                 write_json_atomic(output/'progress.json',{'frames_done':len(records),'frames_total':count})
     ordered=[records[i] for i in range(count)]
     warnings=[]
@@ -63,7 +60,9 @@ def track(request):
         if i and item['area'] and ordered[i-1]['area'] and max(item['area']/ordered[i-1]['area'],ordered[i-1]['area']/item['area'])>2.5:reason='遮罩面积突变，请检查'
         if reason:warnings.append({'frame':item['frame'],'reason':reason})
     start=target['start']*meta['fps_den']/meta['fps_num'];duration=count*meta['fps_den']/meta['fps_num']
-    run(['ffmpeg','-y','-v','error','-framerate',rate,'-i',str(rendered/'%06d.png'),'-ss',str(start),'-i',source,'-map','0:v:0','-map','1:a:0?','-t',str(duration),'-c:v','libx264','-pix_fmt','yuv420p','-crf','20','-preset','fast','-c:a','aac','-movflags','+faststart',str(output/'preview.mp4')],120)
+    run(['ffmpeg','-y','-v','error','-i',source,'-framerate',rate,'-i',str(rendered/'%06d.png'),'-filter_complex',effects.graph(meta,cfg.get('effect'),target['start'],target['end']),'-map','[out]','-an','-r',rate,'-fps_mode','cfr','-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-preset','fast',str(output/'silent.mp4')],120)
+    run(['ffmpeg','-y','-v','error','-i',str(output/'silent.mp4'),'-ss',str(start),'-i',source,'-map','0:v:0','-map','1:a:0?','-t',str(duration),'-c:v','copy','-c:a','aac','-movflags','+faststart',str(output/'preview.mp4')],120)
+    (output/'silent.mp4').unlink()
     result={'width':width,'height':height,'frames':ordered,'warnings':warnings,'elapsed_seconds':round(time.monotonic()-started,2),'device':device,'model':'sam2.1_hiera_tiny','notice':'模型跟踪预览，需人工检查；无警告不代表不存在漏遮。'}
     write_json_atomic(output/'result.json',result)
     for path in (frames,rendered):

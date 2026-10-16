@@ -6,6 +6,7 @@ import sys
 import threading
 from pathlib import Path
 from . import cutting, mosaic_session as sessions, mosaic_locate, cutting_access, workflow, storage
+from . import mosaic_effects as effects
 from .util import load_config, read_json, write_json_atomic, json_sha256, file_sha256, now_iso
 
 
@@ -78,11 +79,12 @@ def preview_file(bid,sid,jid):
     return path
 
 
-def identity(session,target,cfg):
-    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':2})[:32]
+def identity(session,target,cfg,effect=None):
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':3,'effect':effects.validate(effect)})[:32]
 
 
-def start(bid,sid,target,reset_at):
+def start(bid,sid,target,reset_at,effect=None):
+    effect=effects.validate(effect)
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
         cutting.require_reset(session,reset_at)
@@ -90,7 +92,7 @@ def start(bid,sid,target,reset_at):
         target=validate_target(session['metadata'],target)
         if not enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=settings()
-        jid=identity(session,target,cfg)
+        jid=identity(session,target,cfg,effect)
         path=sessions.session_path(bid,sid)/f'track-{jid}.json'
         with cutting.lock_file(path.parent/'track-state.lock',blocking=True):
             previous=recover(path)
@@ -99,7 +101,7 @@ def start(bid,sid,target,reset_at):
             try:
                 for lock,shared in [(cutting.lock_root()/'compute.lock',False),(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
                     leases.append(cutting.lock_file(lock,shared=shared))
-                job={'schema_version':1,'id':jid,'status':'running','source_sha256':session['source_sha256'],'reset_at':reset_at,'target':target,'created_at':now_iso(),'progress':'SAM 2 正在跟踪并生成预览'}
+                job={'schema_version':1,'id':jid,'status':'running','source_sha256':session['source_sha256'],'reset_at':reset_at,'target':target,'effect':effect,'created_at':now_iso(),'progress':'SAM 2 正在跟踪并生成预览'}
                 write_json_atomic(path,job)
             except Exception:
                 for lease in reversed(leases):lease.close()
@@ -135,7 +137,7 @@ def _work(bid,sid,path,job,cfg,leases):
     try:
         session=mosaic_locate.current(bid,sid,job);source=path.parent/'source.mp4'
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败')
-        result=run_tracker(source,path.parent/f"track-{job['id']}",session['metadata'],job['target'],cfg)
+        result=run_tracker(source,path.parent/f"track-{job['id']}",session['metadata'],job['target'],{**cfg,'effect':job.get('effect')})
         with cutting_access.gate(workflow.folder(bid),session['request_id']):
             mosaic_locate.current(bid,sid,job)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，跟踪结果失效')

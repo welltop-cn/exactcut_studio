@@ -6,6 +6,8 @@
   let batchJob=null,batchToken=0,batchLoading=false,batchError="";
   let trackToken=0,clipBounds=null;
   let deletions=[],savedDeletions=[],oldDraftRaw=null,mutationBusy=false,resultBefore=false,resultMode=false;
+  const defaultEffect={style:'pixel',strength:'medium',expansion:'small'};
+  let effect={...defaultEffect},savedEffect={...defaultEffect};
   let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
   const base=()=>`/api/batches/${context.batch}/mosaics/${context.session.id}`;
   const meta=()=>context.session.metadata;
@@ -23,6 +25,7 @@
     savedRaw=localStorage.getItem(draftKey());legacyRaw=localStorage.getItem(key());oldDraftRaw=localStorage.getItem(oldDraftKey());
     const draft=savedRaw===null?null:JSON.parse(savedRaw);
     const data=draft?draft.targets:JSON.parse(oldDraftRaw||legacyRaw||'[]');
+    effect={...defaultEffect,...draft?.effect};savedEffect={...effect};
     deletions=draft?.deletions||[];
     if(!Array.isArray(deletions)||deletions.length>40||deletions.some(t=>![t.start,t.end].every(Number.isInteger)||t.start<0||t.start>=t.end||t.end>meta().frame_count))throw Error('本机删除草稿格式无效');
     savedDeletions=structuredClone(deletions);
@@ -39,9 +42,9 @@
   function save(){
     try{
       if(localStorage.getItem(draftKey())!==savedRaw||localStorage.getItem(key())!==legacyRaw||localStorage.getItem(oldDraftKey())!==oldDraftRaw)throw Error('草稿已在其他页面更新，请关闭后重新进入，避免覆盖。');
-      const value=JSON.stringify({schema_version:1,targets,deletions});localStorage.setItem(draftKey(),value);
-      savedRaw=value;savedTargets=structuredClone(targets);savedDeletions=structuredClone(deletions);return true;
-    }catch(e){targets=structuredClone(savedTargets);deletions=structuredClone(savedDeletions);editing=null;paint();status(e.message||'无法保存草稿，请保持窗口打开。',true);return false;}
+      const value=JSON.stringify({schema_version:1,targets,deletions,effect});localStorage.setItem(draftKey(),value);
+      savedRaw=value;savedEffect={...effect};savedTargets=structuredClone(targets);savedDeletions=structuredClone(deletions);return true;
+    }catch(e){effect={...savedEffect};targets=structuredClone(savedTargets);deletions=structuredClone(savedDeletions);editing=null;paint();status(e.message||'无法保存草稿，请保持窗口打开。',true);return false;}
   }
   function validBox(c){return c&&[c.x,c.y,c.w,c.h].every(Number.isInteger)&&c.x>=0&&c.y>=0&&c.w>0&&c.h>0&&c.x+c.w<=meta().width&&c.y+c.h<=meta().height;}
   function selectedBox(){return candidates.find(c=>c.id===selected);}
@@ -74,9 +77,19 @@
     dialog.classList.toggle('adjusting',$('mosaicAdjust').open);
     $('mosaicEmpty').hidden=!!targets.length;
     $('mosaicClear').disabled=!activeCount()&&!deletions.length;
-    paintScan();paintBatch();
+    paintEffects();paintScan();paintBatch();
     drawOverlay();
   }
+  function paintEffects(){
+    for(const k of ['style','strength','expansion'])$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).value=effect[k];
+    $('mosaicStrengthRow').hidden=effect.style==='solid';
+    const styles={pixel:'方块',blur:'模糊',solid:'纯色'},strengths={light:'轻',medium:'中',heavy:'重'},expansions={none:'不扩大',small:'扩大小',medium:'扩大中',large:'扩大大'};
+    $('mosaicEffectSummary').textContent=[styles[effect.style],effect.style==='solid'?null:strengths[effect.strength],expansions[effect.expansion]].filter(Boolean).join(' · ');
+  }
+  for(const k of ['style','strength','expansion'])$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).onchange=()=>{
+    effect={...effect,[k]:$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).value};
+    if(save()){paint();status('打码效果已保存，重新生成后生效。');}
+  };
   function paintScan(){
     const events=scanReport?.events||[],enabled=context.session.capabilities?.region_recognition;
     $('mosaicScan').disabled=scanLoading||loading||!enabled;
@@ -227,7 +240,7 @@
   async function open(batch,asset){
     const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
     batchToken++;batchJob=null;batchLoading=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
-    scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;$('mosaicAdjust').open=false;
+    scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;$('mosaicAdjust').open=false;$('mosaicEffects').open=false;
     image.hidden=true;overlay.hidden=true;$('mosaicWorkspace').hidden=true;$('mosaicTitle').textContent='视频处理 · '+asset.title;
     for(const v of $('assets').querySelectorAll('video'))v.pause();
     if(!dialog.open)dialog.showModal();status('正在准备原片，首次打开需要一些时间；关闭后重新进入会继续等待…');
@@ -334,7 +347,7 @@
     if(view&&!view.hasAttribute('data-scan-event'))viewTarget(Number(view.dataset.targetView));
   };
   const deleteRanges=()=>deletions.map(t=>[t.start,t.end]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
-  const sameBatch=()=>!!batchJob&&targetSignature(batchJob.targets)===targetSignature(adoptedTargets())&&JSON.stringify(batchJob.ranges||[])===JSON.stringify(mergedRanges(deleteRanges()));
+  const sameBatch=()=>!!batchJob&&JSON.stringify({...defaultEffect,...batchJob.effect})===JSON.stringify(effect)&&targetSignature(batchJob.targets)===targetSignature(adoptedTargets())&&JSON.stringify(batchJob.ranges||[])===JSON.stringify(mergedRanges(deleteRanges()));
   function mergedRanges(input){const out=[];for(const [a,b] of input){if(out.length&&a<=out.at(-1)[1])out.at(-1)[1]=Math.max(b,out.at(-1)[1]);else out.push([a,b]);}return out;}
   const targetFields=['start','end','seed_frame','x','y','w','h'];
   const adoptedTargets=()=>targets.filter(t=>t.adopted!==false).map(t=>Object.fromEntries(targetFields.map(k=>[k,t[k]])));
@@ -384,7 +397,7 @@
     const version=epoch,request=++batchToken,endpoint=base(),valid=()=>active(version)&&request===batchToken;
     batchLoading=true;batchError='';paintBatch();
     try{
-      const result=await api(endpoint+'/render',start?{targets:adoptedTargets(),ranges:deleteRanges(),reset_at:context.session.reset_at||''}:undefined);
+      const result=await api(endpoint+'/render',start?{targets:adoptedTargets(),ranges:deleteRanges(),effect,reset_at:context.session.reset_at||''}:undefined);
       if(!valid())return;batchJob=start?result:result.job||null;paintBatch();
       while(valid()&&batchJob?.status==='running'){
         await new Promise(r=>setTimeout(r,1200));if(!valid())return;
@@ -449,7 +462,7 @@
     trackToken++;clipBounds={start:start/rate(),end:end/rate()};
     $('mosaicTrackTitle').textContent='本片段打码效果';
     $('mosaicTrackStatus').textContent=`${clock(clip.start)}–${clock(clip.end-1)}`;
-    $('mosaicTrackHint').textContent='播放上次生成结果；修改打码范围后需重新生成才能生效。';
+    $('mosaicTrackHint').textContent='播放上次生成结果；修改范围或效果后需重新生成才能生效。';
     const player=$('mosaicTrackVideo');player.hidden=false;
     player.src=appUrl(base()+'/render/'+batchJob.id+'/video?v='+encodeURIComponent(batchJob.completed_at||''));
     $('mosaicTrackDialog').showModal();
@@ -467,7 +480,7 @@
     $('mosaicTrackVideo').hidden=true;$('mosaicTrackStatus').textContent='SAM 2 正在跟踪当前区域。首次加载模型可能需要稍等。';$('mosaicTrackDialog').showModal();
     try{
       const target=Object.fromEntries(['start','end','seed_frame','x','y','w','h'].map(k=>[k,saved[k]]));
-      let job=await api(endpoint+'/track',{target,reset_at:context.session.reset_at||''});
+      let job=await api(endpoint+'/track',{target,effect,reset_at:context.session.reset_at||''});
       while(valid()&&job.status==='running'){
         $('mosaicTrackStatus').textContent=job.progress||'正在跟踪并生成预览…';
         await new Promise(r=>setTimeout(r,1200));if(!valid())return;
