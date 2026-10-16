@@ -357,7 +357,7 @@
     $('mosaicDiscard').disabled=mutationBusy||scanReport?.status==='running';
     $('mosaicClose').disabled=mutationBusy;
     $('mosaicBatchStart').textContent=running?'正在生成视频…':'生成处理后视频';
-    $('mosaicBatchHint').textContent=batchError||`删除 ${deletions.length} 段 · 打码 ${segments} 段（${adopted.length} 个区域）`;
+    $('mosaicBatchHint').textContent=batchError||`删除 ${deletions.length} 段 · 打码 ${segments} 段`;
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
     $('mosaicBatchClose').hidden=!showOutput;

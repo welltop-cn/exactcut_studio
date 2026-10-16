@@ -534,7 +534,7 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     open_auto(editor)
     button=editor.locator('#mosaicBatchStart')
     assert button.is_visible() and button.is_enabled()
-    assert '2 个区域' in editor.locator('#mosaicBatchHint').inner_text()
+    assert editor.locator('#mosaicBatchHint').inner_text()=='删除 0 段 · 打码 2 段'
     button.click()
     assert editor.locator('#mosaicBatchDialog').is_visible()
     assert editor.evaluate('batchBody.targets.length')==2
