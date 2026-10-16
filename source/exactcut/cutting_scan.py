@@ -109,10 +109,10 @@ def refine_window(event, meta):
     return sorted(set(round(left+j*(right-left)/(size-1)) for j in range(size))),left,end
 
 
-def detect(source, meta, cfg, policy, key, progress, compute):
+def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
     from google import genai
     from google.genai import types
-    deadline=time.monotonic()+1200
+    deadline=deadline if deadline is not None else time.monotonic()+1200
     client=genai.Client(api_key=key,http_options=types.HttpOptions(timeout=cfg['request_timeout_ms'],
                          retry_options=types.HttpRetryOptions(attempts=1)))
     duration=math.floor(Fraction(meta['frame_count']*1000*meta['fps_den'],meta['fps_num']))
@@ -135,6 +135,7 @@ def detect(source, meta, cfg, policy, key, progress, compute):
             proxy=Path(directory)/'proxy.mp4'
             progress('正在准备检测视频')
             try:
+                if time.monotonic()+120>deadline:raise cutting.CutError('本次识别用时过长，未完成，请重试')
                 cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-an','-vf',
                     'scale=540:540:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=15',
                     '-c:v','libx264','-preset','veryfast','-crf','28','-movflags','+faststart',str(proxy)],120)
@@ -152,7 +153,7 @@ def detect(source, meta, cfg, policy, key, progress, compute):
                 try:
                     parts=[]
                     for stamp in stamps:
-                        if time.monotonic()>deadline:raise cutting.CutError('复查超时')
+                        if time.monotonic()+30>deadline:raise cutting.CutError('复查超时')
                         jpeg=cutting.run(['ffmpeg','-v','error','-ss',f'{stamp/1000:.6f}','-i',str(source),
                             '-frames:v','1','-vf',"scale=w='min(720,iw)':h=-2",'-f','image2pipe','-vcodec','mjpeg','-'],30)
                         if not jpeg:raise cutting.CutError('抽样画面为空')

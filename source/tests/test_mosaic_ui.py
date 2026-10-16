@@ -32,6 +32,7 @@ def editor():
           window.findings=[{id:'0',label:'候选区域',reason:'需要人工确认',box_2d:[250,250,750,750],x:40,y:24,w:80,h:48}];
           window.api=async (url,body)=>{
             calls.push({url,body});
+            if(url.endsWith('/scan'))return {enabled:true,report:null};
             if(url.endsWith('/locate'))return {id:'job',status:'completed',...body,candidates:findings};
             return session;
           };
@@ -47,6 +48,7 @@ def editor():
 
 def open_editor(page):
     page.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    page.locator('#mosaicAdjust').evaluate('(el)=>el.open=true')
     page.locator('#mosaicRecognize').wait_for(state='visible')
     page.wait_for_function("!document.getElementById('mosaicRecognize').disabled")
 
@@ -140,3 +142,116 @@ def test_workspace_keeps_transport_and_footer_visible(editor):
     assert transport['y']+transport['height'] <= workspace['y']+workspace['height']
     sidebar=editor.locator('.mosaic-side').bounding_box()
     assert sidebar['y']+sidebar['height'] <= workspace['y']+workspace['height']
+
+
+def scan_result(page, *, needs_review=False):
+    page.evaluate('''needs => {
+      window.scanJob={id:'scan1',status:'completed',source_sha256:session.source_sha256,reset_at:'',warnings:[],events:[
+        {id:'e1',start:30,end:90,seed_frame:needs?null:60,status:needs?'needs_review':'localized',label:'疑似敏感画面',reason:'画面证据',review_note:needs?'自动定位未完成，请复核':'',candidates:needs?[]:findings}
+      ]};
+      const original=api;
+      window.api=async(url,body)=>{
+        if(url.endsWith('/scan')){calls.push({url,body});return body?scanJob:{enabled:true,report:null};}
+        return original(url,body);
+      };
+    }''', needs_review)
+
+
+def open_auto(page):
+    page.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    page.locator('#mosaicScan').wait_for(state='visible')
+    page.wait_for_function("!document.getElementById('mosaicScan').disabled")
+
+
+def test_scan_finds_range_and_region_without_manual_frame_selection(editor):
+    scan_result(editor)
+    open_auto(editor)
+    assert editor.locator('#mosaicStart').is_hidden()
+    editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').wait_for()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.locator('#mosaicOverlay').wait_for(state='visible')
+    assert editor.locator('#mosaicStart').input_value()=='00:01:00'
+    assert editor.locator('#mosaicEnd').input_value()=='00:02:29'
+    assert editor.locator('#mosaicFrameNumber').input_value()=='00:02:00'
+    assert not editor.locator('#mosaicAdjust').evaluate('(el)=>el.open')
+    assert editor.locator('#mosaicConfirm').is_visible()
+    assert editor.evaluate("calls.find(c=>c.url.endsWith('/scan')&&c.body).body")=={'reset_at':'','force':False}
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/locate'))")
+    editor.locator('#mosaicConfirm').click()
+    assert editor.locator('[data-target-view]').count()==1
+    assert editor.locator('[data-scan-marker]').count()==1
+
+
+def test_unlocalized_segment_remains_for_review(editor):
+    scan_result(editor,needs_review=True)
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').wait_for()
+    assert '需复核' in editor.locator('#mosaicScanEvents').inner_text()
+    editor.locator('[data-scan-event="e1"]').click()
+    assert editor.locator('#mosaicStart').input_value()=='00:01:00'
+    assert editor.locator('#mosaicConfirm').is_disabled()
+    assert editor.locator('#mosaicCandidates').inner_text()==''
+    assert '未完成' in editor.locator('#mosaicStatus').inner_text()
+
+
+def test_scan_resumes_running_job_on_reopen(editor):
+    scan_result(editor)
+    editor.evaluate('''() => {
+      const original=api;window.scanReads=0;
+      window.api=async(url,body)=>{
+        if(url.endsWith('/scan')){calls.push({url,body});scanReads++;return {enabled:true,report:scanReads===1?{id:'scan1',status:'running',progress:'正在定位区域'}:scanJob};}
+        return original(url,body);
+      };
+    }''')
+    open_auto(editor)
+    editor.locator('[data-scan-event="e1"]').wait_for()
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/scan')&&c.body)")
+
+
+def test_failed_scan_is_not_reported_as_empty_and_retry_preserves_targets(editor):
+    open_editor(editor)
+    editor.locator('#mosaicRecognize').click()
+    editor.locator('#mosaicConfirm').click()
+    scan_result(editor)
+    editor.evaluate("scanJob={id:'scan1',status:'failed',error:'整段扫描失败，请重试'}")
+    editor.locator('#mosaicScan').click()
+    editor.wait_for_function("document.getElementById('mosaicScanStatus').textContent.includes('失败')")
+    assert '未发现' not in editor.locator('#mosaicScanStatus').inner_text()
+    assert editor.locator('[data-target-view]').count()==1
+    scan_result(editor)
+    editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').wait_for()
+    assert editor.locator('[data-target-view]').count()==1
+
+
+def test_completed_empty_scan_is_explicit(editor):
+    scan_result(editor)
+    editor.evaluate('scanJob.events=[]')
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.wait_for_function("document.getElementById('mosaicScanStatus').textContent.includes('抽样未发现')")
+    assert editor.locator('[data-scan-event]').count()==0
+    assert editor.locator('#mosaicConfirm').is_disabled()
+
+
+def test_late_whole_scan_cannot_overwrite_reopened_results(editor):
+    scan_result(editor)
+    editor.evaluate('''() => {
+      const original=api;window.reopened=false;
+      window.api=async(url,body)=>{
+        if(url.endsWith('/scan')&&body)return new Promise(r=>window.finishScan=r);
+        if(url.endsWith('/scan')&&reopened)return {enabled:true,report:{...scanJob,id:'scan2',events:[{...scanJob.events[0],label:'新任务结果'}]}};
+        return original(url,body);
+      };
+    }''')
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.locator('#mosaicClose').click()
+    editor.evaluate('window.reopened=true')
+    open_auto(editor)
+    editor.locator('[data-scan-event="e1"]').wait_for()
+    editor.evaluate('finishScan(scanJob)')
+    editor.wait_for_timeout(100)
+    assert '新任务结果' in editor.locator('#mosaicScanEvents').inner_text()

@@ -41,14 +41,14 @@ def checked_candidates(text,meta):
         raise cutting.CutError('模型未返回有效区域结果，不能视作没有敏感区域') from None
 
 
-def detect(jpeg,meta,cfg,key):
+def detect(jpeg,meta,cfg,key,*,deadline=None):
     from google import genai
     from google.genai import types
     client=genai.Client(api_key=key,http_options=types.HttpOptions(timeout=cfg['request_timeout_ms'],retry_options=types.HttpRetryOptions(attempts=1)))
     try:
-        deadline=time.monotonic()+180
+        deadline=min(deadline,time.monotonic()+180) if deadline is not None else time.monotonic()+180
         while True:
-            if time.monotonic()>deadline:raise cutting.CutError('区域识别等待超时，请重试')
+            if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:raise cutting.CutError('区域识别等待超时，请重试')
             try:scan.ai_rate.acquire();break
             except ResourceDeferred as exc:time.sleep(min(1,max(.05,exc.not_before-time.time())))
         response=client.models.generate_content(model=cfg['model'],contents=[types.Part.from_bytes(data=jpeg,mime_type='image/jpeg'),types.Part.from_text(text=PROMPT)],
