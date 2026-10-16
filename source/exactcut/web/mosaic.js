@@ -60,7 +60,7 @@
     }
     if(scanLoading&&events.length)message+=`\n已发现 ${events.length} 个疑似时间段，${events.filter(e=>e.status==='localized').length} 段已定位，可先点击检查。`;
     $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
-    const targetRow=(t,i,standalone=false)=>`<div class="mosaic-target-row"><input type="checkbox" checked data-target-remove="${i}" aria-label="取消采用 ${esc(t.label)}"><button data-target-view="${i}" title="回看并修改区域"><span>${standalone?`${clock(t.start)}–${clock(t.end-1)} · `:""}已采用 · ${esc(t.label)}</span></button></div>`;
+    const targetRow=(t,i,standalone=false)=>`<div class="mosaic-target-row"><input type="checkbox" checked data-target-remove="${i}" aria-label="取消采用 ${esc(t.label)}"><button data-target-view="${i}" title="回看并修改区域"><span>${standalone?`${clock(t.start)}–${clock(t.end-1)} · `:""}已采用</span></button></div>`;
     const grouped=new Set();
     $('mosaicScanEvents').innerHTML=events.map(e=>{
       const adopted=targets.map((t,i)=>({t,i})).filter(({t})=>t.start===e.start&&t.end===e.end);
