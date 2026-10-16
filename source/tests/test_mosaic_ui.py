@@ -676,3 +676,25 @@ def test_processing_decisions_are_equal_toggle_buttons_and_tools_are_compact(edi
     assert editor.locator('#mosaicReview').bounding_box()['height']<90
     editor.locator('#mosaicAdjustToggle').click()
     assert editor.locator('#mosaicConfirm').is_visible()
+
+
+def test_processing_keeps_workspace_and_shows_background_progress(editor):
+    editor.evaluate('''() => {
+      const old=api;window.api=async(url,body)=>{
+        if(url.endsWith('/render'))return {job:{id:'b'.repeat(32),status:'running',progress:'正在跟踪第 1 / 6 个区域',targets:[]}};
+        if(url.includes('/render/'))return new Promise(()=>{});
+        return old(url,body);
+      };
+    }''')
+    open_auto(editor)
+    editor.locator('#mosaicProcessing').wait_for()
+    assert editor.locator('#mosaicWorkspace').is_visible()
+    assert editor.locator('#mosaicStage').is_visible()
+    assert editor.locator('#mosaicBatchDialog').is_hidden()
+    assert editor.locator('#mosaicStatus').is_hidden()
+    assert '1 / 6' in editor.locator('#mosaicProcessingText').inner_text()
+    assert '关闭后后台继续' in editor.locator('#mosaicProcessing').inner_text()
+    editor.locator('#mosaicBatchView').click()
+    assert editor.locator('#mosaicWorkspace').is_visible()
+    assert editor.locator('#mosaicBatchClose').is_hidden()
+    assert editor.locator('#mosaicClose').is_enabled()

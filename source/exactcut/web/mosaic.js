@@ -343,6 +343,13 @@
     if(!context)return;
     const adopted=adoptedTargets(),segments=new Set(adopted.map(t=>`${t.start}:${t.end}`)).size;
     const running=batchLoading||batchJob?.status==='running'||mutationBusy;
+    const generating=batchJob?.status==='running'||(batchLoading&&!batchJob);
+    const showOutput=resultMode&&batchJob?.status==='completed';
+    $('mosaicWorkspace').hidden=showOutput;$('mosaicBatchDialog').hidden=!showOutput;
+    $('mosaicProcessing').hidden=!generating;
+    $('mosaicProcessingText').textContent=batchJob?.progress||'正在准备处理视频…';
+    $('mosaicStatus').hidden=generating||showOutput;
+    dialog.classList.toggle('processing-result',showOutput);
     const clip=currentClip();
     $('mosaicClipPreview').disabled=batchJob?.status!=='completed'||!clip;
     $('mosaicClipPreview').title=batchJob?.status!=='completed'?'先生成完整视频':!clip?'先点击右侧片段':'查看上次生成视频中本片段的效果';
@@ -353,7 +360,7 @@
     $('mosaicBatchHint').textContent=batchError||`删除 ${deletions.length} 段 · 打码 ${segments} 段（${adopted.length} 个区域）`;
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
-    $('mosaicBatchClose').hidden=!resultMode;
+    $('mosaicBatchClose').hidden=!showOutput;
     $('mosaicBatchStart').hidden=resultMode&&batchJob?.status==='completed';
     $('mosaicBatchView').hidden=resultMode||(!batchJob&&!batchError);
     $('mosaicBatchDownload').hidden=!resultMode; $('mosaicReplace').hidden=!resultMode;
@@ -399,9 +406,8 @@
 
 
   function showResult(show){
-    resultMode=show;$('mosaicBatchDialog').hidden=!show;$('mosaicWorkspace').hidden=show;
-    dialog.classList.toggle('processing-result',show);
-    if(show){video.pause();image.hidden=true;}else{$('mosaicBatchVideo').pause();loadFrame();}
+    resultMode=show;
+    if(show&&batchJob?.status==='completed'){video.pause();}else if(!show){$('mosaicBatchVideo').pause();loadFrame();}
     paintBatch();
   }
   function clearDraft(){for(const k of [draftKey(),oldDraftKey(),key()])localStorage.removeItem(k);}
