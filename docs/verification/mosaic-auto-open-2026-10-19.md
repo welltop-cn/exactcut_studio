@@ -6,4 +6,4 @@
 
 本地浏览器UI回归69项通过，覆盖初始化复用、首帧失败重试、自动扫描、已有结果复用、失败/关闭功能开关以及请求等待上限。识别使用模拟响应，不构成真实模型质量验收。
 
-部署：6cf1bb9 静态补丁已应用到线上测试 /test/。全量回归1548项通过，随后新增的首帧准备/失败/禁用条件由完整69项UI回归覆盖。健康ok、worker_alive=true；公网两个JS与已提交文件逐字节一致。容器不重启，后端release仍test-mosaic-75efc57。回滚与发布记录：/srv/exactcut-test/deployments/auto-open-6cf1bb9。未操作正式实例，未代用户提交真实识别。
+部署：6cf1bb9 静态补丁已应用到线上测试 /test/。全量回归1548项通过，随后新增的首帧准备/失败/禁用条件由完整69项UI回归覆盖。健康ok、worker_alive=true；服务器已部署两个JS的SHA256与已提交文件一致；公网匿名读取JS返回401（需要登录），未做登录态页面验收。容器不重启，后端release仍test-mosaic-75efc57。回滚与发布记录：/srv/exactcut-test/deployments/auto-open-6cf1bb9。未操作正式实例，未代用户提交真实识别。
