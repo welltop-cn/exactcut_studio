@@ -828,3 +828,29 @@ def test_adjust_sidebar_does_not_shrink_preview(editor):
     assert editor.locator('#mosaicConfirm').is_visible()
     editor.locator('#mosaicAdjust summary').click()
     assert editor.locator('.mosaic-scan-section').is_visible()
+
+
+def test_manual_delete_and_mosaic_without_ai_persist(editor):
+    open_auto(editor)
+    editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicStart').fill('00:00:00')
+    editor.locator('#mosaicEnd').fill('00:01:29')
+    editor.locator('#mosaicAddSubmit').click()
+    assert '删除 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    editor.locator('[data-event-delete]').click()
+    assert '删除 0 段' in editor.locator('#mosaicBatchHint').inner_text()
+    editor.locator('[data-event-delete]').click()
+    editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicManualAction').select_option('mosaic')
+    assert editor.locator('#mosaicAddSubmit').is_disabled()
+    editor.locator('#mosaicDraw').click()
+    b=editor.locator('#mosaicOverlay').bounding_box()
+    editor.mouse.move(b['x']+b['width']*.2,b['y']+b['height']*.2);editor.mouse.down()
+    editor.mouse.move(b['x']+b['width']*.6,b['y']+b['height']*.6);editor.mouse.up()
+    editor.locator('#mosaicAddSubmit').click()
+    assert '打码 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    assert editor.locator('[data-mosaic-card]').count()==2
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    assert editor.locator('[data-mosaic-card]').count()==2
+    assert '删除 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    assert '打码 1 段' in editor.locator('#mosaicBatchHint').inner_text()
