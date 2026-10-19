@@ -16,7 +16,7 @@ def binary_mask(raw):
 
 def model_overrides(cfg):
     size=cfg.get('inference_size',1024)
-    if type(size) is not int or size not in (512,1024):raise ValueError('SAM inference_size must be 512 or 1024')
+    if type(size) is not int or size not in (512,768,1024):raise ValueError('SAM inference_size must be 512, 768 or 1024')
     return [f'++model.image_size={size}'] if size!=1024 else []
 
 

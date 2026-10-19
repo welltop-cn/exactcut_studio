@@ -95,6 +95,7 @@ def test_inference_size_override_is_bounded_and_part_of_cache_identity():
     from exactcut import mosaic_sam2, mosaic_tracking
     assert mosaic_sam2.model_overrides({})==[]
     assert mosaic_sam2.model_overrides({'inference_size':512})==['++model.image_size=512']
+    assert mosaic_sam2.model_overrides({'inference_size':768})==['++model.image_size=768']
     for value in (0,513,'512',True):
         with pytest.raises(ValueError):mosaic_sam2.model_overrides({'inference_size':value})
     session={'source_sha256':'a'*64,'reset_at':''}
