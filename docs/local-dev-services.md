@@ -130,3 +130,9 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 ## 2026-10-19 效果弹框生成全部区域片段预览（8801）
 
 加载 a59b213。65 项相关测试通过，真实 FFmpeg 验证短片多区域与原成片保留；UI 支持未保存效果试预览、返回停止。确认无运行任务、持有 compute/scan 排他锁，核验 PID 7447 cwd/端口后重启为 PID 23345（历史快照）。healthz ok/development，release development-clip-preview-a59b213；独立配置沿用，其他端口未动。未改用户草稿或结果，未触发真实模型调用。
+
+## 2026-10-19 片段预览加速（8801）
+
+加载 9906e54：复用原始跟踪遮罩，批量跟踪跳过单目标视频编码，片段预览长边640，正式输出分辨率不变。现有10秒片段的已完成遮罩只读验收，新版裁剪合成10.09秒；不含首次推理。详见 verification/clip-preview-performance-2026-10-19.md。
+
+确认无running任务，取得compute/scan排他锁，核验23345监听与cwd后正常重启为52843（历史快照，后续重查）。healthz ok/development，release development-fast-preview-9906e54。沿用隔离配置与数据，原视频、草稿和结果保留，未触发真实模型或替换成片。
