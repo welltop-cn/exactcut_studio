@@ -521,7 +521,7 @@
     const selectedTargets=targets.filter(t=>t.adopted!==false&&clipKey(t)===effectEditKey)
       .map(t=>({...Object.fromEntries(targetFields.map(k=>[k,t[k]])),effect:{...effectDraft}}));
     if(!selectedTargets.length)return;
-    const version=epoch,endpoint=base(),appearance={...effectDraft},reset=context.session.reset_at||'';
+    const version=epoch,endpoint=base(),appearance={...effectDraft},reset=context.session.reset_at||'',previewStarted=Date.now();
     previewBusy=true;previewClose=false;previewJob=null;previewEndpoint=endpoint;previewReset=reset;
     clipBounds=null;trackToken++;paint();
     $('mosaicTrackTitle').textContent='本片段效果预览';$('mosaicTrackHint').textContent='';
@@ -531,7 +531,7 @@
       previewJob=await api(endpoint+'/clip-preview',{targets:selectedTargets,effect:appearance,reset_at:reset});
       if(previewClose)await stopClipPreview();
       while(previewJob.status==='running'){
-        if(active(version)&&!previewClose)$('mosaicTrackStatus').textContent='正在生成本片段预览…';
+        if(active(version)&&!previewClose){const seconds=Math.floor((Date.now()-previewStarted)/1000);$('mosaicTrackStatus').textContent=`${previewJob.stage==='composing'?'正在合成片段预览':'正在跟踪片段'} · 已等待 ${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;}
         await new Promise(r=>setTimeout(r,1000));
         previewJob=await api(endpoint+'/render/'+previewJob.id);
       }

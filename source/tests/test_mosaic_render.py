@@ -278,3 +278,48 @@ def test_clip_preview_of_entire_short_source(tmp_path):
     track=make_track(tmp_path/'track',target,meta)
     result=render.process_preview(source,tmp_path/'preview.mp4',meta,[track],lambda text:None,{'style':'blur'})
     assert result['metadata']==meta
+
+
+def test_inference_reused_across_effects_but_not_geometry(ready,monkeypatch):
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);calls=[]
+    def infer(source,directory,meta,target,cfg):
+        calls.append(target);return make_track(directory,target,meta)['result']
+    monkeypatch.setattr(tracking,'run_tracker',infer)
+    root=sessions.session_path(bid,session['id'])
+    target={'start':0,'end':3,'seed_frame':0,'x':0,'y':0,'w':20,'h':20}
+    for i,style in enumerate(('pixel','soft_blur','solid')):
+        render.prepare_track(bid,session['id'],session,{**target,'effect':{'style':style}},{},root/f'job-{i}')
+    assert len(calls)==1
+    render.prepare_track(bid,session['id'],session,{**target,'x':1},{},root/'changed')
+    assert len(calls)==2
+
+
+def test_preview_downscales_without_changing_duration(tmp_path):
+    source=tmp_path/'source.mp4'
+    cutting.run(['ffmpeg','-y','-v','error','-f','lavfi','-i','color=white:s=1080x1920:r=30','-t','0.4','-c:v','libx264','-pix_fmt','yuv420p',str(source)])
+    meta=cutting.probe_source(source)
+    target={'start':2,'end':8,'seed_frame':2,'x':0,'y':0,'w':100,'h':100}
+    track=make_track(tmp_path/'track',target,meta)
+    result=render.process_preview(source,tmp_path/'out.mp4',meta,[track],lambda text:None,{'style':'solid'})
+    assert result['metadata']['width']==360
+    assert result['metadata']['height']==640
+    assert result['metadata']['frame_count']==6
+
+
+def test_legacy_render_masks_require_matching_source_reset_and_config(ready,monkeypatch):
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha)
+    root=sessions.session_path(bid,session['id']);directory=root/'render-old'/'target-0'
+    target={'start':0,'end':3,'seed_frame':0,'x':0,'y':0,'w':20,'h':20}
+    make_track(directory,target,session['metadata'])
+    write_json_atomic(root/'render-old.json',{'source_sha256':sha,'reset_at':''})
+    write_json_atomic(directory/'request.json',{'source':str(root/'source.mp4'),'metadata':session['metadata'],'target':target,'config':{'device':'mps'}})
+    calls=[]
+    def infer(source,directory,meta,target,cfg):
+        calls.append(cfg);assert cfg['masks_only'];return make_track(directory,target,meta)['result']
+    monkeypatch.setattr(tracking,'run_tracker',infer)
+    track=render.prepare_track(bid,session['id'],session,{**target,'effect':{'style':'solid'}},{'device':'mps'},root/'new')
+    assert track['directory']==directory and not calls
+    render.prepare_track(bid,session['id'],session,target,{'device':'cpu'},root/'new')
+    assert len(calls)==1
+    render.prepare_track(bid,session['id'],{**session,'reset_at':'changed'},target,{'device':'mps'},root/'new')
+    assert len(calls)==2

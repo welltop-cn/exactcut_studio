@@ -147,7 +147,7 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False):
         if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
         if targets and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':5,'effect':effect,'fallback':'skip_region',**({'preview':True} if preview else {})})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':5,'effect':effect,'fallback':'skip_region',**({'preview':True,'preview_engine':2} if preview else {})})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)
@@ -189,6 +189,13 @@ def stop(bid,sid,jid,reset_at):
 def prepare_track(bid,sid,session,target,cfg,directory):
     # compute.lock is already held by this batch. Never recursively enqueue a single job.
     jid=tracking.identity(session,target,cfg);root=sessions.session_path(bid,sid)
+    geometry={k:target[k] for k in ('start','end','seed_frame','x','y','w','h')}
+    inference=root/f'inference-{tracking.identity(session,geometry,cfg)}'
+    if (inference/'result.json').is_file():
+        result=read_json(inference/'result.json')
+        tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
+        if all((inference/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
+            return {'target':target,'directory':inference,'result':result}
     cached=root/f'track-{jid}.json';cache_dir=root/f'track-{jid}'
     if cached.is_file():
         previous=read_json(cached)
@@ -203,8 +210,23 @@ def prepare_track(bid,sid,session,target,cfg,directory):
         tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
         if all((directory/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
             return {'target':target,'directory':directory,'result':result}
-    result=tracking.run_tracker(root/'source.mp4',directory,session['metadata'],target,cfg)
-    return {'target':target,'directory':directory,'result':result}
+    # Reuse verified inference from earlier render/preview jobs made before the shared cache.
+    for job_path in root.glob('render-*.json'):
+        previous=read_json(job_path)
+        if previous.get('source_sha256')!=session['source_sha256'] or previous.get('reset_at','')!=session.get('reset_at',''):continue
+        for request_path in (root/job_path.stem).glob('target-*/request.json'):
+            request=read_json(request_path)
+            if request.get('config')!=cfg or request.get('metadata')!=session['metadata']:continue
+            if request.get('source')!=str(root/'source.mp4'):continue
+            if {k:request.get('target',{}).get(k) for k in geometry}!=geometry:continue
+            legacy=request_path.parent
+            if not (legacy/'result.json').is_file():continue
+            result=read_json(legacy/'result.json')
+            tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
+            if all((legacy/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
+                return {'target':target,'directory':legacy,'result':result}
+    result=tracking.run_tracker(root/'source.mp4',inference,session['metadata'],geometry,{**cfg,'masks_only':True})
+    return {'target':target,'directory':inference,'result':result}
 
 
 def _work(bid,sid,path,job,cfg,leases):
@@ -279,12 +301,18 @@ def process_video(source,output,meta,tracks,ranges,progress=lambda text:None,eff
 
 def process_preview(source,output,meta,tracks,progress,effect):
     start=min(t['target']['start'] for t in tracks);end=max(t['target']['end'] for t in tracks)
-    ranges=([[0,start]] if start else [])+([[end,meta['frame_count']]] if end<meta['frame_count'] else [])
-    if not ranges:return compose(source,output,meta,tracks,progress,effect)
     clip=Path(output).with_name('preview-source.mp4')
     progress('正在准备本片段预览…')
-    clip_meta=cutting.render_video(source,clip,ranges,meta)
-    clip_meta.pop('sha256',None)
+    scale=min(1,640/max(meta['width'],meta['height']))
+    width=max(2,round(meta['width']*scale/2)*2);height=max(2,round(meta['height']*scale/2)*2)
+    seconds=lambda frame:frame*meta['fps_den']/meta['fps_num']
+    video=f"trim=start_frame={start}:end_frame={end},setpts=PTS-STARTPTS,scale={width}:{height}"
+    audio=['-af',f'atrim=start={seconds(start):.9f}:end={seconds(end):.9f},asetpts=PTS-STARTPTS','-c:a','aac'] if meta['has_audio'] else []
+    cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-vf',video,'-map','0:v:0','-map','0:a:0?',
+                 '-c:v','libx264','-preset','veryfast','-crf','20','-r',f"{meta['fps_num']}/{meta['fps_den']}",'-fps_mode','cfr',*audio,str(clip)],900)
+    clip_meta=cutting.probe_source(clip)
+    expected={**meta,'width':width,'height':height,'frame_count':end-start}
+    if clip_meta!=expected:raise cutting.CutError('片段预览校验失败，请重试')
     shifted=[]
     for track in tracks:
         target={**track['target']}

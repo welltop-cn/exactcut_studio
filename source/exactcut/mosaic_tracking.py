@@ -127,7 +127,7 @@ def run_tracker(source,directory,meta,target,cfg):
     if result.returncode:raise cutting.CutError('SAM 2 跟踪失败，原片保留；请检查本机模型运行日志')
     result=read_json(directory/'result.json')
     checked_frames(target,result.get('frames'),result['width'],result['height'])
-    if not (directory/'preview.mp4').is_file():raise cutting.CutError('跟踪预览未生成')
+    if not cfg.get('masks_only') and not (directory/'preview.mp4').is_file():raise cutting.CutError('跟踪预览未生成')
     return result
 
 

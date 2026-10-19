@@ -51,7 +51,7 @@ def track(request):
                 mask.save(masks/f'{index:06d}.png')
                 bounds=mask.getbbox();area=int(np.count_nonzero(np.asarray(mask)))
                 records[index]={'frame':target['start']+index,'box':list(bounds) if bounds else None,'area':area}
-                effects.prepare_mask(mask,cfg.get('effect')).save(rendered/f'{index:06d}.png')
+                if not cfg.get('masks_only'):effects.prepare_mask(mask,cfg.get('effect')).save(rendered/f'{index:06d}.png')
                 write_json_atomic(output/'progress.json',{'frames_done':len(records),'frames_total':count})
     ordered=[records[i] for i in range(count)]
     warnings=[]
@@ -59,10 +59,12 @@ def track(request):
         reason='未找到遮罩，已跳过该区域' if not item['area'] else ''
         if i and item['area'] and ordered[i-1]['area'] and max(item['area']/ordered[i-1]['area'],ordered[i-1]['area']/item['area'])>2.5:reason='遮罩面积突变，请检查'
         if reason:warnings.append({'frame':item['frame'],'reason':reason})
-    start=target['start']*meta['fps_den']/meta['fps_num'];duration=count*meta['fps_den']/meta['fps_num']
-    run(['ffmpeg','-y','-v','error','-i',source,'-framerate',rate,'-i',str(rendered/'%06d.png'),'-filter_complex',effects.graph(meta,cfg.get('effect'),target['start'],target['end']),'-map','[out]','-an','-r',rate,'-fps_mode','cfr','-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-preset','fast',str(output/'silent.mp4')],120)
-    run(['ffmpeg','-y','-v','error','-i',str(output/'silent.mp4'),'-ss',str(start),'-i',source,'-map','0:v:0','-map','1:a:0?','-t',str(duration),'-c:v','copy','-c:a','aac','-movflags','+faststart',str(output/'preview.mp4')],120)
-    (output/'silent.mp4').unlink()
+    # Batch composition needs raw masks only, not an extra encoded video per target.
+    if not cfg.get('masks_only'):
+        start=target['start']*meta['fps_den']/meta['fps_num'];duration=count*meta['fps_den']/meta['fps_num']
+        run(['ffmpeg','-y','-v','error','-i',source,'-framerate',rate,'-i',str(rendered/'%06d.png'),'-filter_complex',effects.graph(meta,cfg.get('effect'),target['start'],target['end']),'-map','[out]','-an','-r',rate,'-fps_mode','cfr','-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-preset','fast',str(output/'silent.mp4')],120)
+        run(['ffmpeg','-y','-v','error','-i',str(output/'silent.mp4'),'-ss',str(start),'-i',source,'-map','0:v:0','-map','1:a:0?','-t',str(duration),'-c:v','copy','-c:a','aac','-movflags','+faststart',str(output/'preview.mp4')],120)
+        (output/'silent.mp4').unlink()
     result={'width':width,'height':height,'frames':ordered,'warnings':warnings,'elapsed_seconds':round(time.monotonic()-started,2),'device':device,'model':'sam2.1_hiera_tiny','notice':'模型跟踪预览，需人工检查；无警告不代表不存在漏遮。'}
     write_json_atomic(output/'result.json',result)
     for path in (frames,rendered):
