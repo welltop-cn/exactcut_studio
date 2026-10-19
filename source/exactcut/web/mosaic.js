@@ -205,7 +205,7 @@
     if(overlay.hidden)return;
     const g=geometry();Object.assign(overlay.style,{left:g.left+'px',top:g.top+'px',width:g.width+'px',height:g.height+'px'});
     overlay.classList.toggle('drawing',drawing);
-    overlay.innerHTML=candidates.map(c=>`<button class="mosaic-box ${c.id===selected?'selected':''}" data-box="${esc(c.id)}" aria-label="选择 ${esc(c.label)}" style="left:${c.x/meta().width*100}%;top:${c.y/meta().height*100}%;width:${c.w/meta().width*100}%;height:${c.h/meta().height*100}%"><span>${esc(c.label)}</span></button>`).join('');
+    overlay.innerHTML=candidates.map(c=>`<button class="mosaic-box ${c.id===selected?'selected':''}" data-box="${esc(c.id)}" aria-label="选择 ${esc(c.label)}" style="left:${c.x/meta().width*100}%;top:${c.y/meta().height*100}%;width:${c.w/meta().width*100}%;height:${c.h/meta().height*100}%"><span>${esc(c.label)}</span>${c.id===selected&&!editLocked()?['n','s','e','w','ne','nw','se','sw'].map(edge=>`<i data-resize="${edge}" class="mosaic-handle ${edge}"></i>`).join(''):''}</button>`).join('');
   }
   async function loadFrame(){
     if(!context||!dialog.open||!video.paused)return;
@@ -573,16 +573,49 @@
   $('mosaicDraw').onclick=()=>{if($('mosaicDraw').disabled)return;drawing=!drawing;paint();if(drawing)status('在画面内拖出矩形；也可用像素输入框微调。');};
   function point(e){const r=overlay.getBoundingClientRect();return {x:Math.max(0,Math.min(meta().width,Math.round((e.clientX-r.left)/r.width*meta().width))),y:Math.max(0,Math.min(meta().height,Math.round((e.clientY-r.top)/r.height*meta().height)))};}
   overlay.onpointerdown=e=>{
-    if(editLocked())return;
-    if(!drawing){const b=e.target.closest('[data-box]');if(b){if(selected!==b.dataset.box)editing=null;selected=b.dataset.box;paint();}return;}
-    e.preventDefault();const p=point(e);pointer={...p,id:e.pointerId};overlay.setPointerCapture(e.pointerId);
-    // Redrawing replaces the selected candidate, preserving any other candidates.
-    selected=selected??'manual';const next={id:selected,label:'手动区域',reason:'人工框选',x:p.x,y:p.y,w:1,h:1};
-    candidates=candidates.filter(c=>c.id!==selected);candidates.push(next);
+    if(editLocked()||e.button!==0||ready!==wanted||image.hidden||!video.paused)return;
+    const b=e.target.closest('[data-box]'),p=point(e);
+    if(b){
+      if(selected!==b.dataset.box)editing=null;
+      selected=b.dataset.box;
+      const bounds=b.getBoundingClientRect(),edge=(Math.abs(e.clientY-bounds.top)<=6?'n':Math.abs(e.clientY-bounds.bottom)<=6?'s':'')+(Math.abs(e.clientX-bounds.left)<=6?'w':Math.abs(e.clientX-bounds.right)<=6?'e':'');
+      pointer={...p,id:e.pointerId,mode:e.target.closest('[data-resize]')?.dataset.resize||edge||'move',original:{...selectedBox()}};
+      drawing=false;
+    }else{
+      if(!drawing)return;
+      pointer={...p,id:e.pointerId,mode:'draw'};
+      selected=selected??'manual';const next={id:selected,label:'手动区域',reason:'人工框选',x:p.x,y:p.y,w:1,h:1};
+      candidates=candidates.filter(c=>c.id!==selected);candidates.push(next);
+    }
+    e.preventDefault();overlay.setPointerCapture(e.pointerId);drawOverlay();
   };
-  overlay.onpointermove=e=>{if(!pointer)return;const p=point(e),c=selectedBox();Object.assign(c,{x:Math.min(p.x,pointer.x),y:Math.min(p.y,pointer.y),w:Math.abs(p.x-pointer.x),h:Math.abs(p.y-pointer.y)});drawOverlay();};
-  overlay.onpointerup=()=>{if(!pointer)return;pointer=null;drawing=false;const c=selectedBox();if(!validBox(c)){candidates=candidates.filter(v=>v!==c);selected=candidates[0]?.id??null;}paint();};
-  overlay.onpointercancel=()=>{pointer=null;drawing=false;candidates=candidates.filter(validBox);selected=candidates[0]?.id??null;paint();};
+  overlay.onpointermove=e=>{
+    if(!pointer||e.pointerId!==pointer.id||editLocked())return;
+    const p=point(e),c=selectedBox(),o=pointer.original,dx=p.x-pointer.x,dy=p.y-pointer.y;
+    if(!c)return;
+    if(pointer.mode==='draw')Object.assign(c,{x:Math.min(p.x,pointer.x),y:Math.min(p.y,pointer.y),w:Math.abs(dx),h:Math.abs(dy)});
+    else if(pointer.mode==='move')Object.assign(c,{x:Math.max(0,Math.min(meta().width-o.w,o.x+dx)),y:Math.max(0,Math.min(meta().height-o.h,o.y+dy))});
+    else{
+      let left=o.x,right=o.x+o.w,top=o.y,bottom=o.y+o.h;
+      if(pointer.mode.includes('w'))left=Math.max(0,Math.min(right-1,o.x+dx));
+      if(pointer.mode.includes('e'))right=Math.min(meta().width,Math.max(left+1,o.x+o.w+dx));
+      if(pointer.mode.includes('n'))top=Math.max(0,Math.min(bottom-1,o.y+dy));
+      if(pointer.mode.includes('s'))bottom=Math.min(meta().height,Math.max(top+1,o.y+o.h+dy));
+      Object.assign(c,{x:left,y:top,w:right-left,h:bottom-top});
+    }
+    drawOverlay();
+  };
+  overlay.onpointerup=e=>{
+    if(!pointer||e.pointerId!==pointer.id)return;
+    pointer=null;drawing=false;
+    if(overlay.hasPointerCapture(e.pointerId))overlay.releasePointerCapture(e.pointerId);
+    const c=selectedBox();if(!validBox(c)){candidates=candidates.filter(v=>v!==c);selected=candidates[0]?.id??null;}
+    $('mosaicAdjust').open=true;paint();status('拖动框内可移动，拖动边框可缩放；调整后保存区域。');
+  };
+  overlay.onpointercancel=()=>{
+    if(pointer?.original&&selectedBox())Object.assign(selectedBox(),pointer.original);
+    pointer=null;drawing=false;candidates=candidates.filter(validBox);paint();
+  };
   $('mosaicPlay').onclick=()=>{if(video.paused){controller?.abort();resetCandidate();ready=-1;image.hidden=true;overlay.hidden=true;video.play().catch(()=>status('暂时无法播放，请重试',true));}else{video.pause();wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();loadFrame();}};
   video.onplay=()=>{$('mosaicPlay').textContent='暂停';image.hidden=true;overlay.hidden=true;paint();};
   video.onpause=()=>{$('mosaicPlay').textContent='播放';};

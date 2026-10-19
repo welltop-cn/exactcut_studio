@@ -788,3 +788,27 @@ def test_closing_running_clip_preview_stops_without_discarding_effect_draft(edit
     editor.wait_for_function("!document.querySelector('#mosaicEffectSave').disabled")
     assert editor.evaluate('stopPreviewBody.job_id')=='c'*32
     assert editor.locator('#mosaicEffectStyle').input_value()=='soft_blur'
+
+
+def test_region_can_move_resize_edges_and_stay_inside_frame(editor):
+    open_editor(editor)
+    editor.locator('#mosaicRecognize').click()
+    editor.locator('[data-candidate="0"]').click()
+    def values():return [int(editor.locator('#mosaicBox'+axis).input_value()) for axis in 'XYWH']
+    def drag(locator,dx,dy):
+        b=locator.bounding_box();g=editor.locator('#mosaicOverlay').bounding_box()
+        x=b['x']+b['width']/2;y=b['y']+b['height']/2
+        editor.mouse.move(x,y);editor.mouse.down()
+        editor.mouse.move(x+dx*g['width']/160,y+dy*g['height']/96,steps=3);editor.mouse.up()
+    drag(editor.locator('.mosaic-box.selected'),10,5)
+    assert values()==[50,29,80,48]
+    for edge,dx,dy,expected in [('w',-10,0,[40,29,90,48]),('e',10,0,[40,29,100,48]),('n',0,-5,[40,24,100,53]),('s',0,5,[40,24,100,58])]:
+        drag(editor.locator('[data-resize="'+edge+'"]'),dx,dy)
+        assert values()==expected
+    drag(editor.locator('[data-resize="se"]'),5,5)
+    assert values()==[40,24,105,63]
+    drag(editor.locator('.mosaic-box.selected'),200,200)
+    assert values()==[55,33,105,63]
+    confirm_region(editor)
+    editor.locator('[data-target-view]').click()
+    assert values()==[55,33,105,63]
