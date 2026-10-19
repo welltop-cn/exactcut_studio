@@ -83,6 +83,17 @@ def preview_file(bid,sid,jid):
     return path
 
 
+def inference_identity(session,target,cfg):
+    """Raw SAM masks: change this version only when inference semantics change."""
+    geometry={k:target[k] for k in ('start','end','seed_frame','x','y','w','h')}
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':geometry,'config':cfg,'inference_engine':1})[:32]
+
+
+def legacy_inference_identities(session,geometry,cfg):
+    # Explicit historical contracts, independent of future rendered-preview versions.
+    return [json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':geometry,'config':cfg,'engine':version,'effect':effects.validate(None)})[:32] for version in (6,5)]
+
+
 def identity(session,target,cfg,effect=None):
     return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':6,'effect':effects.validate(effect)})[:32]
 

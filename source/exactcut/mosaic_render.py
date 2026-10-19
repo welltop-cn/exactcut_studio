@@ -203,12 +203,14 @@ def prepare_track(bid,sid,session,target,cfg,directory):
     # compute.lock is already held by this batch. Never recursively enqueue a single job.
     jid=tracking.identity(session,target,cfg);root=sessions.session_path(bid,sid)
     geometry={k:target[k] for k in ('start','end','seed_frame','x','y','w','h')}
-    inference=root/f'inference-{tracking.identity(session,geometry,cfg)}'
-    if (inference/'result.json').is_file():
-        result=read_json(inference/'result.json')
+    inference=root/f'inference-{tracking.inference_identity(session,geometry,cfg)}'
+    raw_caches=[inference,*[root/f'inference-{key}' for key in tracking.legacy_inference_identities(session,geometry,cfg)]]
+    for raw_cache in raw_caches:
+        if not (raw_cache/'result.json').is_file():continue
+        result=read_json(raw_cache/'result.json')
         tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
-        if all((inference/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
-            return {'target':target,'directory':inference,'result':result}
+        if all((raw_cache/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
+            return {'target':target,'directory':raw_cache,'result':result}
     cached=root/f'track-{jid}.json';cache_dir=root/f'track-{jid}'
     if cached.is_file():
         previous=read_json(cached)

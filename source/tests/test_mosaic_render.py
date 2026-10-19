@@ -420,3 +420,42 @@ def test_one_pass_mask_boundaries_survive_head_and_middle_deletions(tmp_path,aud
     result=render.process_video(source,out,meta,[track],[[0,3],[10,12]],effect={'style':'solid','expansion':'none'})
     assert result['metadata']=={**meta,'frame_count':15}
     assert frame_numbers(out)==[3,4,5,6,7,0,0,0,0,0,15,16,17,18,19]
+
+@pytest.mark.parametrize('engine',[5,6])
+def test_raw_inference_survives_render_identity_upgrade(ready,monkeypatch,engine):
+    from exactcut.util import json_sha256
+    from exactcut import mosaic_effects
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha)
+    root=sessions.session_path(bid,session['id'])
+    target={'start':0,'end':3,'seed_frame':0,'x':0,'y':0,'w':20,'h':20};cfg={'device':'cpu'}
+    key=json_sha256({'source':sha,'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':engine,'effect':mosaic_effects.validate(None)})[:32]
+    old=root/f'inference-{key}';make_track(old,target,session['metadata'])
+    monkeypatch.setattr(tracking,'identity',lambda *a,**kw:'future-render-version')
+    monkeypatch.setattr(tracking,'run_tracker',lambda *a:pytest.fail('unchanged geometry must reuse raw masks'))
+    result=render.prepare_track(bid,session['id'],session,{**target,'effect':{'style':'solid'}},cfg,root/'new')
+    assert result['directory']==old
+
+
+def test_inference_identity_is_independent_and_invalidates_inputs():
+    session={'source_sha256':'a','reset_at':''};target={'start':0,'end':3,'seed_frame':0,'x':0,'y':0,'w':20,'h':20};cfg={'device':'cpu'}
+    key=tracking.inference_identity(session,target,cfg)
+    assert tracking.inference_identity(session,{**target,'effect':{'style':'solid'}},cfg)==key
+    for other,t,c in [({**session,'source_sha256':'b'},target,cfg),({**session,'reset_at':'new'},target,cfg),(session,{**target,'x':1},cfg),(session,target,{**cfg,'inference_size':768})]:
+        assert tracking.inference_identity(other,t,c)!=key
+
+@pytest.mark.parametrize('change',['missing_mask','reset','source','config'])
+def test_legacy_raw_cache_rejects_incomplete_or_different_inputs(ready,monkeypatch,change):
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha)
+    root=sessions.session_path(bid,session['id']);target={'start':0,'end':3,'seed_frame':0,'x':0,'y':0,'w':20,'h':20};cfg={'device':'cpu'}
+    old=root/f'inference-{tracking.legacy_inference_identities(session,target,cfg)[0]}'
+    make_track(old,target,session['metadata'])
+    if change=='missing_mask':(old/'masks/000001.png').unlink()
+    if change=='reset':session={**session,'reset_at':'new'}
+    if change=='source':session={**session,'source_sha256':'new'}
+    if change=='config':cfg={**cfg,'inference_size':768}
+    calls=[]
+    def infer(source,directory,meta,target,cfg):
+        calls.append(directory);return make_track(directory,target,meta)['result']
+    monkeypatch.setattr(tracking,'run_tracker',infer)
+    render.prepare_track(bid,session['id'],session,target,cfg,root/'new')
+    assert len(calls)==1 and calls[0]!=old
