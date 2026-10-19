@@ -854,3 +854,16 @@ def test_manual_delete_and_mosaic_without_ai_persist(editor):
     assert editor.locator('[data-mosaic-card]').count()==2
     assert '删除 1 段' in editor.locator('#mosaicBatchHint').inner_text()
     assert '打码 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+
+
+def test_rescan_hides_unselected_old_regions_but_preserves_active_ones(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click()
+    editor.evaluate("scanJob.events[0]={...scanJob.events[0],start:100,end:160,seed_frame:120}")
+    editor.locator('#mosaicScan').click()
+    assert editor.locator('[data-target-view]').count()==1
+    editor.locator('[data-target-remove]').click()
+    assert editor.locator('[data-target-view]').count()==0
+    assert editor.locator('[data-scan-event]').count()==1
+    draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
+    assert len(draft['targets'])==1 and draft['targets'][0]['adopted'] is False
