@@ -53,7 +53,7 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None):
             for frame in range(meta['frame_count']):
                 processing_cancel.check()
                 active=any(t['target']['start']<=frame<t['target']['end'] for t in tracks)
-                process.stdin.write(effects.expand(union_mask(frame,tracks,size),effect['expansion']).tobytes() if active else black)
+                process.stdin.write(effects.prepare_mask(union_mask(frame,tracks,size),effect).tobytes() if active else black)
                 if frame%120==0:progress(f"合并遮罩 {frame+1} / {meta['frame_count']} 帧")
             process.stdin.close()
             if process.wait(timeout=60):raise cutting.CutError('遮罩视频生成失败，未生成成片')
@@ -127,7 +127,7 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None):
         if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
         if targets and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':3,'effect':effect,'fallback':'skip_region'})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':4,'effect':effect,'fallback':'skip_region'})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)

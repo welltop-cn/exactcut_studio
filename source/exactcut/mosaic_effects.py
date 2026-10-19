@@ -1,5 +1,5 @@
 """Shared, versioned mosaic appearance contract for previews and full renders."""
-from PIL import ImageFilter
+from PIL import ImageFilter, ImageChops
 from . import cutting
 
 DEFAULT={'style':'pixel','strength':'medium','expansion':'small'}
@@ -17,6 +17,16 @@ def validate(value=None):
 def expand(mask,level):
     radius=round(min(mask.size)*{'none':0,'small':.008,'medium':.016,'large':.03}[level])
     return mask.filter(ImageFilter.MaxFilter(radius*2+1)) if radius else mask
+
+
+def prepare_mask(mask,effect=None):
+    effect=validate(effect)
+    core=expand(mask,effect['expansion'])
+    if effect['style']!='blur' or not core.getbbox():return core
+    # Feather outward only: preserve full coverage of the selected core.
+    radius=max(1,round(min(core.size)*.015))
+    outer=core.filter(ImageFilter.MaxFilter(radius*2+1)).filter(ImageFilter.GaussianBlur(radius))
+    return ImageChops.lighter(core,outer)
 
 
 def graph(meta,effect=None,start=None,end=None):

@@ -46,3 +46,15 @@ def test_effect_changes_job_identity_and_preview_uses_same_graph(tmp_path):
     assert cutting.probe_source(output)['frame_count']==3
     pixels=cutting.run(['ffmpeg','-v','error','-i',str(output),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'])
     assert max(pixels)<5
+
+
+def test_soft_blur_preserves_core_and_feathers_only_outside():
+    mask=Image.new('L',(200,200))
+    mask.paste(255,(70,70,130,130))
+    soft=effects.prepare_mask(mask,{'style':'blur','expansion':'none'})
+    assert soft.getpixel((70,100))==255
+    assert 0<soft.getpixel((67,100))<255
+    assert soft.getpixel((0,0))==0
+    assert effects.prepare_mask(Image.new('L',mask.size),{'style':'blur'}).getbbox() is None
+    for style in ('pixel','solid'):
+        assert effects.prepare_mask(mask,{'style':style,'expansion':'none'}).tobytes()==mask.tobytes()

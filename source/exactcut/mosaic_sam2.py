@@ -51,7 +51,7 @@ def track(request):
                 mask.save(masks/f'{index:06d}.png')
                 bounds=mask.getbbox();area=int(np.count_nonzero(np.asarray(mask)))
                 records[index]={'frame':target['start']+index,'box':list(bounds) if bounds else None,'area':area}
-                effects.expand(mask,effects.validate(cfg.get('effect'))['expansion']).save(rendered/f'{index:06d}.png')
+                effects.prepare_mask(mask,cfg.get('effect')).save(rendered/f'{index:06d}.png')
                 write_json_atomic(output/'progress.json',{'frames_done':len(records),'frames_total':count})
     ordered=[records[i] for i in range(count)]
     warnings=[]

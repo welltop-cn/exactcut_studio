@@ -80,7 +80,7 @@ def preview_file(bid,sid,jid):
 
 
 def identity(session,target,cfg,effect=None):
-    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':3,'effect':effects.validate(effect)})[:32]
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':4,'effect':effects.validate(effect)})[:32]
 
 
 def start(bid,sid,target,reset_at,effect=None):
