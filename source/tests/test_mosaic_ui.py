@@ -985,3 +985,32 @@ def test_saved_time_drives_generation_and_keeps_ai_original(editor):
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
     assert draft['aiEvents'][0]['start']==30
     assert draft['clipEdits']['e1']=={'start':40,'end':90}
+
+
+def test_manual_fixed_region_persists_and_generates_without_tracking(editor):
+    open_auto(editor);editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicManualAction').select_option('mosaic')
+    assert editor.locator('#mosaicMotion').input_value()=='fixed'
+    editor.locator('#mosaicDraw').click();b=editor.locator('#mosaicOverlay').bounding_box()
+    editor.mouse.move(b['x']+20,b['y']+20);editor.mouse.down();editor.mouse.move(b['x']+80,b['y']+60);editor.mouse.up()
+    editor.locator('#mosaicAddSubmit').click()
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    assert editor.locator('#mosaicMotion').input_value()=='fixed'
+    editor.locator('#mosaicAdjust summary').click()
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.fixedBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+    assert editor.locator('#mosaicBatchStart').is_enabled()
+    editor.locator('#mosaicBatchStart').click()
+    assert editor.evaluate('fixedBody.targets[0].motion')=='fixed'
+
+
+def test_ai_region_defaults_to_tracking_and_can_switch_to_fixed(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click();editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    assert editor.locator('#mosaicMotion').input_value()=='tracked'
+    editor.locator('#mosaicMotion').select_option('fixed');editor.locator('#mosaicConfirm').click()
+    editor.locator('[data-effect-target]').click()
+    assert editor.locator('#mosaicEffectPreview').is_enabled()
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/clip-preview')){window.fixedPreview=body;return {id:'b'.repeat(32),status:'completed',...body};}return old(url,body);};}""")
+    editor.locator('#mosaicEffectPreview').click()
+    assert editor.evaluate('fixedPreview.targets[0].motion')=='fixed'

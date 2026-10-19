@@ -23,12 +23,15 @@ def validate_target(meta,target):
     keys=('start','end','seed_frame','x','y','w','h')
     if not isinstance(target,dict) or any(type(target.get(k)) is not int for k in keys):
         raise cutting.CutError('跟踪区域必须包含整数帧和像素坐标')
+    motion=target.get('motion','tracked')
+    if motion not in ('fixed','tracked'):raise cutting.CutError('打码位置模式无效')
     t={k:target[k] for k in keys}
+    if motion=='fixed':t['motion']='fixed'
     if not 0<=t['start']<=t['seed_frame']<t['end']<=meta['frame_count']:
         raise cutting.CutError('跟踪参考帧必须在所选片段内')
     if not (0<=t['x']<t['x']+t['w']<=meta['width'] and 0<=t['y']<t['y']+t['h']<=meta['height']):
         raise cutting.CutError('跟踪区域超出画面')
-    if (t['end']-t['start'])*meta['fps_den']>10*meta['fps_num'] or t['end']-t['start']>300:
+    if motion!='fixed' and ((t['end']-t['start'])*meta['fps_den']>10*meta['fps_num'] or t['end']-t['start']>300):
         raise cutting.CutError('首轮跟踪支持最多 10 秒、300 帧，请先缩短作用范围')
     if 'effect' in target:t['effect']=effects.validate(target['effect'])
     return t
@@ -91,6 +94,7 @@ def start(bid,sid,target,reset_at,effect=None):
         cutting.require_reset(session,reset_at)
         cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
         target=validate_target(session['metadata'],target)
+        if target.get('motion')=='fixed':raise cutting.CutError('固定位置请使用片段效果预览')
         if not enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=settings()
         jid=identity(session,target,cfg,effect)

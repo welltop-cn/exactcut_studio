@@ -1,4 +1,5 @@
 """Full-length mosaic artifacts from a frozen set of adopted regions."""
+import math
 import re
 import subprocess
 import threading
@@ -25,6 +26,11 @@ def union_mask(frame,tracks,size):
         target=track['target']
         if not target['start']<=frame<target['end']:continue
         if track.get('failed'):continue
+        if target.get('motion')=='fixed':
+            sx=size[0]/track['result']['width'];sy=size[1]/track['result']['height']
+            box=(math.floor(target['x']*sx),math.floor(target['y']*sy),math.ceil((target['x']+target['w'])*sx),math.ceil((target['y']+target['h'])*sy))
+            mask.paste(255,box)
+            continue
         index=frame-target['start'];record=track['result']['frames'][index]
         if record['box'] is None:continue
         path=Path(track['directory'])/'masks'/f'{index:06d}.png'
@@ -145,7 +151,7 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False):
         if targets!=[]:targets=validate_targets(session['metadata'],targets)
         if preview and not targets:raise cutting.CutError('请先选择本片段的打码区域')
         if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
-        if targets and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
+        if any(t.get('motion')!='fixed' for t in targets) and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
         jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':5,'effect':effect,'fallback':'skip_region',**({'preview':True,'preview_engine':2} if preview else {})})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
@@ -187,6 +193,8 @@ def stop(bid,sid,jid,reset_at):
 
 
 def prepare_track(bid,sid,session,target,cfg,directory):
+    if target.get('motion')=='fixed':
+        return {'target':target,'result':{'width':session['metadata']['width'],'height':session['metadata']['height'],'frames':[]}}
     # compute.lock is already held by this batch. Never recursively enqueue a single job.
     jid=tracking.identity(session,target,cfg);root=sessions.session_path(bid,sid)
     geometry={k:target[k] for k in ('start','end','seed_frame','x','y','w','h')}
@@ -248,7 +256,7 @@ def _work_cancelable(bid,sid,path,job,cfg,leases):
         directory.mkdir(exist_ok=True);tracks=[];warnings=[];skipped=set()
         for index,target in enumerate(job['targets']):
             mosaic_locate.current(bid,sid,job)
-            update(progress=f"正在跟踪第 {index+1} / {len(job['targets'])} 个区域",completed_regions=index)
+            update(progress=f"正在准备第 {index+1} / {len(job['targets'])} 个打码区域",completed_regions=index)
             try:
                 track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}')
                 for frame in track['result']['frames']:

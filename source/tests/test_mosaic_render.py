@@ -323,3 +323,47 @@ def test_legacy_render_masks_require_matching_source_reset_and_config(ready,monk
     assert len(calls)==1
     render.prepare_track(bid,session['id'],{**session,'reset_at':'changed'},target,{'device':'mps'},root/'new')
     assert len(calls)==2
+
+
+def test_fixed_region_validation_and_mask_without_tracker(tmp_path,monkeypatch):
+    meta={'width':160,'height':96,'frame_count':900,'fps_num':30,'fps_den':1}
+    target={'start':10,'end':800,'seed_frame':10,'x':20,'y':30,'w':40,'h':10,'motion':'fixed'}
+    assert render.validate_targets(meta,[target])[0]['motion']=='fixed'
+    with pytest.raises(cutting.CutError):render.validate_targets(meta,[{**target,'motion':'unknown'}])
+    monkeypatch.setattr(tracking,'run_tracker',lambda *a:pytest.fail('fixed mask must not track'))
+    track=render.prepare_track('unused','unused',{'metadata':meta},target,{},tmp_path)
+    assert render.union_mask(9,[track],(80,48)).getbbox() is None
+    assert render.union_mask(10,[track],(80,48)).getbbox()==(10,15,30,20)
+    assert render.union_mask(799,[track],(80,48)).getbbox()==(10,15,30,20)
+    assert render.union_mask(800,[track],(80,48)).getbbox() is None
+
+
+def test_fixed_render_and_preview_without_sam(ready,monkeypatch):
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
+    monkeypatch.setattr(tracking,'enabled',lambda:False)
+    monkeypatch.setattr(tracking,'run_tracker',lambda *a:pytest.fail('fixed region called SAM'))
+    target={'start':10,'end':20,'seed_frame':10,'x':0,'y':0,'w':40,'h':40,'motion':'fixed'}
+    for preview in (False,True):
+        job=render.start(bid,sid,[target],'',effect={'style':'solid'},preview=preview)
+        finished=wait_job(bid,sid,job['id']);assert finished['status']=='completed',finished
+        assert finished['result']['metadata']['frame_count']==(10 if preview else session['metadata']['frame_count'])
+        assert finished['result']['skipped_frames']==0
+    assert file_sha256(source)==sha
+
+
+def test_fixed_mask_pixels_and_time_boundaries_in_real_video(tmp_path):
+    source=make_video(tmp_path/'source.mp4',frames=12)
+    meta=cutting.probe_source(source)
+    target={'motion':'fixed','start':3,'end':8,'seed_frame':3,'x':0,'y':0,'w':meta['width'],'h':meta['height']}
+    track=render.prepare_track('unused','unused',{'metadata':meta},target,{},tmp_path)
+    output=tmp_path/'out.mp4'
+    render.compose(source,output,meta,[track],effect={'style':'solid','expansion':'none'})
+    pixels=cutting.run(['ffmpeg','-v','error','-i',str(output),'-f','rawvideo','-pix_fmt','rgb24','-'])
+    stride=meta['width']*meta['height']*3
+    assert max(pixels[3*stride:8*stride])<5
+    assert max(pixels[2*stride:3*stride])>20
+    assert max(pixels[8*stride:9*stride])>20
+    preview=tmp_path/'preview.mp4'
+    render.process_preview(source,preview,meta,[track],lambda text:None,{'style':'solid','expansion':'none'})
+    pixels=cutting.run(['ffmpeg','-v','error','-i',str(preview),'-f','rawvideo','-pix_fmt','rgb24','-'])
+    assert len(pixels)==5*stride and max(pixels)<5
