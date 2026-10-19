@@ -32,7 +32,7 @@ def editor():
           window.findings=[{id:'0',label:'候选区域',reason:'需要人工确认',box_2d:[250,250,750,750],x:40,y:24,w:80,h:48}];
           window.api=async (url,body)=>{
             calls.push({url,body});
-            if(url.endsWith('/scan'))return {enabled:true,report:null};
+            if(url.endsWith('/scan'))return {enabled:true,report:{id:'existing',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]}};
             if(url.endsWith('/locate'))return {id:'job',status:'completed',...body,candidates:findings};
             return session;
           };
@@ -265,8 +265,8 @@ def test_late_whole_scan_cannot_overwrite_reopened_results(editor):
         return original(url,body);
       };
     }''')
-    open_auto(editor)
-    editor.locator('#mosaicScan').click()
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.wait_for_function('typeof finishScan === "function"')
     editor.locator('#mosaicClose').click()
     editor.evaluate('window.reopened=true')
     open_auto(editor)
@@ -1156,3 +1156,55 @@ def test_save_time_preserves_cancelled_mask_and_delete_choice(editor,delete_sele
     assert draft['targets'][0]['adopted'] is False
     assert len(draft['deletions'])==int(delete_selected)
     assert draft['targets'][0]['start']==40
+
+
+def test_open_automatically_scans_once_and_reuses_completed_empty_result(editor):
+    editor.evaluate('''() => {const old=api;let report=null;window.autoStarts=0;
+      window.api=async(url,body)=>{if(!url.endsWith('/scan'))return old(url,body);
+        if(body){autoStarts++;report={id:'auto',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]};return report;}
+        return {enabled:true,report};};}''')
+    open_auto(editor)
+    editor.wait_for_function('autoStarts===1')
+    editor.locator('#mosaicClose').click()
+    open_auto(editor)
+    assert editor.evaluate('autoStarts')==1
+
+
+def test_mosaic_open_uses_long_preparation_timeout():
+    import subprocess
+    script=(Path(__file__).parents[1]/'exactcut/web/app.js').read_text()
+    api=script[script.index('async function api('):script.index('\nfunction positionToast')]
+    harness="""
+const current={id:'a'.repeat(32),media_managed:true,revision:1},batchCache=[];
+const sessionStorage={getItem:()=>null,setItem:()=>{},removeItem:()=>{}},randomId=()=> 'token',appUrl=x=>x;
+let duration;global.setTimeout=(fn,ms)=>{duration=ms;return 1};global.clearTimeout=()=>{};
+global.fetch=async()=>({ok:true,status:200,json:async()=>({id:'session'})});
+"""+api+"""
+(async()=>{await api('/api/batches/'+current.id+'/mosaics/open',{});
+if(duration!==120000)throw Error('wrong preparation timeout '+duration);})();
+"""
+    subprocess.run(['node','-e',harness],check=True,capture_output=True,text=True)
+
+
+@pytest.mark.parametrize('enabled,report', [(False,None),(True,{'id':'failed','status':'failed','error':'识别失败'})])
+def test_open_does_not_auto_retry_failure_or_disabled_scan(editor,enabled,report):
+    editor.evaluate('''value=>{const old=api;window.scanWrites=0;window.api=async(url,body)=>{
+      if(url.endsWith('/scan')){if(body)scanWrites++;return value;}return old(url,body);};}''',{'enabled':enabled,'report':report})
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.locator('#mosaicWorkspace').wait_for(state='visible')
+    editor.wait_for_timeout(100)
+    assert editor.evaluate('scanWrites')==0
+
+
+def test_auto_scan_waits_for_first_frame_and_recovers_after_frame_retry(editor):
+    editor.route('**/frame/*',lambda r:r.fulfill(status=503,body='not ready'))
+    editor.evaluate('''()=>{const old=api;window.scanWrites=0;window.api=async(url,body)=>{
+      if(url.endsWith('/scan')){if(body){scanWrites++;return {id:'auto',status:'completed',events:[]};}return {enabled:true,report:null};}
+      return old(url,body);};}''')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.locator('#mosaicFrameRetry').wait_for(state='visible')
+    assert editor.evaluate('scanWrites')==0
+    jpeg=io.BytesIO();Image.new('RGB',(160,96)).save(jpeg,'JPEG')
+    editor.route('**/frame/*',lambda r:r.fulfill(body=jpeg.getvalue(),content_type='image/jpeg'))
+    editor.locator('#mosaicFrameRetry').click()
+    editor.wait_for_function('scanWrites===1')

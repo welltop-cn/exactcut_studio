@@ -22,7 +22,7 @@ async function api(path,data){
  if(data!==undefined&&batch?.media_managed)data={revision:batch.revision,...data};
  const submitting=data!==undefined&&(batch?.media_managed||/\/(start|publish)$/.test(path)),key='exactcut.submit.'+path+JSON.stringify(data);
  if(submitting){let token=sessionStorage.getItem(key);if(!token){token=randomId();sessionStorage.setItem(key,token)}data={...data,submission_token:token}}
- const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),path.endsWith("/hook-preview")?210000:path.endsWith("/cuts/open")?120000:submitting?20000:120000);
+ const abort=new AbortController(),timer=setTimeout(()=>abort.abort(),path.endsWith("/hook-preview")?210000:/\/(cuts|mosaics)\/open$/.test(path)?120000:submitting?20000:120000);
  try{const response=await fetch(appUrl(path),data===undefined?{cache:'no-store',signal:abort.signal}:{method:'POST',headers:{'Content-Type':'application/json','X-Exactcut-Request':'1'},body:JSON.stringify(data),signal:abort.signal});if(response.status===401){location.replace(appUrl('/login'));throw Error('登录已过期')}let body;try{body=await response.json()}catch{throw Error(`服务响应异常 (${response.status})`)}if(!response.ok){if(submitting&&response.status<500)sessionStorage.removeItem(key);throw Error(body.error_info?`${body.error_info.title}。${body.error_info.action}\n${body.error_info.detail}`:body.error||`请求失败 (${response.status})`)}if(submitting)sessionStorage.removeItem(key);return body}
  catch(e){if(submitting&&(e.name==='AbortError'||e instanceof TypeError))throw Error('暂未收到提交回执，后台可能已接收。查看进度或再次点击可查询同一任务。');if(e.name==='AbortError')throw Error('请求超时，请稍后重试');throw e}finally{clearTimeout(timer)}
 }

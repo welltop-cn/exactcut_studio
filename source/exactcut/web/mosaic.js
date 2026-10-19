@@ -2,7 +2,7 @@
 (() => {
   const dialog=$('mosaicDialog'), video=$('mosaicSource'), image=$('mosaicFrame'), overlay=$('mosaicOverlay');
   let context=null, epoch=0, token=0, wanted=0, ready=-1, candidates=[], selected=null, targets=[], editing=null;
-  let motion='tracked',regionDrafts=[];
+  let motion='tracked',regionDrafts=[],autoScanPending=false;
   let loading=false, frameLoading=false, drawing=false, pointer=null, frameUrl=null, controller=null, timer;
   let batchJob=null,batchToken=0,batchLoading=false,batchError="";
   let trackToken=0,clipBounds=null;
@@ -224,8 +224,9 @@
     }
     return report;
   }
-  async function scanVideo(start=false){
+  async function scanVideo(start=false,autoStart=false){
     if(!context||scanLoading||loading)return;
+    autoScanPending=false;
     const version=epoch,request=++scanToken,endpoint=base(),valid=()=>active(version)&&request===scanToken;
     scanLoading=true;scanError='';paint();
     try{
@@ -233,7 +234,13 @@
       if(start){
         const report=await api(endpoint+'/scan',{reset_at:context.session.reset_at||'',force:!!scanReport});
         state={enabled:true,report};
-      }else state=await api(endpoint+'/scan');
+      }else {
+        state=await api(endpoint+'/scan');
+        if(valid()&&autoStart&&state.enabled===true&&state.report===null){
+          status('正在自动识别整段视频…');
+          state={enabled:true,report:await api(endpoint+'/scan',{reset_at:context.session.reset_at||'',force:false})};
+        }
+      }
       while(valid()){
         if(typeof state.enabled!=='boolean')throw Error('整段识别响应无效，请重试读取。');
         context.session.capabilities.region_recognition=state.enabled;
@@ -283,7 +290,7 @@
       if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=next;ready=frame;image.hidden=false;
       $('mosaicFrameHint').textContent=motion==='fixed'?'固定位置 · 所选时间内保持此位置':'准确帧 · 框仅对应当前参考帧，尚未跟踪';
     }catch(e){if(active(version)&&request===controller&&e.name!=='AbortError'){$('mosaicFrameHint').textContent=e.message;$('mosaicFrameRetry').hidden=false;}}
-    finally{if(active(version)&&request===controller){frameLoading=false;paint();}}
+    finally{if(active(version)&&request===controller){frameLoading=false;paint();if(autoScanPending&&ready===wanted&&!image.hidden)scanVideo(false,true);}}
   }
   function seek(frame,keep=false){
     if(!context)return;clearTimeout(timer);controller?.abort();video.pause();
@@ -327,7 +334,7 @@
   async function open(batch,asset){
     const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;motion='tracked';wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
     batchToken++;batchJob=null;batchLoading=false;stopPending=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
-    clearRemovedClip();scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;addingClip=false;manualClips=[];aiEvents=[];clipEdits={};$('mosaicAdjust').open=false;$('mosaicEffects').close();
+    autoScanPending=false;clearRemovedClip();scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;addingClip=false;manualClips=[];aiEvents=[];clipEdits={};$('mosaicAdjust').open=false;$('mosaicEffects').close();
     image.hidden=true;overlay.hidden=true;$('mosaicWorkspace').hidden=true;$('mosaicTitle').textContent='剪切打码 · '+asset.title;
     for(const v of $('assets').querySelectorAll('video'))v.pause();
     if(!dialog.open)dialog.showModal();status('正在准备原片，首次打开需要一些时间；关闭后重新进入会继续等待…');
@@ -337,8 +344,8 @@
       $('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);$('mosaicSeek').max=meta().frame_count-1;
       loadDraft();
       $('mosaicWorkspace').hidden=false;video.src=appUrl(base()+'/source');video.load();
-      status(session.capabilities?.region_recognition?'点击“识别整段视频”，自动查找需要打码的时间段和区域。':'本机未启用 Gemini 识别，可先手动框选目标。');
-      paint();loadFrame();scanVideo();restoreBatch();
+      status(session.capabilities?.region_recognition?'正在加载视频首帧，准备完成后自动识别…':'本机未启用 Gemini 识别，可先手动框选目标。');
+      autoScanPending=true;paint();loadFrame();restoreBatch();
     }catch(e){if(version===epoch)status(e.message,true);}
   }
   function mount(){
