@@ -524,14 +524,14 @@
     const version=epoch,endpoint=base(),appearance={...effectDraft},reset=context.session.reset_at||'';
     previewBusy=true;previewClose=false;previewJob=null;previewEndpoint=endpoint;previewReset=reset;
     clipBounds=null;trackToken++;paint();
-    $('mosaicTrackTitle').textContent='本片段效果预览';$('mosaicTrackHint').textContent='按当前设置预览全部已采用区域；返回后可继续调整。';
-    $('mosaicTrackStatus').textContent='正在生成片段预览…';$('mosaicTrackVideo').hidden=true;
+    $('mosaicTrackTitle').textContent='本片段效果预览';$('mosaicTrackHint').textContent='';
+    $('mosaicTrackStatus').textContent='正在生成本片段预览…';$('mosaicTrackVideo').hidden=true;
     $('mosaicTrackClose').textContent='返回设置';$('mosaicTrackDialog').showModal();
     try{
       previewJob=await api(endpoint+'/clip-preview',{targets:selectedTargets,effect:appearance,reset_at:reset});
       if(previewClose)await stopClipPreview();
       while(previewJob.status==='running'){
-        if(active(version)&&!previewClose)$('mosaicTrackStatus').textContent=previewJob.progress||'正在生成片段预览…';
+        if(active(version)&&!previewClose)$('mosaicTrackStatus').textContent='正在生成本片段预览…';
         await new Promise(r=>setTimeout(r,1000));
         previewJob=await api(endpoint+'/render/'+previewJob.id);
       }
