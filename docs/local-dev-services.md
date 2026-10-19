@@ -136,3 +136,9 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 加载 9906e54：复用原始跟踪遮罩，批量跟踪跳过单目标视频编码，片段预览长边640，正式输出分辨率不变。现有10秒片段的已完成遮罩只读验收，新版裁剪合成10.09秒；不含首次推理。详见 verification/clip-preview-performance-2026-10-19.md。
 
 确认无running任务，取得compute/scan排他锁，核验23345监听与cwd后正常重启为52843（历史快照，后续重查）。healthz ok/development，release development-fast-preview-9906e54。沿用隔离配置与数据，原视频、草稿和结果保留，未触发真实模型或替换成片。
+
+## 2026-10-19 固定位置字幕打码（8801）
+
+加载 `355c83e`，手动添加默认固定位置，已有 AI/旧草稿继续跟踪；完整输出和片段预览共享固定矩形遮罩，无需 SAM。渲染/跟踪/效果 32 项、完整 UI 54 项通过，最终默认模式补查 10 项通过；真实 FFmpeg 覆盖遮挡起止帧及片段预览像素。
+
+核验 PID 52843 的监听/cwd，持有 compute/scan 排他锁且无 running 马赛克任务后正常重启为 PID 21306（历史快照）。沿用原隔离启动器/配置/数据，release `development-fixed-position-355c83e`，healthz ok/development。用户草稿、原视频和现有成片未修改；8793/8800 未动。
