@@ -253,3 +253,6 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 
 ## 2026-10-19 同片性能优化
 测试实例加载test-mosaic-perf-ca2a1e7，沿用mosaic-75efc57镜像；代码ca2a1e7，一次编码完成删除与打码。SAM默认1024及跟踪缓存配置保持不变。1555项本地全量、52项Linux定向通过；同素材合成364.49→243.45秒。部署及回滚记录：/srv/exactcut-test/deployments/perf-ca2a1e7/release.json。正式生产未改动。详见verification/mosaic-performance-2026-10-19.md。
+
+## 2026-10-19 跟踪缓存复用修复
+测试实例test-cache-655e0b4，代码655e0b4：原始SAM缓存独立于效果视频版本，兼容历史5/6遮罩，保留当前强度。1574项本地全量、37项Linux通过；项目4142628fb23746149326953e8b8dd49c只读验证270+60帧复用且SAM调用0。公网health正常、worker_alive=true；生产容器启动时间未变。回滚记录/srv/exactcut-test/deployments/cache-655e0b4/release.json。未改用户数据。
