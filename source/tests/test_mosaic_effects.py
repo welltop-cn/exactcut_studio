@@ -58,3 +58,14 @@ def test_soft_blur_preserves_core_and_feathers_only_outside():
     assert effects.prepare_mask(Image.new('L',mask.size),{'style':'soft_blur'}).getbbox() is None
     for style in ('pixel','blur','solid'):
         assert effects.prepare_mask(mask,{'style':style,'expansion':'none'}).tobytes()==mask.tobytes()
+
+
+@pytest.mark.parametrize('strength,block,sigma',[('light',16,8),('medium',30,16),('heavy',50,28)])
+@pytest.mark.parametrize('width,height',[(360,640),(1080,1920),(1920,1080),(180,320)])
+def test_effect_strength_scales_with_video_long_edge(strength,block,sigma,width,height):
+    meta={'width':width,'height':height}
+    ratio=max(width,height)/640
+    size=max(1,round(block*ratio))
+    assert effects.transform(meta,{'strength':strength})==f'scale={max(1,width//size)}:{max(1,height//size)}:flags=area,scale={width}:{height}:flags=neighbor'
+    for style in ('blur','soft_blur'):
+        assert effects.transform(meta,{'style':style,'strength':strength})==f'gblur=sigma={sigma*ratio:g}:steps=2'

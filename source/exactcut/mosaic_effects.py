@@ -32,9 +32,11 @@ def prepare_mask(mask,effect=None):
 def transform(meta,effect=None):
     effect=validate(effect);w,h=meta['width'],meta['height']
     strength=effect['strength']
-    block={'light':16,'medium':30,'heavy':50}[strength]
+    # Keep appearance proportional to the 640px preview baseline.
+    ratio=max(w,h)/640
+    block=max(1,round({'light':16,'medium':30,'heavy':50}[strength]*ratio))
     if effect['style']=='pixel':transform=f'scale={max(1,w//block)}:{max(1,h//block)}:flags=area,scale={w}:{h}:flags=neighbor'
-    elif effect['style'] in ('blur','soft_blur'):transform=f"gblur=sigma={ {'light':8,'medium':16,'heavy':28}[strength]}:steps=2"
+    elif effect['style'] in ('blur','soft_blur'):transform=f"gblur=sigma={ {'light':8,'medium':16,'heavy':28}[strength]*ratio:g}:steps=2"
     else:transform='lutrgb=r=0:g=0:b=0'
     return transform
 

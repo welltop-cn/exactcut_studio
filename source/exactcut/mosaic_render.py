@@ -158,7 +158,7 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False):
         if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
         if any(t.get('motion')!='fixed' for t in targets) and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':6,'effect':effect,'fallback':'skip_region',**({'preview':True,'preview_engine':2} if preview else {})})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':7,'effect':effect,'fallback':'skip_region',**({'preview':True,'preview_engine':2} if preview else {})})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)
