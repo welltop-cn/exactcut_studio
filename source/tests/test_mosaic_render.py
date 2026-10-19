@@ -182,7 +182,7 @@ def test_discard_running_job_fences_result_and_does_not_change_project(ready,mon
     for _ in range(100):
         if read_json(path)['status']!='running':break
         time.sleep(.025)
-    assert read_json(path)['status']=='failed'
+    assert read_json(path)['status']=='cancelled'
     from exactcut import mosaic_replace
     with pytest.raises(cutting.CutError):mosaic_replace.start(bid,sid,job['id'],'')
     assert workflow.preview_file(bid,rid)[0]==source and file_sha256(source)==sha
@@ -367,3 +367,26 @@ def test_fixed_mask_pixels_and_time_boundaries_in_real_video(tmp_path):
     render.process_preview(source,preview,meta,[track],lambda text:None,{'style':'solid','expansion':'none'})
     pixels=cutting.run(['ffmpeg','-v','error','-i',str(preview),'-f','rawvideo','-pix_fmt','rgb24','-'])
     assert len(pixels)==5*stride and max(pixels)<5
+
+
+def test_discard_interrupts_composing_process_and_releases_compute(ready,monkeypatch):
+    import sys,threading
+    from exactcut.util import read_json
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id'];entered=threading.Event()
+    def slow(*args,**kwargs):
+        entered.set();cutting.run([sys.executable,'-c','import time;time.sleep(60)'])
+        raise AssertionError('discard must interrupt composition')
+    monkeypatch.setattr(render,'process_video',slow)
+    job=render.start(bid,sid,[],'',[[1,3]])
+    assert entered.wait(3)
+    reset=sessions.discard(bid,sid,'')
+    assert reset['reset_at']
+    path=sessions.session_path(bid,sid)/f"render-{job['id']}.json"
+    deadline=time.monotonic()+5
+    while read_json(path)['status']=='running' and time.monotonic()<deadline:time.sleep(.025)
+    saved=read_json(path)
+    assert saved['status']=='cancelled',saved
+    assert 'result' not in saved
+    assert render.latest(bid,sid)=={'job':None}
+    assert file_sha256(source)==sha
+    with cutting.lock_file(cutting.lock_root()/'compute.lock'):pass
