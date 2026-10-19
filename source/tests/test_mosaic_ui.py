@@ -700,22 +700,23 @@ def test_processing_keeps_workspace_and_shows_background_progress(editor):
     assert editor.locator('#mosaicClose').is_enabled()
 
 
-def test_effect_settings_collapsed_persist_and_submit(editor):
+def test_effect_popup_is_clip_local_and_cancel_discards(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
-    assert not editor.locator('#mosaicEffects').evaluate('el=>el.open')
-    editor.locator('#mosaicEffects summary').click()
+    assert editor.locator('[data-effect-target]').count()==0
+    editor.locator('[data-proposal]').click()
+    editor.locator('[data-effect-target]').click()
+    assert '00:01:00' in editor.locator('#mosaicEffectTitle').inner_text()
+    assert editor.locator('#mosaicEffects').bounding_box()['height']<350
     editor.locator('#mosaicEffectStyle').select_option('solid')
-    assert editor.locator('#mosaicEffectStrength').is_hidden()
-    editor.locator('#mosaicEffectExpansion').select_option('large')
-    editor.locator('#mosaicClose').click();open_auto(editor)
-    assert editor.locator('#mosaicEffectStyle').input_value()=='solid'
-    assert editor.locator('#mosaicEffectExpansion').input_value()=='large'
-    assert '纯色' in editor.locator('#mosaicEffectSummary').inner_text()
-    editor.locator('#mosaicScan').click();editor.locator('[data-proposal]').click()
-    editor.evaluate('''() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}''')
-    editor.locator('[data-target-remove]').click();editor.locator('[data-target-remove]').click()
-    editor.locator('#mosaicBatchStart').click()
-    assert editor.evaluate('effectBody.effect')=={'style':'solid','strength':'medium','expansion':'large'}
+    editor.locator('#mosaicEffectCancel').click()
+    editor.locator('[data-effect-target]').click()
+    assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
+    editor.locator('#mosaicEffectStyle').select_option('soft_blur')
+    editor.keyboard.press('Escape')
+    editor.locator('[data-effect-target]').click()
+    assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
+    editor.locator('#mosaicEffectSave').click()
+
 
 
 def test_generation_locks_edits_until_stop_acknowledged(editor):
@@ -749,33 +750,21 @@ def test_generation_locks_edits_until_stop_acknowledged(editor):
     assert editor.evaluate('stopBody.job_id')=='b'*32
 
 
-def test_blur_styles_are_selectable_and_saved(editor):
-    open_auto(editor)
-    editor.locator('#mosaicEffects summary').click()
-    for value,label in [('pixel','方块'),('blur','硬边模糊'),('soft_blur','柔边模糊')]:
-        editor.locator('#mosaicEffectStyle').select_option(value)
-        assert label in editor.locator('#mosaicEffectSummary').inner_text()
-    editor.locator('#mosaicClose').click();open_auto(editor)
-    assert editor.locator('#mosaicEffectStyle').input_value()=='soft_blur'
-
-
 def test_clip_effects_are_independent_persist_and_submit(editor):
+    editor.evaluate('session.capabilities.tracking=true')
     scan_result(editor)
     editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:100,end:150,seed_frame:120})")
     open_auto(editor);editor.locator('#mosaicScan').click()
-    editor.locator('#mosaicEffects summary').click()
-    editor.locator('[data-scan-event="e1"]').click()
-    editor.locator('#mosaicEffectStyle').select_option('soft_blur')
-    editor.locator('[data-proposal="e1:0"]').click()
-    editor.locator('[data-scan-event="e2"]').click()
-    assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
-    editor.locator('#mosaicEffectStyle').select_option('solid')
-    editor.locator('[data-proposal="e2:0"]').click()
+    for event,style in [('e1','soft_blur'),('e2','blur')]:
+        editor.locator(f'[data-proposal="{event}:0"]').click()
+        editor.locator(f'[data-mosaic-card="{event}"] [data-effect-target]').click()
+        editor.locator('#mosaicEffectStyle').select_option(style)
+        editor.locator('#mosaicEffectSave').click()
     editor.locator('#mosaicClose').click();open_auto(editor);editor.locator('#mosaicScan').click()
-    editor.locator('[data-scan-event="e1"]').click()
-    assert editor.locator('#mosaicEffectStyle').input_value()=='soft_blur'
-    editor.locator('[data-scan-event="e2"]').click()
-    assert editor.locator('#mosaicEffectStyle').input_value()=='solid'
-    editor.evaluate('''() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}''')
+    for event,style in [('e1','soft_blur'),('e2','blur')]:
+        editor.locator(f'[data-mosaic-card="{event}"] [data-effect-target]').click()
+        assert editor.locator('#mosaicEffectStyle').input_value()==style
+        editor.locator('#mosaicEffectCancel').click()
+    editor.evaluate("""() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
     editor.locator('#mosaicBatchStart').click()
-    assert editor.evaluate('effectBody.targets.map(t=>t.effect.style)')==['soft_blur','solid']
+    assert editor.evaluate('effectBody.targets.map(t=>t.effect.style)')==['soft_blur','blur']
