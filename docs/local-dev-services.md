@@ -126,3 +126,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 加载 37f74c4（含 5b9d306 替换轮询竞态修复、2048376 柔边基础）。63 项效果、真实 FFmpeg、跟踪和浏览器测试通过。每片段独立样式/强度/扩大；pixel、blur（旧硬边）、soft_blur、solid。旧草稿默认兼容，预览与批量生成传递一致。
 
 确认无 running 记录，取得 compute/scan 排他锁，核对 PID 14916 的端口/cwd 后正常重启为 PID 7447（历史快照，操作前重查）。沿用隔离启动器及配置，healthz=ok/development，release=development-clip-effects-37f74c4。原选择和结果保留，未调用模型或替换用户成片，8793/8800 未动。
+
+## 2026-10-19 效果弹框生成全部区域片段预览（8801）
+
+加载 a59b213。65 项相关测试通过，真实 FFmpeg 验证短片多区域与原成片保留；UI 支持未保存效果试预览、返回停止。确认无运行任务、持有 compute/scan 排他锁，核验 PID 7447 cwd/端口后重启为 PID 23345（历史快照）。healthz ok/development，release development-clip-preview-a59b213；独立配置沿用，其他端口未动。未改用户草稿或结果，未触发真实模型调用。
