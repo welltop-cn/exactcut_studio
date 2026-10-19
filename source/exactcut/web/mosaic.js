@@ -110,7 +110,7 @@
     paintEffects();paintScan();paintBatch();
     drawOverlay();
   }
-  const mutationSelector='[data-restore-clip],.mosaic-card-checks button,[data-remove-clip],#mosaicUndoRemove,#mosaicAddClip,#mosaicClear,#mosaicScan,#mosaicAdjustToggle,#mosaicAdjust button,#mosaicAdjust input,#mosaicAdjust select,#mosaicEffects select,#mosaicEffectSave,#mosaicEffectPreview,[data-effect-target]';
+  const mutationSelector='[data-edit-event],[data-edit-target],[data-restore-clip],.mosaic-card-checks button,[data-remove-clip],#mosaicUndoRemove,#mosaicAddClip,#mosaicClear,#mosaicScan,#mosaicAdjustToggle,#mosaicAdjust button,#mosaicAdjust input,#mosaicAdjust select,#mosaicEffects select,#mosaicEffectSave,#mosaicEffectPreview,[data-effect-target]';
   for(const type of ['click','change','input'])dialog.addEventListener(type,e=>{
     if(editLocked()&&e.target.closest(mutationSelector)){e.preventDefault();e.stopImmediatePropagation();}
   },true);
@@ -191,7 +191,7 @@
     }
     if(scanLoading&&events.length)message='正在重新识别，已有片段已保留，完成后可继续编辑。';
     $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').title=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
-    const targetRow=(t,i)=>`<div class="mosaic-event-card"><button data-target-view="${i}"><strong>${clock(t.start)}–${clock(t.end-1)} · ${esc(t.label)}</strong></button><div class="mosaic-card-actions"><div class="mosaic-card-checks"><button data-target-remove="${i}" aria-label="打码" role="checkbox" aria-checked="${t.adopted!==false}" aria-pressed="${t.adopted!==false}" ${t.adopted===false&&activeCount()>=8?'disabled':''}>打码</button></div>${t.adopted!==false?effectButton(i):''}</div></div>`;
+    const targetRow=(t,i)=>`<div class="mosaic-event-card"><button data-target-view="${i}"><strong>${clock(t.start)}–${clock(t.end-1)} · ${esc(t.label)}</strong></button><div class="mosaic-card-actions"><div class="mosaic-card-checks"><button data-target-remove="${i}" aria-label="打码" role="checkbox" aria-checked="${t.adopted!==false}" aria-pressed="${t.adopted!==false}" ${t.adopted===false&&activeCount()>=8?'disabled':''}>打码</button></div><div class="mosaic-clip-tools"><button data-edit-target="${i}">编辑</button>${t.adopted!==false?effectButton(i):''}</div></div></div>`;
     const grouped=new Set();
     const html=events.map(e=>{
       const allRecords=targets.map((t,i)=>({t,i})).filter(({t})=>belongs(t,e));
@@ -205,7 +205,7 @@
         :records.length?`<button data-target-remove="${records[0].i}" aria-label="打码" role="checkbox" aria-checked="${adopted>0}" aria-pressed="${adopted>0}" ${!adopted&&activeCount()>=8?'disabled':''}>打码</button>`
         :suggestions.length?`<button data-proposal="${esc(e.id)}:${suggestions[0].i}" aria-label="打码" role="checkbox" aria-checked="false" aria-pressed="false" ${activeCount()>=8?'disabled':''}>打码</button>`
         :`<button data-event-draw="${esc(e.id)}" aria-label="打码" role="checkbox" aria-checked="false" aria-pressed="false" title="先框选需要遮挡的区域">打码</button>`;
-      return `<div class="mosaic-event-card ${scanEvent===e.id?'selected':''}" data-mosaic-card="${esc(e.id)}" ${e.id.startsWith('manual-')?'data-manual-card':''}>${e.id.startsWith('manual-')?`<button data-remove-clip="${esc(e.id)}" class="mosaic-remove-clip" aria-label="移除手动片段" title="移除片段">×</button>`:''}<button data-scan-event="${esc(e.id)}" ${records.length?`data-target-view="${records[0].i}"`:''} aria-pressed="${scanEvent===e.id}"><strong>${clock(displayRange.start)}–${clock(displayRange.end-1)}</strong><small>${esc(e.label)}${total?'':' · 打码需框选'}</small><small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-actions"><div class="mosaic-card-checks" role="group" aria-label="片段处理方式"><button data-event-delete="${esc(e.id)}" aria-label="删除" role="checkbox" aria-checked="${removed}" aria-pressed="${removed}">删除</button>${toggle}</div>${adopted&&!removed?effectButton(records.find(({t})=>t.adopted!==false).i):''}${!e.id.startsWith('manual-')?`<details class="mosaic-clip-menu"><summary aria-label="更多片段操作">⋯</summary><button data-restore-clip="${esc(e.id)}">恢复识别结果</button></details>`:''}</div></div>`;
+      return `<div class="mosaic-event-card ${scanEvent===e.id?'selected':''}" data-mosaic-card="${esc(e.id)}" ${e.id.startsWith('manual-')?'data-manual-card':''}>${e.id.startsWith('manual-')?`<button data-remove-clip="${esc(e.id)}" class="mosaic-remove-clip" aria-label="移除手动片段" title="移除片段">×</button>`:''}<button data-scan-event="${esc(e.id)}" ${records.length?`data-target-view="${records[0].i}"`:''} aria-pressed="${scanEvent===e.id}"><strong>${clock(displayRange.start)}–${clock(displayRange.end-1)}</strong><small>${esc(e.label)}${total?'':' · 打码需框选'}</small><small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-actions"><div class="mosaic-card-checks" role="group" aria-label="片段处理方式"><button data-event-delete="${esc(e.id)}" aria-label="删除" role="checkbox" aria-checked="${removed}" aria-pressed="${removed}">删除</button>${toggle}</div><div class="mosaic-clip-tools"><button data-edit-event="${esc(e.id)}">编辑</button>${adopted&&!removed?effectButton(records.find(({t})=>t.adopted!==false).i):''}</div>${!e.id.startsWith('manual-')?`<details class="mosaic-clip-menu"><summary aria-label="更多片段操作">⋯</summary><button data-restore-clip="${esc(e.id)}">恢复识别结果</button></details>`:''}</div></div>`;
 
     }).join('')+targets.map((t,i)=>t.removed||grouped.has(i)||(scanReport?.status==='completed'&&t.adopted===false&&Number.isInteger(t.originStart)&&!t.eventId)?'':targetRow(t,i,true)).join('');
     if($('mosaicScanEvents').innerHTML!==html)$('mosaicScanEvents').innerHTML=html;
@@ -450,6 +450,13 @@
     if(save()){resetCandidate();paint();status('已恢复片段。');}
   };
   $('mosaicTargets').onclick=e=>{
+    const edit=e.target.closest('[data-edit-event],[data-edit-target]');
+    if(edit){
+      if(editLocked())return;
+      if(edit.dataset.editEvent)viewScanEvent(edit.dataset.editEvent);else viewTarget(Number(edit.dataset.editTarget));
+      $('mosaicAdjust').open=true;paint();return;
+    }
+
     const restore=e.target.closest('[data-restore-clip]');
     if(restore){
       if(editLocked())return;
