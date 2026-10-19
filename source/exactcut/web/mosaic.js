@@ -130,7 +130,8 @@
   const effectButton=index=>`<button data-effect-target="${index}" aria-label="设置本片段打码效果">效果</button>`;
   function eventRange(event){
     const deletion=deletions.find(t=>belongs(t,event));if(deletion)return deletion;
-    const regions=targets.filter(t=>belongs(t,event)&&t.adopted!==false);
+    const saved=targets.filter(t=>belongs(t,event)),adopted=saved.filter(t=>t.adopted!==false);
+    const regions=adopted.length?adopted:saved;
     return regions.length?{...event,start:Math.min(...regions.map(t=>t.start)),end:Math.max(...regions.map(t=>t.end))}:event;
   }
   function paintScan(){
@@ -375,6 +376,13 @@
     const event=allEvents().find(e=>e.id===scanEvent);
     if(event)deletions=deletions.filter(t=>!belongs(t,event));
     const target={...(editing===null?{uid:regionId(),eventId:event?.id.startsWith('manual-')?event.id:undefined,originStart:event?.start,originEnd:event?.end,proposal:c.id}:targets[editing]),adopted:true,label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,...r,seed_frame:wanted};
+    const previous=editing===null?null:targets[editing];
+    if(previous){
+      for(const sibling of targets.filter(t=>event?belongs(t,event):t.uid===previous.uid)){
+        Object.assign(sibling,r);
+        sibling.seed_frame=Math.max(r.start,Math.min(r.end-1,sibling.seed_frame));
+      }
+    }
     if(editing===null){targets.push(target);editing=targets.length-1;}else targets[editing]=target;
     paint();if(save()){$('mosaicAdjust').open=false;paint();status('已保存区域。');return true;}
   });
@@ -415,7 +423,7 @@
       const event=allEvents().find(v=>v.id===removeEvent.dataset.eventDelete);
       const found=deletions.findIndex(t=>belongs(t,event));
       if(found>=0)deletions.splice(found,1);
-      else {deletions.push({start:event.start,end:event.end,eventId:event.id.startsWith('manual-')?event.id:undefined,originStart:event.start,originEnd:event.end,label:event.label});targets.filter(t=>belongs(t,event)).forEach(t=>t.adopted=false);}
+      else {const effective=eventRange(event);deletions.push({start:effective.start,end:effective.end,eventId:event.id.startsWith('manual-')?event.id:undefined,originStart:event.start,originEnd:event.end,label:event.label});targets.filter(t=>belongs(t,event)).forEach(t=>t.adopted=false);}
       if(save()){paint();status('处理选择已保存，关闭后可继续。');}return;
     }
 

@@ -899,3 +899,27 @@ def test_changed_start_outside_reference_frame_can_save_and_updates_card(editor)
     assert '00:02:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
     editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
     assert editor.locator('#mosaicStart').input_value()=='00:02:10'
+
+
+def test_clip_time_edit_applies_to_all_regions(editor):
+    editor.evaluate("findings.push({...findings[0],id:'1',x:20})")
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-event-adopt]').click()
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    editor.locator('#mosaicStart').fill('00:02:10');editor.locator('#mosaicStart').dispatch_event('change')
+    editor.wait_for_function("!document.querySelector('#mosaicConfirm').disabled")
+    editor.locator('#mosaicConfirm').click()
+    assert '00:02:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+    draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
+    assert len(draft['targets'])==2
+    assert all(t['start']==70 and t['end']==90 and 70<=t['seed_frame']<90 for t in draft['targets'])
+
+
+def test_cancel_mosaic_keeps_saved_clip_time_on_card(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click()
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicStart').dispatch_event('change')
+    editor.locator('#mosaicConfirm').click()
+    editor.locator('[data-target-remove]').click()
+    assert '00:01:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
