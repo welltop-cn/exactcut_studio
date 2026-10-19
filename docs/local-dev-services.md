@@ -120,3 +120,9 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 提交 `0f09503` 增加生成期间编辑锁与保留草稿的停止生成接口。67 项相关测试通过，另复查精简后的运行中按钮；测试包含真实子进程终止、资源释放、同方案重试、停止确认前禁止编辑。浏览器实看当前任务运行时选择/取消/效果/区域编辑禁用，播放与查看可用。
 
 等待用户任务 render-b63091de29500d5e2d16a26dd2d79a2f 自然 completed，取得 compute/scan 锁后从已验证 PID 78076 重启为 PID 14916（历史记录，操作前核验）。release development-stop-0f09503，healthz ok/development；用户本次结果完整保留，未替换成片或变更选择。8793/8800 未动。
+
+## 2026-10-19 片段独立打码效果（8801）
+
+加载 37f74c4（含 5b9d306 替换轮询竞态修复、2048376 柔边基础）。63 项效果、真实 FFmpeg、跟踪和浏览器测试通过。每片段独立样式/强度/扩大；pixel、blur（旧硬边）、soft_blur、solid。旧草稿默认兼容，预览与批量生成传递一致。
+
+确认无 running 记录，取得 compute/scan 排他锁，核对 PID 14916 的端口/cwd 后正常重启为 PID 7447（历史快照，操作前重查）。沿用隔离启动器及配置，healthz=ok/development，release=development-clip-effects-37f74c4。原选择和结果保留，未调用模型或替换用户成片，8793/8800 未动。
