@@ -89,3 +89,13 @@ def test_nonfinite_model_output_is_not_reported_as_empty_target():
     assert binary_mask(np.array([[-1,0,1]],dtype=float)).tolist()==[[0,0,255]]
     for invalid in (float('nan'),float('inf'),-float('inf')):
         with pytest.raises(ValueError,match='non-finite'):binary_mask(np.array([[invalid]]))
+
+
+def test_inference_size_override_is_bounded_and_part_of_cache_identity():
+    from exactcut import mosaic_sam2, mosaic_tracking
+    assert mosaic_sam2.model_overrides({})==[]
+    assert mosaic_sam2.model_overrides({'inference_size':512})==['++model.image_size=512']
+    for value in (0,513,'512',True):
+        with pytest.raises(ValueError):mosaic_sam2.model_overrides({'inference_size':value})
+    session={'source_sha256':'a'*64,'reset_at':''}
+    assert mosaic_tracking.identity(session,{}, {'inference_size':512})!=mosaic_tracking.identity(session,{}, {'inference_size':1024})

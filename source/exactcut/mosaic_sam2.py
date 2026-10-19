@@ -14,6 +14,12 @@ def binary_mask(raw):
     return (raw>0).astype('uint8')*255
 
 
+def model_overrides(cfg):
+    size=cfg.get('inference_size',1024)
+    if type(size) is not int or size not in (512,1024):raise ValueError('SAM inference_size must be 512 or 1024')
+    return [f'++model.image_size={size}'] if size!=1024 else []
+
+
 def track(request):
     import numpy as np
     import torch
@@ -35,7 +41,7 @@ def track(request):
     if cfg.get('checkpoint_sha256') and file_sha256(Path(cfg['checkpoint']))!=cfg['checkpoint_sha256']:raise ValueError('Checkpoint hash mismatch')
     device=cfg.get('device','mps')
     torch.set_num_threads(4)
-    predictor=build_sam2_video_predictor(cfg.get('model_config','configs/sam2.1/sam2.1_hiera_t.yaml'),cfg['checkpoint'],device=device,apply_postprocessing=False)
+    predictor=build_sam2_video_predictor(cfg.get('model_config','configs/sam2.1/sam2.1_hiera_t.yaml'),cfg['checkpoint'],device=device,apply_postprocessing=False,hydra_overrides_extra=model_overrides(cfg))
     box=np.array([target['x']*width/meta['width'],target['y']*height/meta['height'],(target['x']+target['w'])*width/meta['width'],(target['y']+target['h'])*height/meta['height']],dtype=np.float32)
     seed=target['seed_frame']-target['start'];records={}
     with torch.inference_mode():
@@ -65,7 +71,7 @@ def track(request):
         run(['ffmpeg','-y','-v','error','-i',source,'-framerate',rate,'-i',str(rendered/'%06d.png'),'-filter_complex',effects.graph(meta,cfg.get('effect'),target['start'],target['end']),'-map','[out]','-an','-r',rate,'-fps_mode','cfr','-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-preset','fast',str(output/'silent.mp4')],120)
         run(['ffmpeg','-y','-v','error','-i',str(output/'silent.mp4'),'-ss',str(start),'-i',source,'-map','0:v:0','-map','1:a:0?','-t',str(duration),'-c:v','copy','-c:a','aac','-movflags','+faststart',str(output/'preview.mp4')],120)
         (output/'silent.mp4').unlink()
-    result={'width':width,'height':height,'frames':ordered,'warnings':warnings,'elapsed_seconds':round(time.monotonic()-started,2),'device':device,'model':'sam2.1_hiera_tiny','notice':'模型跟踪预览，需人工检查；无警告不代表不存在漏遮。'}
+    result={'width':width,'height':height,'frames':ordered,'warnings':warnings,'elapsed_seconds':round(time.monotonic()-started,2),'device':device,'inference_size':cfg.get('inference_size',1024),'model':'sam2.1_hiera_tiny','notice':'模型跟踪预览，需人工检查；无警告不代表不存在漏遮。'}
     write_json_atomic(output/'result.json',result)
     for path in (frames,rendered):
         for file in path.glob('*'):file.unlink()

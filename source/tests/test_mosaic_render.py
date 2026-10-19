@@ -390,3 +390,21 @@ def test_discard_interrupts_composing_process_and_releases_compute(ready,monkeyp
     assert render.latest(bid,sid)=={'job':None}
     assert file_sha256(source)==sha
     with cutting.lock_file(cutting.lock_root()/'compute.lock'):pass
+
+
+def test_mixed_processing_encodes_video_once_and_preserves_source_frame_mapping(tmp_path,monkeypatch):
+    source=make_video(tmp_path/'source.mp4',frames=30,fps='30000/1001')
+    meta=cutting.probe_source(source);original=cutting.run;encodes=[]
+    def run(args,*a,**kw):
+        if 'libx264' in args:encodes.append(args)
+        return original(args,*a,**kw)
+    monkeypatch.setattr(cutting,'run',run)
+    target={'start':15,'end':25,'seed_frame':20,'x':0,'y':0,'w':60,'h':40}
+    track=make_track(tmp_path/'track',target,meta)
+    output=tmp_path/'out.mp4'
+    result=render.process_video(source,output,meta,[track],[[3,9]])
+    assert result['metadata']['frame_count']==24
+    assert len(encodes)==1
+    assert frame_numbers(output)[:9]==[0,1,2,9,10,11,12,13,14]
+    assert frame_numbers(output)[-5:]==[25,26,27,28,29]
+    assert result['metadata']['has_audio']

@@ -125,7 +125,7 @@ def probe_source(source):
         raise CutError('无法读取完整的成片帧信息') from exc
 
 
-def render_video(source, output, ranges, meta, mosaics=None):
+def render_video(source, output, ranges, meta, mosaics=None, *, video_graph=None, video_inputs=()):
     mosaics = normalize_mosaics([] if mosaics is None else mosaics, meta)
     if ranges:
         kept = keep_ranges(ranges, meta['frame_count'])
@@ -146,7 +146,9 @@ def render_video(source, output, ranges, meta, mosaics=None):
         video_only = work/'video.mp4'
         predicate = '+'.join(f'gte(n,{a})*lt(n,{b})' for a, b in kept)
         tail = f"select='{predicate}',setpts=N*{den}/({num}*TB)"
-        if mosaics:
+        if video_graph is not None:
+            video_args = ['-filter_complex', video_graph+';[out]'+tail+'[vout]', '-map', '[vout]']
+        elif mosaics:
             parts, last = [], '0:v'
             for index, box in enumerate(mosaics):
                 enable = f"gte(n,{box['start']})*lt(n,{box['end']})"
@@ -158,7 +160,7 @@ def render_video(source, output, ranges, meta, mosaics=None):
             video_args = ['-filter_complex', ';'.join(parts), '-map', '[vout]']
         else:
             video_args = ['-vf', tail]
-        run(['ffmpeg', '-y', '-v', 'error', '-i', str(source), '-an', *video_args,
+        run(['ffmpeg', '-y', '-v', 'error', '-i', str(source), *[arg for path in video_inputs for arg in ('-i',str(path))], '-an', *video_args,
              '-c:v', 'libx264', '-crf', str(render['crf']), '-preset', render['preset'],
              '-pix_fmt', 'yuv420p', '-r', f'{num}/{den}', '-movflags', '+faststart', str(video_only)])
         final = video_only
