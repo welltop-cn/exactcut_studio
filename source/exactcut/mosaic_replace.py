@@ -36,6 +36,7 @@ def start(bid,sid,jid,reset_at):
     from . import mosaic_render
     session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
     job=mosaic_render.state(bid,sid,jid)
+    if job.get('preview'):raise cutting.CutError('片段预览不能替换完整成片')
     if job['status']!='completed':raise cutting.CutError('请先生成处理后的视频')
     if is_current(bid,session,job):return update(bid,sid,jid,{'status':'completed'})
     batch=workflow.folder(bid);guard=cutting_access.gate(batch,session['request_id']);guard.__enter__();lease=None

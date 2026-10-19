@@ -134,7 +134,7 @@ def video_file(bid,sid,jid):
     return output
 
 
-def start(bid,sid,targets,reset_at,ranges=None,effect=None):
+def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False):
     effect=effects.validate(effect)
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
@@ -143,22 +143,25 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None):
         if ranges is not None and not isinstance(ranges,list):raise cutting.CutError('删除范围格式无效')
         ranges=cutting.normalize_ranges(ranges,session['metadata']['frame_count']) if ranges else []
         if targets!=[]:targets=validate_targets(session['metadata'],targets)
+        if preview and not targets:raise cutting.CutError('请先选择本片段的打码区域')
         if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
         if targets and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':5,'effect':effect,'fallback':'skip_region'})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':5,'effect':effect,'fallback':'skip_region',**({'preview':True} if preview else {})})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)
             if old and (old['status']=='running' or old['status']=='completed' and (path.parent/f'render-{jid}'/'mosaic.mp4').is_file()):
-                write_json_atomic(path.parent/'render-latest.json',{'id':jid});return old
+                if not preview:write_json_atomic(path.parent/'render-latest.json',{'id':jid})
+                return old
             leases=[]
             try:
                 for lock,shared in [(cutting.lock_root()/'compute.lock',False),(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
                     leases.append(cutting.lock_file(lock,shared=shared))
                 job={'schema_version':1,'id':jid,'status':'running','stage':'tracking','source_sha256':session['source_sha256'],'reset_at':reset_at,
-                     'targets':targets,'ranges':ranges,'effect':effect,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
-                write_json_atomic(path,job);write_json_atomic(path.parent/'render-latest.json',{'id':jid})
+                     'targets':targets,'ranges':ranges,'effect':effect,'preview':preview,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
+                write_json_atomic(path,job)
+                if not preview:write_json_atomic(path.parent/'render-latest.json',{'id':jid})
             except Exception:
                 for lease in reversed(leases):lease.close()
                 raise
@@ -238,7 +241,10 @@ def _work_cancelable(bid,sid,path,job,cfg,leases):
             tracks.append(track)
         update(stage='composing',completed_regions=len(tracks))
         mosaic_locate.current(bid,sid,job)
-        result=process_video(source,directory/'mosaic.mp4',session['metadata'],tracks,job.get('ranges',[]),lambda text:update(progress=text),effect=job.get('effect'))
+        if job.get('preview'):
+            result=process_preview(source,directory/'mosaic.mp4',session['metadata'],tracks,lambda text:update(progress=text),job.get('effect'))
+        else:
+            result=process_video(source,directory/'mosaic.mp4',session['metadata'],tracks,job.get('ranges',[]),lambda text:update(progress=text),effect=job.get('effect'))
         with cutting_access.gate(workflow.folder(bid),session['request_id']):
             mosaic_locate.current(bid,sid,job)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
@@ -269,3 +275,20 @@ def process_video(source,output,meta,tracks,ranges,progress=lambda text:None,eff
     intermediate.unlink(missing_ok=True)
     digest=actual.pop('sha256')
     return {'metadata':actual,'sha256':digest,'bytes':output.stat().st_size}
+
+
+def process_preview(source,output,meta,tracks,progress,effect):
+    start=min(t['target']['start'] for t in tracks);end=max(t['target']['end'] for t in tracks)
+    ranges=([[0,start]] if start else [])+([[end,meta['frame_count']]] if end<meta['frame_count'] else [])
+    if not ranges:return compose(source,output,meta,tracks,progress,effect)
+    clip=Path(output).with_name('preview-source.mp4')
+    progress('正在准备本片段预览…')
+    clip_meta=cutting.render_video(source,clip,ranges,meta)
+    clip_meta.pop('sha256',None)
+    shifted=[]
+    for track in tracks:
+        target={**track['target']}
+        for key in ('start','end','seed_frame'):target[key]-=start
+        shifted.append({**track,'target':target})
+    try:return compose(clip,output,clip_meta,shifted,progress,effect)
+    finally:clip.unlink(missing_ok=True)

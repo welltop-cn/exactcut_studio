@@ -246,3 +246,35 @@ def test_polling_own_running_replacement_does_not_revalidate_old_source(ready,mo
     def changed(*args):raise cutting.CutError('当前成片已变化',409)
     monkeypatch.setattr(mosaic_locate,'current',changed)
     assert render.state(bid,sid,job['id'])['replacement']['status']=='running'
+
+
+def test_clip_preview_combines_regions_and_does_not_replace_full_result(ready,monkeypatch):
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
+    full=render.start(bid,sid,[],'',[[0,2]]);assert wait_job(bid,sid,full['id'])['status']=='completed'
+    monkeypatch.setattr(tracking,'enabled',lambda:True)
+    monkeypatch.setattr(tracking,'settings',lambda:{'enabled':True})
+    monkeypatch.setattr(tracking,'run_tracker',lambda source,directory,meta,target,cfg:make_track(directory,target,meta)['result'])
+    target={'start':10,'end':20,'seed_frame':12,'x':0,'y':0,'w':40,'h':40}
+    app=serve();base=f'/api/batches/{bid}/mosaics/{sid}'
+    try:
+        body={'targets':[target,{**target,'x':60}],'effect':{'style':'solid','expansion':'none'},'reset_at':''}
+        assert call(app,'POST',base+'/clip-preview',body,csrf=False)[0]==403
+        code,job=call(app,'POST',base+'/clip-preview',body);assert code==202,job
+        done=wait_job(bid,sid,job['id']);assert done['status']=='completed',done
+        assert done['result']['metadata']['frame_count']==10
+        assert render.latest(bid,sid)['job']['id']==full['id']
+        assert call(app,'POST',base+'/replace',{'job_id':job['id'],'reset_at':''})[0]==400
+        output=render.video_file(bid,sid,job['id'])
+        raw=cutting.run(['ffmpeg','-v','error','-i',str(output),'-frames:v','1','-f','rawvideo','-pix_fmt','rgb24','-'])
+        width=session['metadata']['width']
+        for x in (10,70):assert max(raw[(10*width+x)*3:(10*width+x)*3+3])<5
+        assert file_sha256(source)==sha
+    finally:app.shutdown()
+
+
+def test_clip_preview_of_entire_short_source(tmp_path):
+    source=make_video(tmp_path/'source.mp4',frames=6);meta=cutting.probe_source(source)
+    target={'start':0,'end':6,'seed_frame':2,'x':0,'y':0,'w':40,'h':40}
+    track=make_track(tmp_path/'track',target,meta)
+    result=render.process_preview(source,tmp_path/'preview.mp4',meta,[track],lambda text:None,{'style':'blur'})
+    assert result['metadata']==meta

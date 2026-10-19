@@ -23,7 +23,7 @@ def handle(handler,bid,suffix,method):
         with cutting.batch_lease(bid):
             if not handler.can_access(bid):raise cutting.CutError('项目不存在或无权访问',404)
             if method=='POST' and suffix=='open':return handler.respond(200,sessions.open_session(bid,data.get('request_id'),data.get('source_sha256')))
-            match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|scan|discard|replace|stop|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/preview)?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
+            match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|scan|discard|replace|stop|clip-preview|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/preview)?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
             if not match:raise cutting.CutError('打码入口不存在',404)
             sid,action=match.groups();session=sessions.read_session(bid,sid)
             if action!='replace' and not (method=='GET' and action and re.fullmatch(r'render/[0-9a-f]{32}',action)):
@@ -45,6 +45,8 @@ def handle(handler,bid,suffix,method):
                 if action.startswith('locate/'):return handler.respond(200,mosaic_locate.state(bid,sid,action[7:]))
             if method=='POST' and action=='stop':
                 return handler.respond(202,mosaic_render.stop(bid,sid,data.get('job_id'),data.get('reset_at','')))
+            if method=='POST' and action=='clip-preview':
+                return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at',''),effect=data.get('effect'),preview=True))
             if method=='POST' and action=='render':
                 return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at',''),data.get('ranges'),data.get('effect')))
             if method=='POST' and action=='replace':

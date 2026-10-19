@@ -1,0 +1,7 @@
+# All-region clip preview from effect settings
+
+Removed workspace's disabled `mosaicClipPreview` entry. Compact effect dialog adds 生成预览. It snapshots all adopted targets matching the dialog's original clip key and applies the unsaved dialog appearance to each target. It never saves these appearance changes implicitly. 返回设置 preserves dialog draft; closing a running preview requests stop and keeps editing locked until acknowledged.
+
+Additive authenticated/CSRF-checked POST session/clip-preview accepts targets, effect, reset_at. Uses existing bounded render worker with preview=true and distinct identity. Poll/video/stop reuse render routes. Preview never writes render-latest and replacement explicitly rejects preview jobs. Renderer extracts the target time span, rebases target frame coordinates, and combines every tracked region into a short video with audio. Whole-source short clips skip the cut step. Existing skip-region tracking-failure behavior is preserved.
+
+65 tests passed: real FFmpeg two-region output pixels and 10-frame duration, source hash preservation, previous full-result pointer unchanged, replacement rejection, entire-short-source boundary, browser all-target submission, unsaved settings rollback, close/stop behavior, prior tracking/render/effects/UI regressions. Model inference is mocked in API integration tests; no new real SAM inference performed for acceptance. Visual synthetic fixture checked: settings dialog remains 360×241. No user selections or generated result files changed by acceptance.

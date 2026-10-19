@@ -551,33 +551,6 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     assert active_count(editor)==2
 
 
-def test_completed_clip_preview_available_after_unadopting_without_retracking(editor):
-    editor.evaluate('''() => {
-      session.capabilities.tracking=true;
-      const target={...findings[0],start:30,end:60,seed_frame:40,adopted:false};
-      localStorage.setItem('exactcut.mosaic.targets.v1.fixture.batch.session.'+'a'.repeat(64)+'.',JSON.stringify([target]));
-      const old=api;window.api=async(url,body)=>{
-        if(url.endsWith('/render'))return {job:{id:'b'.repeat(32),status:'completed',targets:[target],result:{region_count:1},completed_at:'now'}};
-        return old(url,body);
-      };
-    }''')
-    open_auto(editor)
-    button=editor.locator('#mosaicClipPreview')
-    assert button.is_visible() and not button.is_enabled()
-    editor.locator('[data-target-view="0"]').click()
-    assert button.is_enabled()
-    button.click()
-    assert editor.locator('#mosaicTrackDialog').evaluate('(el)=>el.open')
-    assert '/render/' in editor.locator('#mosaicTrackVideo').get_attribute('src')
-    assert '00:01:00–00:01:29' in editor.locator('#mosaicTrackStatus').inner_text()
-    assert '上次生成结果' in editor.locator('#mosaicTrackHint').inner_text()
-    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/track'))")
-    assert active_count(editor)==0
-    editor.locator('#mosaicTrackVideo').evaluate("el=>el.dispatchEvent(new Event('loadedmetadata'))")
-    assert editor.locator('#mosaicTrackVideo').evaluate('el=>el.currentTime')==1
-    editor.locator('#mosaicTrackClose').click()
-    assert not editor.locator('#mosaicTrackDialog').evaluate('(el)=>el.open')
-
 
 def test_unified_delete_mosaic_choice_persists_and_discard_resets(editor):
     scan_result(editor)
@@ -628,10 +601,6 @@ def test_generated_result_replace_and_compare_use_saved_plan(editor):
     }''')
     open_auto(editor)
     editor.locator('[data-target-view]').click()
-    editor.locator('#mosaicClipPreview').click()
-    editor.locator('#mosaicTrackVideo').evaluate("el=>el.dispatchEvent(new Event('loadedmetadata'))")
-    assert editor.locator('#mosaicTrackVideo').evaluate('el=>el.currentTime')==1
-    editor.locator('#mosaicTrackClose').click()
     editor.locator('#mosaicBatchView').click()
     assert editor.locator('#mosaicReplace').is_enabled()
     editor.locator('#mosaicBatchVideo').evaluate('el=>el.currentTime=1')
@@ -768,3 +737,53 @@ def test_clip_effects_are_independent_persist_and_submit(editor):
     editor.evaluate("""() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
     editor.locator('#mosaicBatchStart').click()
     assert editor.evaluate('effectBody.targets.map(t=>t.effect.style)')==['soft_blur','blur']
+
+
+def test_effect_preview_sends_all_clip_regions_without_saving(editor):
+    scan_result(editor)
+    editor.evaluate("""() => {
+      session.capabilities.tracking=true;
+      scanJob.events[0].candidates.push({...findings[0],id:'second',x:10,w:20});
+      scanJob.events.push({...scanJob.events[0],id:'e2',start:100,end:150,seed_frame:120,candidates:[findings[0]]});
+      const old=api;window.api=async(url,body)=>{
+        if(url.endsWith('/clip-preview')){window.previewBody=body;return {id:'c'.repeat(32),status:'completed',preview:true,result:{},completed_at:'now'};}
+        return old(url,body);
+      };
+    }""")
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    assert editor.locator('#mosaicClipPreview').count()==0
+    editor.locator('[data-event-adopt="e1"]').click()
+    editor.locator('[data-proposal="e2:0"]').click()
+    editor.locator('[data-mosaic-card="e1"] [data-effect-target]').click()
+    editor.locator('#mosaicEffectStyle').select_option('soft_blur')
+    editor.locator('#mosaicEffectPreview').click()
+    editor.locator('#mosaicTrackDialog').wait_for()
+    assert editor.evaluate('previewBody.targets.length')==2
+    assert editor.evaluate('previewBody.targets.every(t=>t.start===30&&t.effect.style==="soft_blur")')
+    assert '/render/' in editor.locator('#mosaicTrackVideo').get_attribute('src')
+    editor.locator('#mosaicTrackClose').click()
+    assert editor.locator('#mosaicEffects').is_visible()
+    editor.locator('#mosaicEffectCancel').click()
+    editor.locator('[data-mosaic-card="e1"] [data-effect-target]').click()
+    assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
+
+
+def test_closing_running_clip_preview_stops_without_discarding_effect_draft(editor):
+    scan_result(editor)
+    editor.evaluate("""() => {
+      session.capabilities.tracking=true;window.previewStopped=false;
+      const old=api;window.api=async(url,body)=>{
+        if(url.endsWith('/clip-preview'))return {id:'c'.repeat(32),status:'running',preview:true};
+        if(url.endsWith('/stop')){window.stopPreviewBody=body;previewStopped=true;return {id:'c'.repeat(32),status:'cancelled'};}
+        if(url.endsWith('/render/'+'c'.repeat(32)))return {id:'c'.repeat(32),status:previewStopped?'cancelled':'running'};
+        return old(url,body);
+      };
+    }""")
+    open_auto(editor);editor.locator('#mosaicScan').click();editor.locator('[data-proposal]').click()
+    editor.locator('[data-effect-target]').click();editor.locator('#mosaicEffectStyle').select_option('soft_blur')
+    editor.locator('#mosaicEffectPreview').click()
+    assert editor.locator('#mosaicEffectSave').is_disabled()
+    editor.locator('#mosaicTrackClose').click()
+    editor.wait_for_function("!document.querySelector('#mosaicEffectSave').disabled")
+    assert editor.evaluate('stopPreviewBody.job_id')=='c'*32
+    assert editor.locator('#mosaicEffectStyle').input_value()=='soft_blur'
