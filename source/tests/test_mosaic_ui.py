@@ -883,3 +883,19 @@ def test_remove_manual_clip_undo_and_reopen(editor):
     editor.locator('#mosaicClose').click();open_auto(editor)
     assert editor.locator('[data-remove-clip]').count()==0
     assert editor.locator('#mosaicRemoved').is_hidden()
+
+
+def test_changed_start_outside_reference_frame_can_save_and_updates_card(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click()
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    editor.locator('#mosaicStart').fill('00:02:10')
+    editor.locator('#mosaicStart').dispatch_event('change')
+    editor.wait_for_function("!document.querySelector('#mosaicConfirm').disabled")
+    assert editor.locator('#mosaicFrameNumber').input_value()=='00:02:10'
+    editor.locator('#mosaicConfirm').click()
+    assert '00:02:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+    editor.locator('#mosaicClose').click();open_auto(editor);editor.locator('#mosaicScan').click()
+    assert '00:02:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    assert editor.locator('#mosaicStart').input_value()=='00:02:10'
