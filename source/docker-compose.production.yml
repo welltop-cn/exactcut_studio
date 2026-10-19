@@ -39,3 +39,4 @@ services:
       - ${EXACTCUT_DEPLOY_ROOT:-/srv/exactcut}/config/production.env:/run/exactcut/production.env:ro
       - ${EXACTCUT_DEPLOY_ROOT:-/srv/exactcut}/config/runtime.json:/run/exactcut/runtime.json:ro
       - ${EXACTCUT_DEPLOY_ROOT:-/srv/exactcut}/data:/data
+      - ${EXACTCUT_DEPLOY_ROOT:-/srv/exactcut}/models:/models:ro

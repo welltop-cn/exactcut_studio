@@ -8,8 +8,8 @@ WORKDIR /app/source
 COPY source/requirements.lock.txt ./
 RUN pip install --no-cache-dir -r requirements.lock.txt
 
-# Optional CPU tracker for the isolated test deployment. Default images stay lean.
-ARG EXACTCUT_WITH_SAM2=0
+# CPU tracker is included in release-manager builds; lightweight builds may opt out.
+ARG EXACTCUT_WITH_SAM2=1
 ARG SAM2_REVISION=2b90b9f5ceec907a1c18123530e92e794ad901a4
 COPY source/requirements-sam2.txt ./
 RUN if [ "$EXACTCUT_WITH_SAM2" = "1" ]; then \
