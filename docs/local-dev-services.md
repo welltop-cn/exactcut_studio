@@ -142,3 +142,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 加载 `355c83e`，手动添加默认固定位置，已有 AI/旧草稿继续跟踪；完整输出和片段预览共享固定矩形遮罩，无需 SAM。渲染/跟踪/效果 32 项、完整 UI 54 项通过，最终默认模式补查 10 项通过；真实 FFmpeg 覆盖遮挡起止帧及片段预览像素。
 
 核验 PID 52843 的监听/cwd，持有 compute/scan 排他锁且无 running 马赛克任务后正常重启为 PID 21306（历史快照）。沿用原隔离启动器/配置/数据，release `development-fixed-position-355c83e`，healthz ok/development。用户草稿、原视频和现有成片未修改；8793/8800 未动。
+
+## 2026-10-19 审查修复验收（8801）
+
+用户授权修复并发布本地dev。完整1546项回归通过后，在持有compute/scan锁且无活动任务时，核验原PID21306端口/cwd并重启为15969（历史快照）。release development-review-fixes-17972d9，health ok。修复多区域motion污染、取消打码后改时间意外启用、放弃合成不取消进程；账号、草稿、视频保留。8793/8800未动。另按后续授权部署线上测试，见verification/mosaic-test-deployment-2026-10-19.md。

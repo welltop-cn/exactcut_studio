@@ -248,3 +248,5 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 模型不进入 Git 或应用数据目录：测试专用 `/srv/exactcut-test/models` 只读挂载 `/models`。SAM 2.1 tiny 权重 SHA256 为 `7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69`。在现有 runtime.json 的 `cutting.tracking` 设置 enabled=true、device=cpu、checkpoint=/models/sam2.1_hiera_tiny.pt、checkpoint_sha256、model_revision、model_config=configs/sam2.1/sam2.1_hiera_t.yaml、dependency_paths=[]；保留其他已有配置和账号。沿用 6 CPU / 6 GiB / 256 PID 限制，不因模型测试提高正式宿主机资源占用上限。
 
 只安装依赖或启动健康成功不代表动态跟踪验收：切换前须在同镜像、同限额的隔离目录完成实际 CPU 跟踪和 FFmpeg 合成，再检查输出遮罩/帧数。本地 MPS 的结果不能替代 Linux CPU 证据。CPU 长片推理速度需单独评估。
+
+已部署 `test-mosaic-75efc57`，CPU真实短段跟踪、Linux37项回归和公网浏览器验收通过；正式服务未变。最新证据、测试项目及回滚位置见 [剪切打码测试部署](verification/mosaic-test-deployment-2026-10-19.md)。
