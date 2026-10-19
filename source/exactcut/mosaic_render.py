@@ -94,6 +94,9 @@ def state(bid,sid,jid):
         from . import mosaic_replace
         job=mosaic_replace.recover(bid,sid,job)
         session=sessions.read_session(bid,sid);cutting.require_reset(session,job['reset_at'])
+        # Recovery leaves running only while the replacement owns the edit gate.
+        # Its commit can change the source between two version reads.
+        if job.get('replacement',{}).get('status')=='running':return job
         if not mosaic_replace.is_current(bid,session,job):mosaic_locate.current(bid,sid,job)
         return job
 

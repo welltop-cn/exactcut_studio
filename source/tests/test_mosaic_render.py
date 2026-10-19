@@ -213,3 +213,15 @@ def test_stop_interrupts_owned_process_and_retains_session(ready,monkeypatch):
         assert not restarted.get('cancel_requested')
         assert wait_job(bid,sid,restarted['id'])['status']=='completed'
     finally:app.shutdown();app.server_close()
+
+
+def test_polling_own_running_replacement_does_not_revalidate_old_source(ready,monkeypatch):
+    from exactcut import mosaic_replace, mosaic_locate
+    bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
+    job=render.start(bid,sid,[],'',[[10,20]]);assert wait_job(bid,sid,job['id'])['status']=='completed'
+    # Simulate a replacement worker holding the gate across its source-version switch.
+    monkeypatch.setattr(mosaic_replace,'recover',lambda bid,sid,job:{**job,'replacement':{'status':'running'}})
+    monkeypatch.setattr(mosaic_replace,'is_current',lambda *args:False)
+    def changed(*args):raise cutting.CutError('当前成片已变化',409)
+    monkeypatch.setattr(mosaic_locate,'current',changed)
+    assert render.state(bid,sid,job['id'])['replacement']['status']=='running'
