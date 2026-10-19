@@ -526,7 +526,7 @@
     clipBounds=null;trackToken++;paint();
     $('mosaicTrackTitle').textContent='本片段效果预览';$('mosaicTrackHint').textContent='';
     $('mosaicTrackStatus').textContent='正在生成本片段预览…';$('mosaicTrackVideo').hidden=true;
-    $('mosaicTrackClose').textContent='返回设置';$('mosaicTrackDialog').showModal();
+    $('mosaicTrackClose').textContent='返回设置';$('mosaicTrackDialog').classList.add('is-loading');$('mosaicTrackDialog').showModal();
     try{
       previewJob=await api(endpoint+'/clip-preview',{targets:selectedTargets,effect:appearance,reset_at:reset});
       if(previewClose)await stopClipPreview();
@@ -541,7 +541,7 @@
       $('mosaicTrackVideo').src=appUrl(endpoint+'/render/'+previewJob.id+'/video?v='+encodeURIComponent(previewJob.completed_at||''));
       $('mosaicTrackVideo').hidden=false;
     }catch(e){if(active(version)&&!previewClose)$('mosaicTrackStatus').textContent=e.message;}
-    finally{previewBusy=false;previewJob=null;if(context)paint();}
+    finally{$('mosaicTrackDialog').classList.remove('is-loading');previewBusy=false;previewJob=null;if(context)paint();}
   };
   $('mosaicTrackVideo').addEventListener('loadedmetadata',()=>{if(clipBounds)$('mosaicTrackVideo').currentTime=clipBounds.start;});
   $('mosaicTrackVideo').addEventListener('play',()=>{const p=$('mosaicTrackVideo');if(clipBounds&&(p.currentTime<clipBounds.start||p.currentTime>=clipBounds.end))p.currentTime=clipBounds.start;});
@@ -553,7 +553,7 @@
     const saved=targets[editing],c=selectedBox();if(!saved||saved.adopted===false)return;
     try{const r=range();if(!c||['x','y','w','h'].some(k=>c[k]!==saved[k])||r.start!==saved.start||r.end!==saved.end)throw Error('请先保存区域调整，再开始跟踪。');}catch(e){status(e.message,true);return;}
     const request=++trackToken,version=epoch,endpoint=base(),valid=()=>active(version)&&request===trackToken&&$('mosaicTrackDialog').open;
-    $('mosaicTrackVideo').hidden=true;$('mosaicTrackStatus').textContent='SAM 2 正在跟踪当前区域。首次加载模型可能需要稍等。';$('mosaicTrackDialog').showModal();
+    $('mosaicTrackVideo').hidden=true;$('mosaicTrackStatus').textContent='SAM 2 正在跟踪当前区域。首次加载模型可能需要稍等。';$('mosaicTrackDialog').classList.add('is-loading');$('mosaicTrackDialog').showModal();
     try{
       const target=Object.fromEntries(['start','end','seed_frame','x','y','w','h'].map(k=>[k,saved[k]]));
       let job=await api(endpoint+'/track',{target,effect:effectFor(saved),reset_at:context.session.reset_at||''});
@@ -567,6 +567,7 @@
       $('mosaicTrackStatus').textContent=`${clock(target.start)}–${clock(target.end-1)} · 预览已生成。`;
       $('mosaicTrackVideo').src=appUrl(endpoint+'/track/'+job.id+'/preview?v='+encodeURIComponent(job.completed_at||''));$('mosaicTrackVideo').hidden=false;
     }catch(e){if(valid())$('mosaicTrackStatus').textContent=e.message;}
+    finally{if(valid())$('mosaicTrackDialog').classList.remove('is-loading');}
   };
   $('mosaicClear').onclick=()=>{if(window.confirm('取消全部处理选择？区域调整会保留。')){deletions=[];targets.forEach(t=>t.adopted=false);if(save())paint();}};
   $('mosaicDraw').onclick=()=>{if($('mosaicDraw').disabled)return;drawing=!drawing;paint();if(drawing)status('在画面内拖出矩形；也可用像素输入框微调。');};

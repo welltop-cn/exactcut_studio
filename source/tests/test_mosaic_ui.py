@@ -783,6 +783,7 @@ def test_closing_running_clip_preview_stops_without_discarding_effect_draft(edit
     editor.locator('[data-effect-target]').click();editor.locator('#mosaicEffectStyle').select_option('soft_blur')
     editor.locator('#mosaicEffectPreview').click()
     assert editor.locator('#mosaicEffectSave').is_disabled()
+    assert editor.locator('#mosaicTrackDialog').bounding_box()['height']>=700
     editor.locator('#mosaicTrackClose').click()
     editor.wait_for_function("!document.querySelector('#mosaicEffectSave').disabled")
     assert editor.evaluate('stopPreviewBody.job_id')=='c'*32
