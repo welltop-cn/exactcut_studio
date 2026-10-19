@@ -14,7 +14,7 @@ def test_effect_contract_and_mask_expansion():
     assert effects.expand(Image.new('L',(100,100)),'large').getbbox() is None
 
 
-@pytest.mark.parametrize('style',['pixel','blur','solid'])
+@pytest.mark.parametrize('style',['pixel','blur','soft_blur','solid'])
 def test_real_ffmpeg_effects(style,tmp_path):
     from test_cutting import make_video
     from exactcut import mosaic_render as render
@@ -51,10 +51,10 @@ def test_effect_changes_job_identity_and_preview_uses_same_graph(tmp_path):
 def test_soft_blur_preserves_core_and_feathers_only_outside():
     mask=Image.new('L',(200,200))
     mask.paste(255,(70,70,130,130))
-    soft=effects.prepare_mask(mask,{'style':'blur','expansion':'none'})
+    soft=effects.prepare_mask(mask,{'style':'soft_blur','expansion':'none'})
     assert soft.getpixel((70,100))==255
     assert 0<soft.getpixel((67,100))<255
     assert soft.getpixel((0,0))==0
-    assert effects.prepare_mask(Image.new('L',mask.size),{'style':'blur'}).getbbox() is None
-    for style in ('pixel','solid'):
+    assert effects.prepare_mask(Image.new('L',mask.size),{'style':'soft_blur'}).getbbox() is None
+    for style in ('pixel','blur','solid'):
         assert effects.prepare_mask(mask,{'style':style,'expansion':'none'}).tobytes()==mask.tobytes()

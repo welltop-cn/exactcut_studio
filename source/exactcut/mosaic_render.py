@@ -43,9 +43,37 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None):
     output=Path(output);output.parent.mkdir(parents=True,exist_ok=True)
     width=min(640,meta['width']);height=max(2,round(meta['height']*width/meta['width']/2)*2)
     size=(width,height);rate=f"{meta['fps_num']}/{meta['fps_den']}"
-    mask_video=output.parent/'combined-mask.mkv';partial=output.with_name(output.stem+'.partial.mp4')
+    partial=output.with_name(output.stem+'.partial.mp4')
+    groups={}
+    for track in tracks:
+        appearance=effects.validate(track['target'].get('effect',effect))
+        key=tuple(appearance.values())
+        if key not in groups:groups[key]=(appearance,[])
+        groups[key][1].append(track)
+    if not groups:groups[tuple(effect.values())]=(effect,[])
+    masks=[];appearances=[]
+    for index,(appearance,group) in enumerate(groups.values()):
+        mask_video=output.parent/f'combined-mask-{index}.mkv'
+        encode_mask(mask_video,meta,group,size,rate,appearance,progress)
+        masks.append(mask_video);appearances.append(appearance)
+    progress('正在合成完整视频并保留原音频…')
+    w,h=meta['width'],meta['height']
+    # RGB planar masks avoid limited-range luma turning white masks into partial blends.
+    graph=effects.layered_graph(meta,appearances)
+    cutting.run(['ffmpeg','-y','-v','error','-i',str(source),*[arg for mask in masks for arg in ('-i',str(mask))],'-filter_complex',graph,
+                 '-map','[out]','-map','0:a:0?','-c:v','libx264','-crf','18','-preset','fast','-c:a','copy','-movflags','+faststart',str(partial)],900)
+    progress('正在校验完整视频的帧数、分辨率和音频…')
+    actual=cutting.probe_source(partial)
+    if actual!=meta:raise cutting.CutError('完整视频校验未通过，原片保留')
+    partial.replace(output)
+    for mask in masks:mask.unlink(missing_ok=True)
+    return {'metadata':actual,'sha256':file_sha256(output),'bytes':output.stat().st_size}
+
+
+def encode_mask(mask_video,meta,tracks,size,rate,effect,progress):
+    width,height=size
     progress('正在合并全部区域遮罩…')
-    with (output.parent/'mask-encode.log').open('wb') as log:
+    with (mask_video.with_suffix('.log')).open('wb') as log:
         process=subprocess.Popen(bounded_ffmpeg(['ffmpeg','-y','-v','error','-f','rawvideo','-pix_fmt','gray','-s',f'{width}x{height}','-r',rate,'-i','pipe:0','-an','-c:v','ffv1',str(mask_video)]),stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
         timer=threading.Timer(600,process.kill);timer.start()
         try:
@@ -61,18 +89,6 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None):
             process.kill();process.wait()
             raise
         finally:timer.cancel()
-    progress('正在合成完整视频并保留原音频…')
-    w,h=meta['width'],meta['height']
-    # RGB planar masks avoid limited-range luma turning white masks into partial blends.
-    graph=effects.graph(meta,effect)
-    cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-i',str(mask_video),'-filter_complex',graph,
-                 '-map','[out]','-map','0:a:0?','-c:v','libx264','-crf','18','-preset','fast','-c:a','copy','-movflags','+faststart',str(partial)],900)
-    progress('正在校验完整视频的帧数、分辨率和音频…')
-    actual=cutting.probe_source(partial)
-    if actual!=meta:raise cutting.CutError('完整视频校验未通过，原片保留')
-    partial.replace(output);mask_video.unlink(missing_ok=True)
-    return {'metadata':actual,'sha256':file_sha256(output),'bytes':output.stat().st_size}
-
 
 def recover(path):
     if not path.is_file():return None
@@ -130,7 +146,7 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None):
         if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
         if targets and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':4,'effect':effect,'fallback':'skip_region'})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':5,'effect':effect,'fallback':'skip_region'})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)

@@ -747,3 +747,35 @@ def test_generation_locks_edits_until_stop_acknowledged(editor):
     assert editor.locator('#mosaicEffectStyle').is_enabled()
     assert editor.locator('#mosaicStop').is_hidden()
     assert editor.evaluate('stopBody.job_id')=='b'*32
+
+
+def test_blur_styles_are_selectable_and_saved(editor):
+    open_auto(editor)
+    editor.locator('#mosaicEffects summary').click()
+    for value,label in [('pixel','方块'),('blur','硬边模糊'),('soft_blur','柔边模糊')]:
+        editor.locator('#mosaicEffectStyle').select_option(value)
+        assert label in editor.locator('#mosaicEffectSummary').inner_text()
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    assert editor.locator('#mosaicEffectStyle').input_value()=='soft_blur'
+
+
+def test_clip_effects_are_independent_persist_and_submit(editor):
+    scan_result(editor)
+    editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:100,end:150,seed_frame:120})")
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('#mosaicEffects summary').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.locator('#mosaicEffectStyle').select_option('soft_blur')
+    editor.locator('[data-proposal="e1:0"]').click()
+    editor.locator('[data-scan-event="e2"]').click()
+    assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
+    editor.locator('#mosaicEffectStyle').select_option('solid')
+    editor.locator('[data-proposal="e2:0"]').click()
+    editor.locator('#mosaicClose').click();open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    assert editor.locator('#mosaicEffectStyle').input_value()=='soft_blur'
+    editor.locator('[data-scan-event="e2"]').click()
+    assert editor.locator('#mosaicEffectStyle').input_value()=='solid'
+    editor.evaluate('''() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}''')
+    editor.locator('#mosaicBatchStart').click()
+    assert editor.evaluate('effectBody.targets.map(t=>t.effect.style)')==['soft_blur','solid']

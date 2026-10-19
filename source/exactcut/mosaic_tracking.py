@@ -30,6 +30,7 @@ def validate_target(meta,target):
         raise cutting.CutError('跟踪区域超出画面')
     if (t['end']-t['start'])*meta['fps_den']>10*meta['fps_num'] or t['end']-t['start']>300:
         raise cutting.CutError('首轮跟踪支持最多 10 秒、300 帧，请先缩短作用范围')
+    if 'effect' in target:t['effect']=effects.validate(target['effect'])
     return t
 
 
@@ -80,7 +81,7 @@ def preview_file(bid,sid,jid):
 
 
 def identity(session,target,cfg,effect=None):
-    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':4,'effect':effects.validate(effect)})[:32]
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':5,'effect':effects.validate(effect)})[:32]
 
 
 def start(bid,sid,target,reset_at,effect=None):

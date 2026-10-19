@@ -9,7 +9,7 @@
   let stopPending=false;
   const editLocked=()=>batchLoading||batchJob?.status==='running'||stopPending||mutationBusy;
   const defaultEffect={style:'pixel',strength:'medium',expansion:'small'};
-  let effect={...defaultEffect},savedEffect={...defaultEffect};
+  let effect={...defaultEffect},savedEffect={...defaultEffect},clipEffects={},savedClipEffects={};
   let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
   const base=()=>`/api/batches/${context.batch}/mosaics/${context.session.id}`;
   const meta=()=>context.session.metadata;
@@ -28,6 +28,7 @@
     const draft=savedRaw===null?null:JSON.parse(savedRaw);
     const data=draft?draft.targets:JSON.parse(oldDraftRaw||legacyRaw||'[]');
     effect={...defaultEffect,...draft?.effect};savedEffect={...effect};
+    clipEffects=structuredClone(draft?.clipEffects||{});savedClipEffects=structuredClone(clipEffects);
     deletions=draft?.deletions||[];
     if(!Array.isArray(deletions)||deletions.length>40||deletions.some(t=>![t.start,t.end].every(Number.isInteger)||t.start<0||t.start>=t.end||t.end>meta().frame_count))throw Error('本机删除草稿格式无效');
     savedDeletions=structuredClone(deletions);
@@ -44,9 +45,9 @@
   function save(){
     try{
       if(localStorage.getItem(draftKey())!==savedRaw||localStorage.getItem(key())!==legacyRaw||localStorage.getItem(oldDraftKey())!==oldDraftRaw)throw Error('草稿已在其他页面更新，请关闭后重新进入，避免覆盖。');
-      const value=JSON.stringify({schema_version:1,targets,deletions,effect});localStorage.setItem(draftKey(),value);
-      savedRaw=value;savedEffect={...effect};savedTargets=structuredClone(targets);savedDeletions=structuredClone(deletions);return true;
-    }catch(e){effect={...savedEffect};targets=structuredClone(savedTargets);deletions=structuredClone(savedDeletions);editing=null;paint();status(e.message||'无法保存草稿，请保持窗口打开。',true);return false;}
+      const value=JSON.stringify({schema_version:1,targets,deletions,effect,clipEffects});localStorage.setItem(draftKey(),value);
+      savedRaw=value;savedClipEffects=structuredClone(clipEffects);savedEffect={...effect};savedTargets=structuredClone(targets);savedDeletions=structuredClone(deletions);return true;
+    }catch(e){clipEffects=structuredClone(savedClipEffects);effect={...savedEffect};targets=structuredClone(savedTargets);deletions=structuredClone(savedDeletions);editing=null;paint();status(e.message||'无法保存草稿，请保持窗口打开。',true);return false;}
   }
   function validBox(c){return c&&[c.x,c.y,c.w,c.h].every(Number.isInteger)&&c.x>=0&&c.y>=0&&c.w>0&&c.h>0&&c.x+c.w<=meta().width&&c.y+c.h<=meta().height;}
   function selectedBox(){return candidates.find(c=>c.id===selected);}
@@ -87,14 +88,20 @@
   for(const type of ['click','change','input'])dialog.addEventListener(type,e=>{
     if(editLocked()&&e.target.closest(mutationSelector)){e.preventDefault();e.stopImmediatePropagation();}
   },true);
+  const clipKey=t=>t?`${t.originStart??t.start}:${t.originEnd??t.end}`:null;
+  const currentEffectKey=()=>clipKey(scanReport?.events?.find(e=>e.id===scanEvent)||targets[editing]);
+  const effectFor=t=>({...defaultEffect,...effect,...clipEffects[clipKey(t)]});
   function paintEffects(){
-    for(const k of ['style','strength','expansion'])$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).value=effect[k];
-    $('mosaicStrengthRow').hidden=effect.style==='solid';
-    const styles={pixel:'方块',blur:'模糊',solid:'纯色'},strengths={light:'轻',medium:'中',heavy:'重'},expansions={none:'不扩大',small:'扩大小',medium:'扩大中',large:'扩大大'};
-    $('mosaicEffectSummary').textContent=[styles[effect.style],effect.style==='solid'?null:strengths[effect.strength],expansions[effect.expansion]].filter(Boolean).join(' · ');
+    const key=currentEffectKey(),currentEffect={...effect,...clipEffects[key]};
+    $('mosaicEffectScope').textContent=key?'仅当前片段 · 同段区域共用 · 自动保存':'未选片段：设置默认效果 · 自动保存';
+    for(const k of ['style','strength','expansion'])$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).value=currentEffect[k];
+    $('mosaicStrengthRow').hidden=currentEffect.style==='solid';
+    const styles={pixel:'方块',blur:'硬边模糊',soft_blur:'柔边模糊',solid:'纯色'},strengths={light:'轻',medium:'中',heavy:'重'},expansions={none:'不扩大',small:'扩大小',medium:'扩大中',large:'扩大大'};
+    $('mosaicEffectSummary').textContent=[styles[currentEffect.style],currentEffect.style==='solid'?null:strengths[currentEffect.strength],expansions[currentEffect.expansion]].filter(Boolean).join(' · ');
   }
   for(const k of ['style','strength','expansion'])$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).onchange=()=>{
-    effect={...effect,[k]:$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).value};
+    const key=currentEffectKey(),value=$('mosaicEffect'+k[0].toUpperCase()+k.slice(1)).value;
+    if(key)clipEffects[key]={...effect,...clipEffects[key],[k]:value};else effect={...effect,[k]:value};
     if(save()){paint();status('打码效果已保存，重新生成后生效。');}
   };
   function paintScan(){
@@ -354,11 +361,11 @@
     if(view&&!view.hasAttribute('data-scan-event'))viewTarget(Number(view.dataset.targetView));
   };
   const deleteRanges=()=>deletions.map(t=>[t.start,t.end]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
-  const sameBatch=()=>!!batchJob&&JSON.stringify({...defaultEffect,...batchJob.effect})===JSON.stringify(effect)&&targetSignature(batchJob.targets)===targetSignature(adoptedTargets())&&JSON.stringify(batchJob.ranges||[])===JSON.stringify(mergedRanges(deleteRanges()));
+  const sameBatch=()=>!!batchJob&&JSON.stringify({...defaultEffect,...batchJob.effect})===JSON.stringify(effect)&&targetSignature(batchJob.targets,batchJob.effect)===targetSignature(adoptedTargets())&&JSON.stringify(batchJob.ranges||[])===JSON.stringify(mergedRanges(deleteRanges()));
   function mergedRanges(input){const out=[];for(const [a,b] of input){if(out.length&&a<=out.at(-1)[1])out.at(-1)[1]=Math.max(b,out.at(-1)[1]);else out.push([a,b]);}return out;}
   const targetFields=['start','end','seed_frame','x','y','w','h'];
-  const adoptedTargets=()=>targets.filter(t=>t.adopted!==false).map(t=>Object.fromEntries(targetFields.map(k=>[k,t[k]])));
-  const targetSignature=list=>JSON.stringify([...new Set(list.map(t=>JSON.stringify(targetFields.map(k=>t[k]))))].sort());
+  const adoptedTargets=()=>targets.filter(t=>t.adopted!==false).map(t=>({...Object.fromEntries(targetFields.map(k=>[k,t[k]])),effect:effectFor(t)}));
+  const targetSignature=(list,fallback=effect)=>JSON.stringify([...new Set(list.map(t=>JSON.stringify([...targetFields.map(k=>t[k]),{...defaultEffect,...fallback,...t.effect}])))] .sort());
   function paintBatch(){
     if(!context)return;
     for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
@@ -517,7 +524,7 @@
     $('mosaicTrackVideo').hidden=true;$('mosaicTrackStatus').textContent='SAM 2 正在跟踪当前区域。首次加载模型可能需要稍等。';$('mosaicTrackDialog').showModal();
     try{
       const target=Object.fromEntries(['start','end','seed_frame','x','y','w','h'].map(k=>[k,saved[k]]));
-      let job=await api(endpoint+'/track',{target,effect,reset_at:context.session.reset_at||''});
+      let job=await api(endpoint+'/track',{target,effect:effectFor(saved),reset_at:context.session.reset_at||''});
       while(valid()&&job.status==='running'){
         $('mosaicTrackStatus').textContent=job.progress||'正在跟踪并生成预览…';
         await new Promise(r=>setTimeout(r,1200));if(!valid())return;

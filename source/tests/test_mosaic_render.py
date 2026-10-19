@@ -215,6 +215,27 @@ def test_stop_interrupts_owned_process_and_retains_session(ready,monkeypatch):
     finally:app.shutdown();app.server_close()
 
 
+def test_target_effect_contract_is_validated_and_preserved():
+    meta={'width':100,'height':100,'frame_count':30,'fps_num':30,'fps_den':1}
+    target={'start':0,'end':10,'seed_frame':0,'x':0,'y':0,'w':30,'h':30,'effect':{'style':'soft_blur'}}
+    assert render.validate_targets(meta,[target])[0]['effect']['style']=='soft_blur'
+    with pytest.raises(cutting.CutError):render.validate_targets(meta,[{**target,'effect':{'style':'wrong'}}])
+
+
+def test_distinct_clip_effects_are_rendered_in_one_video(tmp_path):
+    source=make_video(tmp_path/'source.mp4',frames=12);meta=cutting.probe_source(source)
+    target={'start':0,'end':4,'seed_frame':0,'x':0,'y':0,'w':meta['width'],'h':meta['height'],'effect':{'style':'solid','expansion':'none'}}
+    other={**target,'start':4,'end':8,'seed_frame':4,'effect':{'style':'blur','expansion':'none'}}
+    tracks=[make_track(tmp_path/'a',target,meta),make_track(tmp_path/'b',other,meta)]
+    output=tmp_path/'mixed.mp4';render.compose(source,output,meta,tracks)
+    assert cutting.probe_source(output)==meta
+    raw=cutting.run(['ffmpeg','-v','error','-i',str(output),'-f','rawvideo','-pix_fmt','rgb24','-'])
+    size=meta['width']*meta['height']*3
+    assert max(raw[:size])<5
+    assert max(raw[4*size:5*size])>30
+    assert frame_numbers(output)[8:]==list(range(8,12))
+
+
 def test_polling_own_running_replacement_does_not_revalidate_old_source(ready,monkeypatch):
     from exactcut import mosaic_replace, mosaic_locate
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
