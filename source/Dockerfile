@@ -1,4 +1,4 @@
-FROM python:3.11-slim-bookworm
+FROM python:3.12-slim-bookworm
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ffmpeg antiword procps libglib2.0-0 libgl1 \
@@ -7,6 +7,17 @@ RUN apt-get update \
 WORKDIR /app/source
 COPY source/requirements.lock.txt ./
 RUN pip install --no-cache-dir -r requirements.lock.txt
+
+# Optional CPU tracker for the isolated test deployment. Default images stay lean.
+ARG EXACTCUT_WITH_SAM2=0
+ARG SAM2_REVISION=2b90b9f5ceec907a1c18123530e92e794ad901a4
+COPY source/requirements-sam2.txt ./
+RUN if [ "$EXACTCUT_WITH_SAM2" = "1" ]; then \
+      pip install --no-cache-dir -c requirements.lock.txt -r requirements-sam2.txt \
+      && SAM2_BUILD_CUDA=0 pip install --no-cache-dir --no-build-isolation --no-deps \
+         "https://github.com/facebookresearch/sam2/archive/${SAM2_REVISION}.tar.gz" \
+      && python -c "import torch, torchvision; from sam2.build_sam import build_sam2_video_predictor; assert torch.version.cuda is None"; \
+    elif [ "$EXACTCUT_WITH_SAM2" != "0" ]; then exit 1; fi
 
 COPY source/exactcut ./exactcut
 COPY source/config ./config

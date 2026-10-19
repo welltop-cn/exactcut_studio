@@ -240,3 +240,11 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 当前测试代码 `b00374a`，release `test-observer-b00374a`。用户明确授权使用真实 OSS/飞书服务配置，测试交付已启用；这是对上文凭据隔离限制的本次明确例外。预览仍用 test namespace，未配置 CF_ADS 凭据。用户点击上传会创建真实飞书待处理记录并触发外部自动化。不要代用户提交素材。正式服务未更新，仍运行旧交付实现。详见 [验收记录](verification/feishu-observer-test-release-2026-10-15.md)。
 
 测试实例现已更新至 `test-observer-0b13f2f`（代码 `0b13f2f`），修复真实交付对 test 私有成片路径的错误拒绝；配置未变。详见上述验收记录。
+
+## 2026-10-19 剪切打码容器候选
+
+本轮用户明确要求提交剪切打码功能并更新线上测试实例；候选来自已审查的 `feat/mosaic-gemini`（包含当前 main），不操作正式实例。镜像运行时使用 Python 3.12，默认不安装 SAM；测试镜像构建传入 `--build-arg EXACTCUT_WITH_SAM2=1`，安装 CPU 专用 torch 2.7.1 / torchvision 0.22.1、Hydra、iopath，并固定 SAM 源码 revision `2b90b9f5ceec907a1c18123530e92e794ad901a4`。CUDA 扩展关闭，构建阶段验证导入且 torch 无 CUDA。
+
+模型不进入 Git 或应用数据目录：测试专用 `/srv/exactcut-test/models` 只读挂载 `/models`。SAM 2.1 tiny 权重 SHA256 为 `7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69`。在现有 runtime.json 的 `cutting.tracking` 设置 enabled=true、device=cpu、checkpoint=/models/sam2.1_hiera_tiny.pt、checkpoint_sha256、model_revision、model_config=configs/sam2.1/sam2.1_hiera_t.yaml、dependency_paths=[]；保留其他已有配置和账号。沿用 6 CPU / 6 GiB / 256 PID 限制，不因模型测试提高正式宿主机资源占用上限。
+
+只安装依赖或启动健康成功不代表动态跟踪验收：切换前须在同镜像、同限额的隔离目录完成实际 CPU 跟踪和 FFmpeg 合成，再检查输出遮罩/帧数。本地 MPS 的结果不能替代 Linux CPU 证据。CPU 长片推理速度需单独评估。
