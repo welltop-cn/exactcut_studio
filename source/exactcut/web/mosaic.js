@@ -422,12 +422,12 @@
       const index=targets.findIndex(t=>c.uid?t.uid===c.uid:event&&belongs(t,event)&&t.proposal===c.id);
       return {c,index};
     });
-    if(activeCount()+changes.filter(v=>v.index<0||targets[v.index].adopted===false).length>8)throw Error('最多打码 8 个区域，请先取消一个。');
+    if(activeCount()+changes.filter(v=>v.index<0).length>8)throw Error('最多打码 8 个区域，请先取消一个。');
     if(targets.length+changes.filter(v=>v.index<0).length>320)throw Error('本机草稿区域已达上限。');
     setEventRange(event,r);
-    if(boxes.length&&event)deletions=deletions.filter(t=>!belongs(t,event));
+    if(event&&changes.some(({index})=>index<0||targets[index].adopted!==false))deletions=deletions.filter(t=>!belongs(t,event));
     for(const {c,index} of changes){
-      const target={...(index<0?{uid:regionId(),eventId:event?.id,originStart:event?.start,originEnd:event?.end,proposal:c.id}:targets[index]),adopted:true,removed:false,motion:c.motion||motion,label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,...r,seed_frame:Math.max(r.start,Math.min(r.end-1,c.seed_frame??wanted))};
+      const target={...(index<0?{uid:regionId(),eventId:event?.id,originStart:event?.start,originEnd:event?.end,proposal:c.id}:targets[index]),adopted:index<0||targets[index].adopted!==false,removed:false,motion:c.motion||targets[index]?.motion||'tracked',label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,...r,seed_frame:Math.max(r.start,Math.min(r.end-1,c.seed_frame??wanted))};
       if(index<0)targets.push(target);else targets[index]=target;
       c.uid=target.uid;
     }

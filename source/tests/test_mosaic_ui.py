@@ -1135,3 +1135,24 @@ def test_card_edit_opens_clip_and_coordinates_belong_to_region(editor):
     assert not editor.locator('#mosaicMoreTools').evaluate('(el)=>el.open')
     assert editor.locator('#mosaicBoxFields').bounding_box()['y']>editor.locator('#mosaicCandidates').bounding_box()['y']
     assert abs(editor.locator('#mosaicStage').bounding_box()['height']-stage['height'])<1
+
+
+def test_saving_one_region_motion_preserves_sibling_default_tracking(editor):
+    editor.evaluate("findings.push({...findings[0],id:'1',x:10,w:20})")
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-event-adopt]').click();editor.locator('[data-edit-event]').click()
+    editor.locator('#mosaicMotion').select_option('fixed');editor.locator('#mosaicConfirm').click()
+    draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
+    assert [t.get('motion','tracked') for t in draft['targets']]==['fixed','tracked']
+
+
+@pytest.mark.parametrize('delete_selected', [False,True])
+def test_save_time_preserves_cancelled_mask_and_delete_choice(editor,delete_selected):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click();editor.locator('[data-target-remove]').click()
+    if delete_selected:editor.locator('[data-event-delete]').click()
+    editor.locator('[data-edit-event]').click();editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicConfirm').click()
+    draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
+    assert draft['targets'][0]['adopted'] is False
+    assert len(draft['deletions'])==int(delete_selected)
+    assert draft['targets'][0]['start']==40
