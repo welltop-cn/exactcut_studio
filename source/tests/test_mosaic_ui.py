@@ -1014,3 +1014,60 @@ def test_ai_region_defaults_to_tracking_and_can_switch_to_fixed(editor):
     editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/clip-preview')){window.fixedPreview=body;return {id:'b'.repeat(32),status:'completed',...body};}return old(url,body);};}""")
     editor.locator('#mosaicEffectPreview').click()
     assert editor.evaluate('fixedPreview.targets[0].motion')=='fixed'
+
+
+def test_manual_clip_multiple_regions_add_edit_remove_and_preview(editor):
+    open_auto(editor);editor.locator('#mosaicAddClip').click();editor.locator('#mosaicManualAction').select_option('mosaic')
+    def draw(x,y,w,h):
+        b=editor.locator('#mosaicOverlay').bounding_box()
+        editor.mouse.move(b['x']+x*b['width']/160,b['y']+y*b['height']/96);editor.mouse.down()
+        editor.mouse.move(b['x']+(x+w)*b['width']/160,b['y']+(y+h)*b['height']/96);editor.mouse.up()
+    editor.locator('#mosaicDraw').click();draw(10,10,30,20)
+    editor.locator('#mosaicAddRegion').click();draw(80,50,30,20)
+    editor.locator('#mosaicAddSubmit').click()
+    assert editor.locator('[data-mosaic-card]').count()==1
+    assert active_count(editor)==2
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    assert editor.locator('.mosaic-box').count()==2
+    editor.locator('#mosaicAddRegion').click();draw(50,15,20,20)
+    editor.locator('#mosaicConfirm').click()
+    assert active_count(editor)==3
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    assert editor.locator('.mosaic-box').count()==3
+    editor.locator('.mosaic-box').nth(1).click()
+    editor.locator('#mosaicBoxX').fill('85');editor.locator('#mosaicBoxX').dispatch_event('change');editor.locator('#mosaicConfirm').click()
+    draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
+    assert len(draft['targets'])==3 and draft['targets'][1]['x']==85
+    editor.locator('#mosaicAdjustToggle').click();editor.locator('#mosaicRemoveRegion').click()
+    assert active_count(editor)==2
+    editor.locator('#mosaicAdjust summary').click();editor.locator('[data-effect-target]').click()
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/clip-preview')){window.multiPreview=body;return {id:'b'.repeat(32),status:'completed'};}return old(url,body);};}""")
+    editor.locator('#mosaicEffectPreview').click()
+    assert editor.evaluate('multiPreview.targets.length')==2
+
+
+def test_removed_ai_region_stays_removed_and_other_regions_survive(editor):
+    editor.evaluate("findings.push({...findings[0],id:'1',x:10,w:20})")
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click();editor.locator('[data-event-adopt]').click()
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    editor.locator('#mosaicRemoveRegion').click()
+    assert active_count(editor)==1
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').click()
+    assert editor.locator('.mosaic-box').count()==1
+    editor.locator('#mosaicRemoveRegion').click()
+    assert active_count(editor)==0
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    editor.locator('[data-scan-event]').click()
+    editor.locator('#mosaicFrame').wait_for(state='visible')
+    assert editor.locator('.mosaic-box:visible').count()==0
+
+
+def test_remove_unadopted_ai_box_persists(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event]').click();editor.locator('#mosaicAdjustToggle').click();editor.locator('#mosaicRemoveRegion').click()
+    editor.locator('#mosaicClose').click();open_auto(editor);editor.locator('[data-scan-event]').click()
+    editor.locator('#mosaicFrame').wait_for(state='visible')
+    assert editor.locator('.mosaic-box:visible').count()==0
+    assert active_count(editor)==0
