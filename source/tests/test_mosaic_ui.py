@@ -88,10 +88,12 @@ def test_boxes_only_on_reference_frame_and_manual_adjustment(editor):
     if not editor.locator('#mosaicNext').is_visible():editor.locator('#mosaicAdjustToggle').click()
     editor.locator('#mosaicNext').click()
     assert editor.locator('#mosaicOverlay').is_hidden()
+    editor.locator('#mosaicAdjust summary').click()
     editor.locator('[data-target-view]').click()
     editor.locator('#mosaicAdjustToggle').click()
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     assert editor.locator('#mosaicBoxX').input_value()=='20'
+    editor.locator('#mosaicAdjust summary').click()
     editor.locator('[data-target-remove]').click()
     assert editor.locator('[data-target-view]').count()==1
     assert editor.locator('[data-target-remove]').get_attribute('aria-pressed')=='false'
@@ -351,7 +353,7 @@ def test_adopted_regions_are_in_same_full_height_list(editor):
     card=editor.locator('[data-mosaic-card="e1"]')
     assert '打码' in card.inner_text()
     assert card.locator('[data-target-view]').is_visible()
-    assert editor.locator('.mosaic-side #mosaicAdjust').count()==0
+    assert editor.locator('.mosaic-side #mosaicAdjust').is_hidden()
     assert editor.locator('#mosaicSaved').count()==0
     card.locator('[data-target-view]').click()
     assert editor.locator('#mosaicConfirm').inner_text()=='保存调整'
@@ -812,3 +814,17 @@ def test_region_can_move_resize_edges_and_stay_inside_frame(editor):
     confirm_region(editor)
     editor.locator('[data-target-view]').click()
     assert values()==[55,33,105,63]
+
+
+def test_adjust_sidebar_does_not_shrink_preview(editor):
+    open_editor(editor)
+    editor.locator('#mosaicAdjust summary').click()
+    before=editor.locator('#mosaicStage').bounding_box()
+    editor.locator('#mosaicAdjustToggle').click()
+    after=editor.locator('#mosaicStage').bounding_box()
+    assert abs(before['height']-after['height'])<1
+    assert editor.locator('#mosaicAdjust').bounding_box()['x']>after['x']+after['width']
+    assert editor.locator('.mosaic-scan-section').is_hidden()
+    assert editor.locator('#mosaicConfirm').is_visible()
+    editor.locator('#mosaicAdjust summary').click()
+    assert editor.locator('.mosaic-scan-section').is_visible()
