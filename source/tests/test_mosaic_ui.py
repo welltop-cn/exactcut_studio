@@ -867,3 +867,19 @@ def test_rescan_hides_unselected_old_regions_but_preserves_active_ones(editor):
     assert editor.locator('[data-scan-event]').count()==1
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
     assert len(draft['targets'])==1 and draft['targets'][0]['adopted'] is False
+
+
+def test_remove_manual_clip_undo_and_reopen(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    assert editor.locator('[data-remove-clip]').count()==0
+    editor.locator('#mosaicAddClip').click();editor.locator('#mosaicAddSubmit').click()
+    editor.locator('[data-remove-clip]').click()
+    assert editor.locator('[data-remove-clip]').count()==0
+    assert '删除 0 段' in editor.locator('#mosaicBatchHint').inner_text()
+    editor.locator('#mosaicUndoRemove').click()
+    assert editor.locator('[data-remove-clip]').count()==1
+    assert '删除 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    editor.locator('[data-remove-clip]').click()
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    assert editor.locator('[data-remove-clip]').count()==0
+    assert editor.locator('#mosaicRemoved').is_hidden()
