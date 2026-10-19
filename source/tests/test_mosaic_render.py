@@ -408,3 +408,15 @@ def test_mixed_processing_encodes_video_once_and_preserves_source_frame_mapping(
     assert frame_numbers(output)[:9]==[0,1,2,9,10,11,12,13,14]
     assert frame_numbers(output)[-5:]==[25,26,27,28,29]
     assert result['metadata']['has_audio']
+
+
+@pytest.mark.parametrize('audio,fps',[(True,'30'),(False,'30000/1001')])
+def test_one_pass_mask_boundaries_survive_head_and_middle_deletions(tmp_path,audio,fps):
+    source=make_video(tmp_path/'source.mp4',frames=20,fps=fps,audio=audio)
+    meta=cutting.probe_source(source)
+    t={'motion':'fixed','start':8,'end':15,'seed_frame':8,'x':0,'y':0,'w':112,'h':64}
+    track=render.prepare_track('unused','unused',{'metadata':meta},t,{},tmp_path)
+    out=tmp_path/'out.mp4'
+    result=render.process_video(source,out,meta,[track],[[0,3],[10,12]],effect={'style':'solid','expansion':'none'})
+    assert result['metadata']=={**meta,'frame_count':15}
+    assert frame_numbers(out)==[3,4,5,6,7,0,0,0,0,0,15,16,17,18,19]
