@@ -398,6 +398,7 @@ def test_hung_fetch_clears_part_and_next_episode_continues(tmp_path, monkeypatch
     monkeypatch.setenv('EXACTCUT_DATA_ROOT', str(tmp_path))
     monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'production')
     monkeypatch.setenv('EXACTCUT_ALLOW_MATERIAL_FETCH', '1')
+    normal_idle_timeout = cache.FETCH_IDLE_TIMEOUT
     monkeypatch.setattr(cache, 'FETCH_IDLE_TIMEOUT', 0.01)
     hung = tmp_path / 'hung.py'
     hung.write_text('import sys, time\nopen(sys.argv[3], "wb").write(b"partial")\ntime.sleep(60)\n')
@@ -406,6 +407,9 @@ def test_hung_fetch_clears_part_and_next_episode_continues(tmp_path, monkeypatch
     with pytest.raises(TimeoutError, match='无文件进展'):
         cache.ensure('101573', ['EP1'])
     assert not (root / '101573' / 'EP1.mp4.part').exists()
+    # Only the hung fetch needs an accelerated timeout; normal process startup
+    # must not be judged against the 10 ms failure-injection threshold.
+    monkeypatch.setattr(cache, 'FETCH_IDLE_TIMEOUT', normal_idle_timeout)
     fast = tmp_path / 'fast.py'
     fast.write_text('import sys\nopen(sys.argv[3], "wb").write(b"video")\n')
     monkeypatch.setenv('EXACTCUT_MATERIAL_FETCH_CMD', f'{sys.executable} {fast}')
