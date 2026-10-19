@@ -370,17 +370,17 @@ def test_toggle_retains_adjustment_across_reopen(editor):
     open_auto(editor)
     editor.locator('#mosaicScan').click()
     card=editor.locator('[data-mosaic-card="e1"]')
-    assert card.get_by_role('button',name='打码',exact=True).is_visible()
-    card.get_by_role('button',name='打码',exact=True).click()
-    assert card.get_by_role('button',name='打码',exact=True).get_attribute('aria-pressed')=='true'
+    assert card.get_by_role('checkbox',name='打码',exact=True).is_visible()
+    card.get_by_role('checkbox',name='打码',exact=True).click()
+    assert card.get_by_role('checkbox',name='打码',exact=True).get_attribute('aria-pressed')=='true'
     card.locator('[data-target-view]').click()
     editor.locator('#mosaicAdjustToggle').click()
     editor.locator('#mosaicMoreTools').evaluate('(el)=>el.open=true')
     editor.locator('#mosaicBoxX').fill('20')
     editor.locator('#mosaicBoxX').dispatch_event('change')
     confirm_region(editor)
-    card.get_by_role('button',name='打码',exact=True).click()
-    assert card.get_by_role('button',name='打码',exact=True).get_attribute('aria-pressed')=='false'
+    card.get_by_role('checkbox',name='打码',exact=True).click()
+    assert card.get_by_role('checkbox',name='打码',exact=True).get_attribute('aria-pressed')=='false'
     editor.locator('#mosaicClose').click()
     open_auto(editor)
     row=editor.locator('[data-target-view]').locator('..')
@@ -632,14 +632,14 @@ def test_generated_result_replace_and_compare_use_saved_plan(editor):
 def test_processing_decisions_are_equal_toggle_buttons_and_tools_are_compact(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     card=editor.locator('[data-mosaic-card="e1"]')
-    delete=card.get_by_role('button',name='删除',exact=True)
-    mosaic=card.get_by_role('button',name='打码',exact=True)
+    delete=card.get_by_role('checkbox',name='删除',exact=True)
+    mosaic=card.get_by_role('checkbox',name='打码',exact=True)
     assert card.locator('input[type=checkbox]').count()==0
     assert delete.bounding_box()['width']==mosaic.bounding_box()['width']
     assert delete.bounding_box()['height']==mosaic.bounding_box()['height']
-    mosaic.click();assert card.get_by_role('button',name='打码',exact=True).get_attribute('aria-pressed')=='true'
+    mosaic.click();assert card.get_by_role('checkbox',name='打码',exact=True).get_attribute('aria-pressed')=='true'
     delete.click();assert delete.get_attribute('aria-pressed')=='true'
-    assert card.get_by_role('button',name='打码',exact=True).get_attribute('aria-pressed')=='false'
+    assert card.get_by_role('checkbox',name='打码',exact=True).get_attribute('aria-pressed')=='false'
     delete.click();assert delete.get_attribute('aria-pressed')=='false'
     card.locator('[data-scan-event]').click()
     assert editor.locator('#mosaicConfirm').is_hidden()
@@ -1103,3 +1103,21 @@ def test_save_modifications_commits_time_and_both_region_edits(editor):
     assert [t['x'] for t in draft['targets']]==[45,15]
     assert all(t['start']==40 for t in draft['targets'])
     assert '00:01:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+
+
+def test_clip_checkboxes_toggle_cancel_and_are_mutually_exclusive(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    card=editor.locator('[data-mosaic-card="e1"]')
+    delete=card.get_by_role('checkbox',name='删除',exact=True)
+    mask=card.get_by_role('checkbox',name='打码',exact=True)
+    assert not delete.is_checked() and not mask.is_checked()
+    mask.click()
+    assert mask.is_checked() and not delete.is_checked()
+    assert card.locator('[data-effect-target]').is_visible()
+    delete.click()
+    assert delete.is_checked() and not mask.is_checked()
+    assert card.locator('[data-effect-target]').count()==0
+    delete.press('Space')
+    assert not delete.is_checked() and not mask.is_checked()
+    mask.click();mask.click()
+    assert not mask.is_checked()
