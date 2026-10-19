@@ -309,7 +309,7 @@ def test_preparing_failure_can_retry_and_does_not_reopen_closed_dialog(editor):
     editor.locator('#mosaicWorkspace').wait_for(state='visible')
 
 
-def test_running_scan_shows_clickable_partial_results(editor):
+def test_running_scan_allows_view_but_locks_editing(editor):
     scan_result(editor)
     editor.evaluate('''() => {
       const original=api;
@@ -319,12 +319,12 @@ def test_running_scan_shows_clickable_partial_results(editor):
     }''')
     editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     editor.locator('[data-scan-event="e1"]').wait_for()
-    assert '可先点击检查' in editor.locator('#mosaicScanStatus').inner_text()
+    assert '完成后可继续编辑' in editor.locator('#mosaicScanStatus').inner_text()
     assert editor.locator('#mosaicScan').is_disabled()
     editor.locator('[data-scan-event="e1"]').click()
     editor.locator('#mosaicOverlay').wait_for(state='visible')
-    confirm_region(editor)
-    assert editor.locator('[data-target-view]').count()==1
+    assert editor.locator('[data-proposal]').is_disabled()
+    assert editor.locator('#mosaicConfirm').is_disabled()
 
 
 def test_wide_list_and_fixed_adopt_next(editor):
@@ -856,15 +856,15 @@ def test_manual_delete_and_mosaic_without_ai_persist(editor):
     assert '打码 1 段' in editor.locator('#mosaicBatchHint').inner_text()
 
 
-def test_rescan_hides_unselected_old_regions_but_preserves_active_ones(editor):
+def test_rescan_keeps_saved_clip_even_after_deselect(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-proposal]').click()
     editor.evaluate("scanJob.events[0]={...scanJob.events[0],start:100,end:160,seed_frame:120}")
     editor.locator('#mosaicScan').click()
     assert editor.locator('[data-target-view]').count()==1
     editor.locator('[data-target-remove]').click()
-    assert editor.locator('[data-target-view]').count()==0
-    assert editor.locator('[data-scan-event]').count()==1
+    assert editor.locator('[data-target-view]').count()==1
+    assert editor.locator('[data-scan-event]').count()==2
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
     assert len(draft['targets'])==1 and draft['targets'][0]['adopted'] is False
 
@@ -923,3 +923,65 @@ def test_cancel_mosaic_keeps_saved_clip_time_on_card(editor):
     editor.locator('#mosaicConfirm').click()
     editor.locator('[data-target-remove]').click()
     assert '00:01:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+
+
+def test_independent_time_draft_cancel_restore_and_reopen(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event]').click();editor.locator('#mosaicAdjustToggle').click()
+    editor.locator('#mosaicStart').fill('00:01:10')
+    editor.locator('#mosaicSaveTime').click()
+    editor.locator('#mosaicAdjust summary').click()
+    assert '00:01:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+    editor.locator('[data-event-delete]').click();editor.locator('[data-event-delete]').click()
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    assert '00:01:10–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+    editor.locator('.mosaic-clip-menu summary').click()
+    editor.locator('[data-restore-clip]').click()
+    assert '00:01:00–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+
+
+def test_rescan_keeps_edited_clip_and_original_snapshot(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click()
+    editor.evaluate("scanJob.events[0]={...scanJob.events[0],id:'new-event',start:40,end:100}")
+    editor.locator('#mosaicScan').click()
+    assert editor.locator('[data-scan-event]').count()==1
+    assert '00:01:00–00:02:29' in editor.locator('[data-scan-event]').inner_text()
+    assert active_count(editor)==1
+    draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
+    assert draft['aiEvents'][0]['start']==30
+    assert draft['targets'][0]['eventId']==draft['aiEvents'][0]['id']
+
+
+def test_failed_rescan_preserves_list_and_unlocks(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-event-delete]').click()
+    before=editor.locator('[data-scan-event]').inner_text()
+    editor.evaluate("scanJob={...scanJob,status:'failed',events:[],error:'识别失败'}")
+    editor.locator('#mosaicScan').click()
+    assert editor.locator('[data-scan-event]').inner_text()==before
+    assert editor.locator('[data-event-delete]').get_attribute('aria-pressed')=='true'
+    assert editor.locator('[data-event-delete]').is_enabled()
+
+
+def test_unedited_rescan_updates_and_manual_clip_survives(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('#mosaicAddClip').click();editor.locator('#mosaicAddSubmit').click()
+    editor.evaluate("scanJob.events[0]={...scanJob.events[0],id:'changed',start:40,end:100}")
+    editor.locator('#mosaicScan').click()
+    assert editor.locator('[data-manual-card]').count()==1
+    assert '00:01:10–00:03:09' in editor.locator('[data-scan-event="e1"]').inner_text()
+
+
+def test_saved_time_drives_generation_and_keeps_ai_original(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click()
+    editor.locator('[data-scan-event]').click();editor.locator('#mosaicAdjustToggle').click()
+    editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicSaveTime').click()
+    editor.locator('#mosaicAdjust summary').click()
+    editor.evaluate("""() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.timeBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+    editor.locator('#mosaicBatchStart').click()
+    assert editor.evaluate('timeBody.targets[0].start')==40
+    draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
+    assert draft['aiEvents'][0]['start']==30
+    assert draft['clipEdits']['e1']=={'start':40,'end':90}
