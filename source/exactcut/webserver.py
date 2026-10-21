@@ -1317,8 +1317,11 @@ class Handler(BaseHTTPRequestHandler):
                 if suffix == 'manifest':
                     manifest = path / 'confirmed.json'
                     return self.respond(200, manifest.read_bytes() if manifest.exists() else (path / 'draft.json').read_bytes())
-                if suffix.startswith('ending-image/'):
-                    image = workflow.ending_image_file(batch_id, unquote(suffix[len('ending-image/'):]))
+                if suffix.startswith(('ending-image/', 'ending-thumbnail/')):
+                    image = workflow.ending_image_file(batch_id, unquote(suffix.split('/', 1)[1]))
+                    if suffix.startswith('ending-thumbnail/'):
+                        from .ending import thumbnail
+                        return self.respond(200, thumbnail(image), 'image/webp')
                     kind = {'.png': 'image/png', '.jpg': 'image/jpeg', '.webp': 'image/webp'}[image.suffix]
                     return self.respond(200, image.read_bytes(), kind)
                 if suffix == 'download-log':

@@ -170,7 +170,7 @@ def test_editor_ending_controls_keep_plain_rows_and_update_total(tmp_path):
             page.evaluate("current.draft.rows[0].ending.image='R1.png';renderEditor()")
             page.locator('.request').screenshot(path=str(tmp_path/'ending-editor.png'))
             page.evaluate("current.id='another-project';selectedId=current.id;renderEditor()")
-            assert '/another-project/ending-image/' in page.get_by_alt_text('结尾图片预览').get_attribute('src')
+            assert '/another-project/ending-thumbnail/' in page.get_by_alt_text('结尾图片预览').get_attribute('src')
             page.get_by_label('结尾画面').select_option('none')
             assert '2.000 秒' in page.locator('[data-timing-index="0"]').inner_text()
             assert page.get_by_label('结尾图片').count() == 0

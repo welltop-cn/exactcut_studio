@@ -18,6 +18,20 @@ from .runtime import protect_path
 from .util import file_sha256
 
 
+def thumbnail(path):
+    """Small browser preview; the immutable rendering input is never rewritten."""
+    try:
+        with Image.open(path) as source:
+            image = ImageOps.exif_transpose(source)
+            image.thumbnail((480, 480), Image.Resampling.LANCZOS)
+            image = image.convert('RGBA' if 'A' in image.getbands() or 'transparency' in image.info else 'RGB')
+            output = io.BytesIO()
+            image.save(output, 'WEBP', quality=75, method=4)
+            return output.getvalue()
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError('结尾图片无法生成预览') from exc
+
+
 class EndingOptions(BaseModel):
     mode: Literal['none', 'last_frame', 'image'] = 'none'
     image: str = ''
