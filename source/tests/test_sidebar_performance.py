@@ -61,3 +61,28 @@ def test_list_and_detail_do_not_hold_global_lock_while_sending(app, monkeypatch)
     for route in ('/home/api/batches', '/home/api/batches/sidebar', '/home/api/batches/' + bid):
         assert request(app, 'GET', route, headers=headers)[0] == 200
     assert held == [False, False, False]
+
+
+def test_managed_sidebar_does_not_build_details(app, monkeypatch):
+    from exactcut import material_versions as media, intake, cutting_access
+    bid = workflow.create_blank()['id']
+    path = workflow.folder(bid)
+    media.enroll(path)
+    expected = workflow.summaries(compact=True)
+    def expensive(*args, **kwargs):
+        raise AssertionError('sidebar must not build project details')
+    monkeypatch.setattr(media, 'detail', expensive)
+    monkeypatch.setattr(intake, 'validate_draft', expensive)
+    monkeypatch.setattr(cutting_access, 'can_edit', expensive)
+    assert workflow.summaries(compact=True) == expected
+
+
+def test_initialized_workspace_restores_accessible_selection_without_listing(app, monkeypatch):
+    headers = login(app)
+    first = json.loads(request(app, 'POST', '/home/api/workspace', {}, headers)[2])['batch_id']
+    def expensive(*args, **kwargs):
+        raise AssertionError('restoring an existing selection must not list all projects')
+    monkeypatch.setattr(workflow, 'summaries', expensive)
+    status, _, body = request(app, 'POST', '/home/api/workspace', {}, headers)
+    assert status == 200, body
+    assert json.loads(body) == {'batch_id': first}

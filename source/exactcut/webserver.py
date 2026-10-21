@@ -1181,6 +1181,9 @@ class Handler(BaseHTTPRequestHandler):
             state['initialized'] = True
             write_json_atomic(path, state)
             return {'batch_id': bid}
+        chosen = state.get('last_batch_id')
+        if state.get('initialized') and isinstance(chosen, str) and self.can_access(chosen):
+            return {'batch_id': chosen}
         batches = workflow.summaries(self.can_access, compact=True)
         accessible = {b['id']: b for b in batches if self.can_access(b['id'])}
         owned = [b for b in batches if accounts.owner(workflow.folder(b['id'])) == self.user['username']]

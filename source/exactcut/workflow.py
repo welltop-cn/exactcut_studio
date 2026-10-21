@@ -564,7 +564,10 @@ def summaries(can_access=None, *, compact=False):
             continue
         if can_access is not None and not can_access(p.parent.name):
             continue
-        item = material_versions.detail(p.parent) if material_versions.managed(p.parent) else read_json(p)
+        if material_versions.managed(p.parent):
+            item = material_versions.sidebar(p.parent) if compact else material_versions.detail(p.parent)
+        else:
+            item = read_json(p)
         result.append({'id': item['id'], 'filename': item['filename'], 'display_name': item.get('display_name', ''), 'created_at': item['created_at'],
                        'drama_id': item['draft'].get('drama_id'), 'drama_title': item['draft'].get('drama_title'),
                        'count': len(item['draft'].get('rows', [])), **(item['runtime'] if item.get('media_managed') else batch_control.present(p.parent, runtime(p.parent, jobs=jobs))), 'media_managed': bool(item.get('media_managed')), 'deleted_at': item.get('deleted_at'), 'revision': item['revision']})

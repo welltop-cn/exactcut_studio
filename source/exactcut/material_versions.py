@@ -533,6 +533,51 @@ def runtime_message(status, *, has_preview=False, pending_changes=False, paused=
     return message + ('；已有成片仍可播放' if has_preview else '')
 
 
+def _project_status(state, assets, candidates):
+    status = 'producing' if 'processing' in candidates else 'queued' if 'queued' in candidates else 'partial' if 'failed' in candidates else 'review' if any(a.get('preview') for a in assets) else 'draft'
+    pending_changes = any(not a['candidate_version'] and
+                          state['versions'].get(a['current_version'], {}).get('generation') != a['desired_generation']
+                          for a in state['assets'].values() if not a['deleted_at'])
+    delivery_statuses = {a['status'] for a in assets}
+    if any(d['status'] in {'pending', 'upload_queued', 'uploading', 'fbbm_queued'} for d in state['deliveries'].values()):
+        status = 'publishing'
+    elif status not in {'producing', 'queued', 'partial'} and (
+            'unverified' in delivery_statuses or any(d['status'] == 'unverified' for d in state['deliveries'].values())):
+        status = 'unverified'
+    elif 'publish_failed' in delivery_statuses and status not in {'producing', 'queued', 'partial'}:
+        status = 'publish_failed'
+    elif status == 'review' and not candidates and not pending_changes and delivery_statuses == {'fbbm_ready'}:
+        status = 'complete'
+    return status, pending_changes
+
+
+def sidebar(path):
+    """Project list projection: no draft validation, media checks or history reads."""
+    from . import workflow as w
+    state = read(path)
+    latest_by_asset = {d['asset_id']: d for d in state['deliveries'].values()}
+    assets, candidates = [], []
+    for row in state['draft']['rows']:
+        asset = state['assets'][row['request_id']]
+        current = state['versions'].get(asset['current_version'], {})
+        candidate = state['versions'].get(asset['candidate_version'], {})
+        latest = latest_by_asset.get(row['request_id'], {})
+        status = current.get('record', {}).get('status', 'pending')
+        if latest.get('version_id') == asset['current_version']:
+            status = latest.get('status', status)
+        if candidate:
+            candidates.append(candidate['status'])
+            if not current:
+                status = 'failed' if candidate['status'] == 'failed' else 'processing'
+        assets.append({'status': status, 'preview': bool(current) and not state['deleted_at']})
+    status, _ = _project_status(state, assets, candidates)
+    control = state['control']
+    return {**state['document'], 'draft': state['draft'], 'revision': state['revision'],
+            'media_managed': True, 'deleted_at': state['deleted_at'],
+            'runtime': {'status': 'paused' if control['paused'] and status in w.ACTIVE else status,
+                        'archived': control['archived'] or bool(state['deleted_at'])}}
+
+
 def detail(path):
     from . import workflow as w
     from .intake import validate_draft, download_plan, clip_editor
@@ -621,20 +666,7 @@ def detail(path):
         from .cutting_access import can_edit
         item['can_edit_video'] = can_edit(path, rid)
         assets.append(item)
-    status = 'producing' if 'processing' in candidates else 'queued' if 'queued' in candidates else 'partial' if 'failed' in candidates else 'review' if any(a.get('preview') for a in assets) else 'draft'
-    pending_changes = any(not a['candidate_version'] and
-                          state['versions'].get(a['current_version'], {}).get('generation') != a['desired_generation']
-                          for a in state['assets'].values() if not a['deleted_at'])
-    delivery_statuses = {a['status'] for a in assets}
-    if any(d['status'] in {'pending', 'upload_queued', 'uploading', 'fbbm_queued'} for d in state['deliveries'].values()):
-        status = 'publishing'
-    elif status not in {'producing', 'queued', 'partial'} and (
-            'unverified' in delivery_statuses or any(d['status'] == 'unverified' for d in state['deliveries'].values())):
-        status = 'unverified'
-    elif 'publish_failed' in delivery_statuses and status not in {'producing', 'queued', 'partial'}:
-        status = 'publish_failed'
-    elif status == 'review' and not candidates and not pending_changes and delivery_statuses == {'fbbm_ready'}:
-        status = 'complete'
+    status, pending_changes = _project_status(state, assets, candidates)
     control = state['control']
     events = list(state.get('events', []))
     history_paths = {path, *(w.BATCHES / v['child_id'] for v in state['versions'].values() if v.get('child_id'))}

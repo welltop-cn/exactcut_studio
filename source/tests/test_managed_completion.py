@@ -124,3 +124,34 @@ def test_review_checkbox_tracks_delivery_without_rebuilding_card():
             assert not page.locator('[data-reviewed]').is_checked()
         finally:
             browser.close()
+
+
+@pytest.mark.parametrize('media', [False, True])
+@pytest.mark.parametrize('control', ['active', 'paused', 'archived', 'deleted'])
+def test_lightweight_sidebar_matches_detail_snapshot(workspace, media, control):
+    m, path, state = enrolled(media=media)
+    if control == 'deleted':
+        state['deleted_at'] = '2026-10-21T00:00:00Z'
+    elif control != 'active':
+        state['control'][control] = True
+    m._write(path, state)
+    full = m.detail(path)
+    light = m.sidebar(path)
+    for key in ('id', 'filename', 'display_name', 'created_at', 'draft', 'revision', 'media_managed', 'deleted_at'):
+        assert light.get(key) == full.get(key)
+    assert light['runtime'] == {key: full['runtime'][key] for key in ('status', 'archived')}
+
+
+@pytest.mark.parametrize('candidate_status,expected', [('queued', 'queued'), ('processing', 'producing'), ('failed', 'partial')])
+@pytest.mark.parametrize('paused', [False, True])
+def test_sidebar_candidate_without_current_media(workspace, candidate_status, expected, paused):
+    m, path, state = enrolled()
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    vid = next(iter(state['assets'].values()))['candidate_version']
+    state['versions'][vid]['status'] = candidate_status
+    state['control']['paused'] = paused
+    m._write(path, state)
+    if paused and expected in w.ACTIVE:
+        expected = 'paused'
+    assert m.detail(path)['runtime']['status'] == expected
+    assert m.sidebar(path)['runtime']['status'] == expected
