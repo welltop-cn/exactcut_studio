@@ -673,13 +673,14 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
             continue
     storage.rebuild_reservations(JOBS, live_ids, workflow.BATCHES, workflow.ROOT, inline_ids=INLINE_RENDERS, scheduler=scheduler)
     # Stage completion may have queued a successor after the recovery snapshot.
-    queued.update(job.get('batch_id') for job in stored_jobs() if job.get('status') == 'queued')
+    latest_jobs = list(stored_jobs())
+    queued.update(job.get('batch_id') for job in latest_jobs if job.get('status') == 'queued')
     for file in workflow.BATCHES.glob('*/runtime.json'):
         path = file.parent
         if workflow.material_versions.managed(path): continue
         if path.name in live or path.name in queued:
             continue
-        if workflow.runtime(path)['status'] in workflow.ACTIVE:
+        if workflow.runtime(path, jobs=latest_jobs)['status'] in workflow.ACTIVE:
             # Includes a crash between confirming a batch and persisting its job.
             publications = workflow.read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
             for rid, entry in publications.items():

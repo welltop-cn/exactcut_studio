@@ -86,3 +86,26 @@ def test_initialized_workspace_restores_accessible_selection_without_listing(app
     status, _, body = request(app, 'POST', '/home/api/workspace', {}, headers)
     assert status == 200, body
     assert json.loads(body) == {'batch_id': first}
+
+
+def test_recovery_orphan_scan_reuses_fresh_job_snapshot(app, monkeypatch):
+    jobs_dir = workflow.ROOT / '.web-state/jobs'
+    jobs_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(webserver, 'JOBS', jobs_dir)
+    ids = []
+    for _ in range(3):
+        bid = workflow.create_blank()['id']
+        ids.append(bid)
+        path = workflow.folder(bid)
+        runtime = read_json(path / 'runtime.json')
+        runtime.update(request_parallel=True, status='review')
+        write_json_atomic(path / 'runtime.json', runtime)
+        write_json_atomic(path / 'confirmed.json', {'requests': [{'request_id': 'r1'}]})
+        write_json_atomic(path / 'production/results.json', {'requests': {'r1': {'status': 'qc_passed'}}})
+        write_json_atomic(jobs_dir / (bid + '.json'), {'id': bid, 'batch_id': bid, 'phase': 'render',
+                                                    'request_id': 'r1', 'status': 'failed'})
+    with patch.object(workflow, 'read_json', wraps=workflow.read_json) as reads:
+        webserver.recover_jobs(scheduler=True)
+        repeated_job_reads = [call for call in reads.call_args_list if call.args[0].parent == jobs_dir]
+    assert not repeated_job_reads, 'orphan scan must reuse the fresh stored_jobs snapshot'
+    assert {workflow.runtime(workflow.folder(bid))['status'] for bid in ids} == {'review'}
