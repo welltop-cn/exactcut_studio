@@ -175,3 +175,9 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 2026-10-26 字幕图层调整：按用户要求，字幕位置不动，叠在剧名上层。预览、普通 FFmpeg 和片段特效路径一致；新增真实像素测试通过。确认无活动任务后重启8793至PID 70278，health正常，未重跑用户成片。带水印输出与预览缓存版本更新为2。
 
 2026-10-26 Pi审查修复：缓存/pin/直接引用损坏自愈、按剧锁、logo包数据已修；28项相关测试及隔离wheel检查通过，Pi+DeepSeek V4.1 Flash复查确认。确认无活动任务后重启8793至PID 95498，health正常，沿用原参数/凭据，未重跑用户成片。
+
+2026-10-26 原片下载：确认无活动任务、无 ffmpeg 后，将 8793 从 PID 95498 重启为 PID 71732（操作前须再核验）。沿用原 EXACTCUT 参数：development、material_fetch=1，发布、AI、外部写入仍为 0。加载原片列表与浏览器临时签名下载。未重跑用户成片。日志 `source/.dev-state/originals-ui-20261026.log`。
+
+2026-10-26 原片保存目录：确认无活动任务后，将 8793 从 PID 71732 重启为 PID 23012。沿用原参数。Chrome 下载可选文件夹，文件写入该文件夹下的剧号目录。未重跑用户成片。
+
+2026-10-26 原片未保存剧号：确认无活动任务、无 ffmpeg 后，将 8793 从 PID 23012 重启为 PID 3926（操作前须再核验）。沿用 development、material_fetch=1，发布、AI、外部写入为 0，正片下载命令仍是 `python3.12 -m exactcut.dev_fetch`。列表和单集地址使用输入框里的剧号，不必先点保存。未重跑用户成片。

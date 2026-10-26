@@ -1041,7 +1041,8 @@ class Handler(BaseHTTPRequestHandler):
         return getattr(getattr(self, 'server', None), 'base_path', '') + path
 
     def normalize_path(self):
-        self.asset_version = parse_qs(self.path.partition('?')[2]).get('v', [''])[0]
+        self.query = parse_qs(self.path.partition('?')[2])
+        self.asset_version = self.query.get('v', [''])[0]
         self.path = self.path.partition('?')[0]
         prefix = getattr(self.server, 'base_path', '')
         if prefix and self.path.startswith(prefix + '/'):
@@ -1287,6 +1288,8 @@ class Handler(BaseHTTPRequestHandler):
                     with LOCK:
                         result = batch_response(batch_id)
                     return self.respond(200, result)
+                if suffix == 'originals' or suffix.startswith('originals/'):
+                    return self._originals(path, suffix)
                 if suffix.startswith(('preview-url/', 'download/')):
                     from . import preview_oss
                     original = suffix.startswith('download/')
@@ -1374,6 +1377,55 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == '/template.xlsx':
             return self.respond(200, (CODE_ROOT / 'templates/标准剪辑需求_模板.xlsx').read_bytes(), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
         self.respond(404, {'error': '不存在'})
+
+    def _originals(self, path, suffix):
+        from . import originals
+        document = read_json(path / 'draft.json') or {}
+        inner = document.get('draft') if isinstance(document.get('draft'), dict) else {}
+        saved = str(inner.get('drama_id') or document.get('drama_id') or '').strip()
+        requested = str((getattr(self, 'query', {}) or {}).get('drama_id', [''])[0] or '').strip()
+        drama_id = requested or saved
+        try:
+            if suffix == 'originals':
+                return self.respond(200, originals.load_originals(drama_id))
+            rest = unquote(suffix.split('/', 1)[1])
+            episode, _, extra = rest.partition('/')
+            if not episode or extra not in ('', 'file'):
+                return self.respond(400, {'error': '无效集号'})
+            if extra == 'file':
+                remote = originals.open_original(drama_id, episode)
+            else:
+                signed = originals.sign_original(drama_id, episode)
+        except originals.OriginalsUnavailable as exc:
+            return self.respond(exc.status, {'error': str(exc)})
+        except RuntimeError as exc:
+            return self.respond(400, {'error': str(exc)})
+        if extra == 'file':
+            return self._send_original(remote)
+        self.send_response(302)
+        self.send_header('Location', signed['url'])
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('Referrer-Policy', 'no-referrer')
+        self.send_header('Content-Length', '0')
+        self.end_headers()
+
+    def _send_original(self, remote):
+        length = remote.headers.get('Content-Length')
+        self.send_response(200)
+        self.send_header('Content-Type', remote.headers.get('Content-Type') or 'video/mp4')
+        self.send_header('Cache-Control', 'no-store')
+        self.send_header('X-Content-Type-Options', 'nosniff')
+        if length and str(length).isdigit():
+            self.send_header('Content-Length', str(length))
+        self.end_headers()
+        try:
+            for chunk in remote.iter_bytes():
+                if chunk:
+                    self.wfile.write(chunk)
+        except (BrokenPipeError, ConnectionResetError):
+            return
+        finally:
+            remote.close()
 
     def stream_video(self, path):
         started = time.monotonic()
