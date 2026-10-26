@@ -1073,3 +1073,35 @@ def test_old_delivery_failure_does_not_mask_new_production(workspace, candidate_
     state['versions'][state['assets'][rid]['candidate_version']]['status'] = candidate_status
     m._write(path, state)
     assert m.detail(path)['runtime']['status'] == expected
+
+
+def test_unarchived_fresh_draft_confirms_and_resumes_atomically(workspace):
+    m, path, state = enrolled()
+    for action in ('archive', 'unarchive'):
+        state = m.control(path, action, {'revision': state['revision'], 'mutation_id': token()})
+    assert state['control']['paused']
+    detail = m.detail(path)
+    assert '暂停' in detail['runtime']['message']
+    assert '确认内容' in detail['runtime']['message']
+    with pytest.raises(ValueError, match='更新'):
+        m.confirm(path, {'revision': state['revision'] - 1, 'mutation_id': token()})
+    assert m.read(path)['control']['paused']
+    request = {'revision': state['revision'], 'mutation_id': token()}
+    confirmed = m.confirm(path, request)
+    assert not confirmed['control']['paused']
+    assert confirmed['versions']
+    assert m.confirm(path, request)['revision'] == confirmed['revision']
+
+
+def test_confirm_does_not_resume_archived_or_existing_execution(workspace):
+    m, path, state = enrolled()
+    state = m.control(path, 'archive', {'revision': state['revision'], 'mutation_id': token()})
+    with pytest.raises(ValueError, match='归档'):
+        m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    state = m.control(path, 'unarchive', {'revision': state['revision'], 'mutation_id': token()})
+    state = m.control(path, 'resume', {'revision': state['revision'], 'mutation_id': token()})
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    state = m.control(path, 'pause', {'revision': state['revision'], 'mutation_id': token()})
+    with pytest.raises(ValueError, match='暂停'):
+        m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    assert m.read(path)['control']['paused']

@@ -400,6 +400,12 @@ def _confirm(path, data):
         if file.parent != path and not internal(file.parent) and names & reserved_names(file.parent):
             raise ValueError('素材命名重复，请修改素材序号')
     def apply(state):
+        _editable(state)
+        # A never-submitted draft has no execution to resume separately. Keep
+        # this change in the confirm transaction so validation/CAS failures
+        # cannot clear a pause or wake existing work.
+        if not state['versions'] and not state['deliveries'] and not state['outbox']:
+            state['control']['paused'] = False
         _editable(state, execution=True)
         if state['draft'] != snapshot['draft']: raise ValueError('草稿已更新')
         for request in serialized['requests']:
@@ -508,8 +514,10 @@ def production_versions(state):
 
 
 def runtime_message(status, *, has_preview=False, pending_changes=False, paused=False):
-    if paused and status in {'queued', 'producing', 'publishing'}:
-        message = '执行已暂停，可继续执行'
+    if paused and status == 'draft':
+        message = '项目已暂停；未制作过的草稿可点击「确认内容，开始制作」，已有任务请先点击「继续」'
+    elif paused:
+        message = '项目已暂停，请点击「继续」恢复执行'
     elif status == 'queued':
         message = '制作任务已提交，正在排队'
     elif status == 'producing':
