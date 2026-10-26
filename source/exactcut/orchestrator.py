@@ -58,7 +58,13 @@ def _request_fingerprint(project_dir: Path, request: Any, config: dict[str, Any]
     from .segment_effects import identity_timeline
     payload = request.model_dump(mode="json")
     payload['timeline'] = identity_timeline(payload['timeline'])
-    return json_sha256({"pipeline": "exact_timeline_v3_unit_qc", "request": payload, "sources": sources, "config": media_config})
+    # Absent when both switches are off, so previously rendered clips keep their fingerprint.
+    brand = payload.pop('brand_overlay', None)
+    identity = {"pipeline": "exact_timeline_v3_unit_qc", "request": payload, "sources": sources, "config": media_config}
+    if brand and (brand.get('title_enabled') or brand.get('logo_enabled')):
+        identity['brand_overlay'] = brand
+        identity['brand_layer_version'] = 2
+    return json_sha256(identity)
 
 
 def _new_results(manifest: BatchManifest) -> dict[str, Any]:
@@ -104,6 +110,13 @@ def execute_batch(
     audit_dir = batch_dir / "audit"
     for directory in (videos_dir, staging_dir, failed_dir, audit_dir):
         directory.mkdir(parents=True, exist_ok=True)
+    from .title_image.extraction import prepare_manifest
+    if progress:
+        for request in manifest.requests:
+            if request.brand_overlay.title_enabled and request.brand_overlay.title_mode == 'cover':
+                progress('title_extraction', request.request_id)
+                break
+    manifest = prepare_manifest(manifest, batch_dir)
     resolved = batch_dir / ('resolved.manifest.json' if request_ids is None else f'resolved-{manifest.requests[0].request_id}.manifest.json')
     write_json_atomic(resolved, manifest.model_dump(mode='json'))
     results_path = batch_dir / "results.json"

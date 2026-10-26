@@ -91,7 +91,7 @@ def caption_image(text, width, height):
     return image
 
 
-def apply_effects(source, output, render, work, plan, *, hook=None, hook_end=0, hook_fade=0):
+def apply_effects(source, output, render, work, plan, *, hook=None, hook_end=0, hook_fade=0, brand=None):
     fps = Fraction(str(render['fps']))
     width, height = int(render['width']), int(render['height'])
     command = ['ffmpeg', '-y', '-v', 'error', '-i', str(source)]
@@ -116,6 +116,8 @@ def apply_effects(source, output, render, work, plan, *, hook=None, hook_end=0, 
             before, after = flash['before_frames'], flash['after_frames']
             add_overlay(white, flash['boundary_frame'] - before, before + after,
                         f',fade=t=in:s=0:n={before - 1}:alpha=1,fade=t=out:s={before}:n={after - 1}:alpha=1')
+    if brand:
+        add_overlay(brand, 0, plan['total_frames'])
     warnings = []
     hook_box = None
     if hook:

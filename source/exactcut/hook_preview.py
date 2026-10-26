@@ -44,6 +44,21 @@ def compute(project: Path, request, work: Path):
     with diag.span('hook_preview.presentation', frame_count=len(frames), position=request.hook_options.position):
         overlay, decision = presentation(request.hook_text,emphasis,request.hook_options,frames,work,
                                         cache/'hook-placement',config['width'],config['height'])
+    from .brand_overlay import render as render_brand, active as brand_active
+    brand_png, floor = (None, 0)
+    if brand_active(getattr(request, 'brand_overlay', None)):
+        if request.brand_overlay.title_enabled and request.brand_overlay.title_mode == 'cover':
+            from .title_image.extraction import extract, asset_file, AssetUnavailable
+            brand = request.brand_overlay
+            if brand.title_asset:
+                try:
+                    asset_file(brand.title_asset, brand.title_drama_id)
+                except AssetUnavailable:
+                    brand = brand.model_copy(update={'title_asset': ''})
+            if not brand.title_asset:
+                brand = brand.model_copy(update={'title_asset': extract(brand.title_drama_id)})
+            request = request.model_copy(update={'brand_overlay': brand})
+        brand_png, floor = render_brand(request.brand_overlay, config['width'], config['height'], work/'brand.png')
     decision.update(duration_ms=visible,sampling=coverage)
     # Only an all-sources-available preview can be reused as the final, approved placement.
     doc = {'identity':preview_identity(request,timeline,sources),'shot_indexes':shot_index_identity(project,timeline),
@@ -52,6 +67,9 @@ def compute(project: Path, request, work: Path):
     diag.event('hook_preview.result', frame_count=len(frames), sources_complete=doc['sources_complete'],
                sampling_capped=coverage.get('sampling_capped'), emphasis_source=emphasis.get('source'))
     background = Image.open(io.BytesIO(frames[0])).convert('RGBA').resize((config['width'],config['height'])) if frames else Image.new('RGBA',(config['width'],config['height']),'#22272d')
+    if brand_png is not None:
+        with Image.open(brand_png) as brand:
+            background.alpha_composite(brand.convert('RGBA'))
     with Image.open(overlay) as image:
         background.alpha_composite(image.convert('RGBA'))
     background.thumbnail((360,640))

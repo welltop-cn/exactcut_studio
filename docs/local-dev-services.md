@@ -120,6 +120,15 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 提交 `0f09503` 增加生成期间编辑锁与保留草稿的停止生成接口。67 项相关测试通过，另复查精简后的运行中按钮；测试包含真实子进程终止、资源释放、同方案重试、停止确认前禁止编辑。浏览器实看当前任务运行时选择/取消/效果/区域编辑禁用，播放与查看可用。
 
 等待用户任务 render-b63091de29500d5e2d16a26dd2d79a2f 自然 completed，取得 compute/scan 锁后从已验证 PID 78076 重启为 PID 14916（历史记录，操作前核验）。release development-stop-0f09503，healthz ok/development；用户本次结果完整保留，未替换成片或变更选择。8793/8800 未动。
+## 2026-10-16 马赛克 Gemini 独立验收（8801 保留运行）
+
+用户要求启动本地 dev 测试。专用入口 `http://localhost:8801/home/#2cf132715d8e47719f5c275f0f6f2d13`，owner 为 mosaic-gemini 会话。PID 52609（操作前重新核验），cwd `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/mosaic-gemini/source`，提交 `0b2748b`。healthz 已确认 development/ok、release `development-mosaic-0b2748b`。
+
+私有启动器 `source/.dev-state/mosaic-gemini-20261016/start.py`，日志同目录 `server.log`。复用 8800 的开发配置 `development-cutting.json`、本地 Gemini 配置路径和开发数据 `source/.dev-state/data`，Python 使用指定 py3.12；worker、发布、外部写入关闭。8793/8800 未重启。此入口共享开发数据，避免在多个入口同时编辑同一成片。浏览器已打开，留给用户验收；本次只验证服务健康，未发起真实 Gemini 扫描。验收完成后可停止此会话的专用实例。
+
+2026-10-16 渐进识别更新：等待旧扫描 completed（8 个区间）后，取得 scan/compute/batch 排他锁，8801 从 PID 52609 重启到 37538，release development-mosaic-3bb3f06。原结果保留，新识别跳过剪切精细复查、先展示时间段再逐段发布区域。healthz 已确认 ok。
+
+2026-10-16 SDK schema 修复：取得扫描/计算/项目排他锁后，8801 从 PID 37538 重启至 63248，release development-mosaic-b38f802，healthz ok。已备份并校验恢复该项目 7 个区间（6 个已定位）；未重新调用模型。
 
 ## 2026-10-19 片段独立打码效果（8801）
 
@@ -146,3 +155,23 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 ## 2026-10-19 审查修复验收（8801）
 
 用户授权修复并发布本地dev。完整1546项回归通过后，在持有compute/scan锁且无活动任务时，核验原PID21306端口/cwd并重启为15969（历史快照）。release development-review-fixes-17972d9，health ok。修复多区域motion污染、取消打码后改时间意外启用、放弃合成不取消进程；账号、草稿、视频保留。8793/8800未动。另按后续授权部署线上测试，见verification/mosaic-test-deployment-2026-10-19.md。
+
+## 2026-10-26 封面剧名自动提取验收
+
+- 8793 已在核对无 queued/running 任务后重启，PID 84274，工作目录为本仓库 `source`，Python 为用户指定的 py3.12。
+- 启动：`./bin/dev-web --title-images`；配置：忽略目录 `.dev-state/title-images/runtime.json`，通过集中配置启用独立的剧名封面查询/图像编辑能力。专用凭据保存在同目录权限 0600 的文件中，未写入版本管理。
+- 通用 `EXACTCUT_ALLOW_AI`、`EXACTCUT_ALLOW_MATERIAL_FETCH`、外部写入和发布权限仍为 0。健康检查为 OK，worker 存活。已有用户项目未重跑。
+- 剧名无需单独预览确认；勾选后随制作自动提取，按剧缓存。101607 的真实 API 图片已缓存供本地复用。
+- 验证范围和隔离测试视频见 [记录](verification/title-extraction-2026-10-26.md)。生产未部署。
+
+### 2026-10-26 正片下载接通
+
+用户授权后，将 8793 重启为 PID 96508（操作前已确认无活动任务）。启动参数为 `--title-images --fetch-env <source>/.dev-state/runs/real-eight-20261010/development.env`。使用已有开发验收凭据、`exactcut.dev_fetch` 只读适配器和 `EXACTCUT_MATERIAL_FETCH_CMD` 扩展点，material_fetch=1；上传、发布仍禁用。该适配器只获取已存在的 OSS 对象，缺失不触发远端复制。项目 49a94fe1f5ce49c7adf4bc47e5fc4c10 已重试，101607/EP1 下载完成 219439097 字节并进入制作。下载相关 15 项测试通过。
+
+### 2026-10-26 封面查询 TLS 连接修复
+
+8793 在确认无活动任务后重启为 PID 23280，继续使用 title-images + fetch-env 配置。本机 fake-IP 路径出现 KES TLS EOF；独立复现后，局部 `title_extraction.kes_connect_ip=47.117.169.192` 保留原域名 Host/TLS SNI，真实 101606 封面查询成功。项目 cbe91a69163a4ffab66691016b2604b5 已重新提交，生成透明图缓存并进入 FFmpeg 渲染。相关16项测试通过。封面网络错误最多尝试3次，不自动重试已发送的图像编辑请求。
+
+2026-10-26 字幕图层调整：按用户要求，字幕位置不动，叠在剧名上层。预览、普通 FFmpeg 和片段特效路径一致；新增真实像素测试通过。确认无活动任务后重启8793至PID 70278，health正常，未重跑用户成片。带水印输出与预览缓存版本更新为2。
+
+2026-10-26 Pi审查修复：缓存/pin/直接引用损坏自愈、按剧锁、logo包数据已修；28项相关测试及隔离wheel检查通过，Pi+DeepSeek V4.1 Flash复查确认。确认无活动任务后重启8793至PID 95498，health正常，沿用原参数/凭据，未重跑用户成片。

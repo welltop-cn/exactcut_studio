@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .hook_options import HookOptions
 from .hook_emphasis import plain_hook
 from .ending import EndingOptions
+from .brand_overlay import BrandOverlay
 
 
 class SegmentCaption(BaseModel):
@@ -72,6 +73,7 @@ class CutRequest(BaseModel):
     hook_text: str = ""
     hook_options: HookOptions = Field(default_factory=HookOptions)
     ending: EndingOptions | None = None
+    brand_overlay: BrandOverlay = Field(default_factory=BrandOverlay)
     structure: str = "顺叙"
     notes: str = ""
     seq: int = Field(gt=0)
@@ -112,6 +114,7 @@ class BatchManifest(BaseModel):
     creator2: str = "agent"
     material_type: str = "typezxraw"
     source_workbook: str
+    brand_overlay: BrandOverlay = Field(default_factory=BrandOverlay)
     requests: list[CutRequest]
 
     @field_validator("drama_id")

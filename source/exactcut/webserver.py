@@ -1056,6 +1056,8 @@ class Handler(BaseHTTPRequestHandler):
                 version = hashlib.sha256((CODE_ROOT / 'exactcut/web' / script).read_bytes()).hexdigest()[:20]
                 body = body.replace(f'src="{script}"'.encode(), f'src="{script}?v={version}"'.encode())
             app_version = hashlib.sha256((CODE_ROOT / 'exactcut/web/app.js').read_bytes()).hexdigest()[:20]
+            image_version = hashlib.sha256((CODE_ROOT / 'exactcut/web/brand-style.png').read_bytes()).hexdigest()[:20]
+            body = body.replace(b'src="brand-style.png"', f'src="brand-style.png?v={image_version}"'.encode())
             body = body.replace(b'<script src="diagnostics.js',
                                 f'<script data-app-version="{app_version}" src="diagnostics.js'.encode())
         base = f'<base href="{self.public_url("/")}">'.encode()
@@ -1226,6 +1228,11 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(200 if healthy else 503, {'status': 'ok' if healthy else 'degraded', 'release': release_id(), 'environment': environment(), 'maintenance': maintenance_file().exists(), 'worker_alive': runner.is_alive() if runner else None, 'worker_heartbeat_age_seconds': round(heartbeat_age, 1) if runner else None})
         if not self.authorized():
             return
+        if self.path == '/brand-style.png':
+            body = (CODE_ROOT / 'exactcut/web/brand-style.png').read_bytes()
+            version = hashlib.sha256(body).hexdigest()[:20]
+            cache = 'private, max-age=31536000, immutable' if self.asset_version == version else 'no-store'
+            return self.respond(200, body, 'image/png', cache=cache)
         if self.path == '/api/queue':
             if not self.is_admin(): return
             try:

@@ -179,14 +179,34 @@ def _concat_units_encoded(inputs: list[Path], output: Path, render: dict[str, An
     run_checked(command)
 
 
+def _burn_brand(input_video: Path, brand_png: Path, output: Path, render: dict[str, Any],
+                 normalized_input: bool = False) -> None:
+    total_s = duration_ms(input_video) / 1000
+    cadence = "" if normalized_input else f"fps={render['fps']},"
+    command = [
+        "ffmpeg", "-y", "-v", "error", "-i", str(input_video),
+        "-loop", "1", "-framerate", str(render["fps"]), "-t", f"{total_s:.3f}", "-i", str(brand_png),
+        "-filter_complex",
+        "[1:v]format=rgba[brand];"
+        f"[0:v][brand]overlay=0:0:format=auto:eof_action=pass,{cadence}setpts=N/({render['fps']}*TB),format=yuv420p[v]",
+        "-map", "[v]", "-map", "0:a:0?", "-r", str(render["fps"]), "-t", f"{total_s:.3f}",
+        "-c:v", render["video_codec"], "-preset", render["preset"], "-crf", str(render["crf"]),
+        "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output),
+    ]
+    run_checked(command)
+
+
 def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[str, Any], work: Path,
                 emphasis: dict[str, Any] | None = None, options: HookOptions | None = None,
                 frames: list[bytes] | None = None, cache_dir: Path | None = None,
                 preview_decision: dict | None = None, normalized_input: bool = False,
-                segment_plan: dict | None = None) -> dict[str, Any] | None:
+                segment_plan: dict | None = None, brand_png: Path | None = None,
+                hook_floor: float = 0) -> dict[str, Any] | None:
     if not hook_text.strip():
         if segment_plan is not None:
-            apply_effects(input_video, output, render, work, segment_plan)
+            apply_effects(input_video, output, render, work, segment_plan, brand=brand_png)
+        elif brand_png is not None:
+            _burn_brand(input_video, brand_png, output, render, normalized_input)
         else:
             shutil.copy2(input_video, output)
         return None
@@ -213,7 +233,7 @@ def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[st
         raise ValidationError("Hook 时长必须大于零，淡出时长不能为负")
     if segment_plan is not None:
         apply_effects(input_video, output, render, work, segment_plan,
-                      hook=overlay, hook_end=end_s, hook_fade=fade_s)
+                      hook=overlay, hook_end=end_s, hook_fade=fade_s, brand=brand_png)
         return {**decision, 'duration_ms': round(end_s * 1000), 'fade_out_ms': round(fade_s * 1000)}
     overlay_filter = "[1:v]format=rgba"
     if fade_s:
@@ -227,13 +247,23 @@ def _apply_hook(input_video: Path, hook_text: str, output: Path, render: dict[st
         # Invisible PNG frames otherwise keep decoding and fading for the entire film.
         # The existing eof_action=pass retains all main-video frames after the Hook.
         "-loop", "1", "-framerate", str(render["fps"]), "-t", f"{end_s:.3f}", "-i", str(overlay),
-        "-filter_complex", overlay_filter + f"[0:v][ov]overlay=0:0:format=auto:eof_action=pass:enable='lt(t,{end_s:.3f})',{cadence}setpts=N/({render['fps']}*TB),format=yuv420p[v]",
+    ]
+    if brand_png is not None:
+        command += ["-loop", "1", "-framerate", str(render["fps"]), "-t", f"{total_s:.3f}", "-i", str(brand_png)]
+        graph = (overlay_filter + "[2:v]format=rgba[brand];"
+                 "[0:v][brand]overlay=0:0:format=auto:eof_action=pass[branded];"
+                 f"[branded][ov]overlay=0:0:format=auto:eof_action=pass:enable='lt(t,{end_s:.3f})',{cadence}setpts=N/({render['fps']}*TB),format=yuv420p[v]")
+    else:
+        graph = overlay_filter + f"[0:v][ov]overlay=0:0:format=auto:eof_action=pass:enable='lt(t,{end_s:.3f})',{cadence}setpts=N/({render['fps']}*TB),format=yuv420p[v]"
+    command += [
+        "-filter_complex", graph,
         "-map", "[v]", "-map", "0:a:0?", "-r", str(render["fps"]), "-t", f"{total_s:.3f}",
         "-c:v", render["video_codec"], "-preset", render["preset"],
         "-crf", str(render["crf"]), "-pix_fmt", "yuv420p", "-c:a", "copy", "-movflags", "+faststart", str(output),
     ]
     from .hook_splice import try_hook_splice
-    if not normalized_input or not try_hook_splice(input_video, output, render, end_s, command):
+    # A full-length logo cannot be copied through the untouched tail of a Hook splice.
+    if brand_png is not None or not normalized_input or not try_hook_splice(input_video, output, render, end_s, command):
         run_checked(command)
     return {**decision, "duration_ms": round(end_s * 1000), "fade_out_ms": round(fade_s * 1000)}
 
@@ -398,9 +428,14 @@ def render_request(project_dir: Path, request: Any, safe_timeline: list[dict[str
         ending = getattr(request, 'ending', None)
         has_ending = ending is not None and ending.mode != 'none'
         hook_output = work/'hooked.mp4' if has_ending else output
+        from .brand_overlay import render as render_brand, active as brand_active
+        brand_png, hook_floor = (None, 0)
+        if brand_active(getattr(request, 'brand_overlay', None)):
+            brand_png, hook_floor = render_brand(request.brand_overlay, int(render['width']), int(render['height']), work/'brand.png')
         hook_visual = _apply_hook(request_base,request.hook_text,hook_output,render,work,emphasis=emphasis,
                                  options=options,frames=frames,cache_dir=project_dir/'cache/hook-placement',
                                  preview_decision=preview_decision, normalized_input=True,
+                                 brand_png=brand_png, hook_floor=hook_floor,
                                  **({'segment_plan': segment_plan} if segment_plan else {}))
         timings['hook_overlay'] = round(time.monotonic()-started,3)
         if hook_visual and coverage:hook_visual['sampling']=coverage

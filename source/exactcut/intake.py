@@ -13,6 +13,7 @@ from .timecode import format_ms
 from .errors import ValidationError
 from .hook_visual import validate_hook_layout
 from .hook_options import HookOptions
+from .brand_overlay import parse as parse_brand
 from .segment_effects import caption_image
 
 ALIASES = {
@@ -549,6 +550,8 @@ def clip_problems(row):
 
 def validate_draft(draft, source=''):
     errors, requests = [], []
+    brand, brand_errors = parse_brand(draft)
+    errors.extend(brand_errors)
     drama_id = str(draft.get('drama_id', '')).strip().strip('#')
     if not re.fullmatch(r'\d{6}', drama_id) or not 101050 <= int(drama_id) <= 999999:
         errors.append('剧 ID 必须为 101050～999999 范围内的六位数字')
@@ -613,6 +616,7 @@ def validate_draft(draft, source=''):
             requests.append(CutRequest(request_id=request_id, seq=seq, output_filename=filename, timeline=timeline,
                                        hook_options=row.get('hook_options') or {},
                                        ending=row.get('ending') or (row.get('composition') or {}).get('ending') or None,
+                                       brand_overlay=brand,
                                        **{k: str(row.get(k, '')) for k in ('title_cn', 'hook_text', 'structure', 'notes')}))
         except (ValueError, TypeError, RuntimeError) as exc:
             errors.append(f'素材 {i}：{exc}')
@@ -621,7 +625,8 @@ def validate_draft(draft, source=''):
     try:
         manifest = BatchManifest(drama_id=drama_id, drama_title=draft.get('drama_title', ''), business_date=business_date,
                                  author=draft['author'], creator2='agent',
-                                 material_type=draft.get('material_type') or 'typezxraw', source_workbook=source, requests=requests)
+                                 material_type=draft.get('material_type') or 'typezxraw', source_workbook=source,
+                                 brand_overlay=brand, requests=requests)
         return manifest, []
     except ValueError as exc:
         return None, [str(exc)]

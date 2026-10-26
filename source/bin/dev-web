@@ -12,6 +12,15 @@ export EXACTCUT_SOURCE_ROOT="$EXACTCUT_DATA_ROOT/sources"
 export EXACTCUT_ENV_FILE="$DEVELOPMENT_ROOT/.env.development"
 export EXACTCUT_CONFIG_FILE="$DEVELOPMENT_ROOT/config/default.json"
 unset EXACTCUT_CUT_SCAN_ENV
+unset EXACTCUT_DEV_FETCH_ENV
+if [[ "${1:-}" == "--title-images" ]]; then
+  export EXACTCUT_CONFIG_FILE="$DEVELOPMENT_ROOT/.dev-state/title-images/runtime.json"
+  if [[ ! -f "$EXACTCUT_CONFIG_FILE" ]]; then
+    echo "Missing local title image config: $EXACTCUT_CONFIG_FILE" >&2
+    exit 2
+  fi
+  shift
+fi
 if [[ "${1:-}" == "--cutting" ]]; then
   export EXACTCUT_CONFIG_FILE="$DEVELOPMENT_ROOT/config/development-cutting.json"
   shift
@@ -20,8 +29,12 @@ if [[ "${1:-}" == "--cutting" ]]; then
     shift 2
   fi
 fi
+if [[ "${1:-}" == "--fetch-env" && $# -ge 2 ]]; then
+  export EXACTCUT_DEV_FETCH_ENV="$2"
+  shift 2
+fi
 if [[ $# -gt 0 ]]; then
-  echo "Usage: dev-web [--cutting [--scan-ai-env /absolute/path/to/credentials]]" >&2
+  echo "Usage: dev-web [--title-images | --cutting [--scan-ai-env /absolute/path/to/credentials]] [--fetch-env /absolute/path/to/development.env]" >&2
   exit 2
 fi
 export EXACTCUT_ENVIRONMENT=development
@@ -30,6 +43,10 @@ export EXACTCUT_ALLOW_MATERIAL_FETCH=0
 export EXACTCUT_ALLOW_PUBLISH=0
 export EXACTCUT_ALLOW_AI=0
 export EXACTCUT_MATERIAL_FETCH_CMD=''
+if [[ -n "${EXACTCUT_DEV_FETCH_ENV:-}" ]]; then
+  export EXACTCUT_ALLOW_MATERIAL_FETCH=1
+  export EXACTCUT_MATERIAL_FETCH_CMD="${EXACTCUT_PYTHON:-$DEVELOPMENT_ROOT/.venv/bin/python} -m exactcut.dev_fetch"
+fi
 export EXACTCUT_WORKER_ENABLED=1
 export EXACTCUT_PORT=8793
 export EXACTCUT_BIND=127.0.0.1
@@ -38,12 +55,15 @@ DEVELOPMENT_PYTHON="${EXACTCUT_PYTHON:-$DEVELOPMENT_ROOT/.venv/bin/python}"
 cd "$DEVELOPMENT_ROOT"
 "$DEVELOPMENT_PYTHON" - <<'PY'
 import os, secrets
+from pathlib import Path
 from exactcut.runtime import project_env_file, claim_data_root, source_root
 from exactcut.util import load_env_file
 config=project_env_file()
 if not config.is_file():
     raise RuntimeError('请先复制 .env.development.example 为 .env.development')
 load_env_file(config)
+if os.environ.get('EXACTCUT_DEV_FETCH_ENV'):
+    load_env_file(Path(os.environ['EXACTCUT_DEV_FETCH_ENV']))
 if os.environ.get('EXACTCUT_CUT_SCAN_ENV'):
     from exactcut.cutting_scan import credential
     credential()  # Validate without putting the key in the process environment.

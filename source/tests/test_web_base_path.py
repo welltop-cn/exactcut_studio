@@ -217,3 +217,16 @@ def test_original_download_redirects_to_signed_oss_without_streaming(app,tmp_pat
     assert response_headers['Location']=='https://oss.invalid/master?signature=fixture'
     assert response_headers['Cache-Control']=='no-store'
     assert body==b''
+
+
+def test_brand_reference_is_lazy_and_version_cached(app):
+    import re
+    auth = login(app)
+    status, _, body = request(app, 'GET', '/home/', headers=auth)
+    assert status == 200 and len(body) < 200_000
+    assert b'loading="lazy" src="brand-style.png?v=' in body
+    version = re.search(rb'brand-style.png\?v=([a-f0-9]+)', body).group(1).decode()
+    status, headers, image = request(app, 'GET', '/home/brand-style.png?v=' + version, headers=auth)
+    assert status == 200 and image.startswith(b'\x89PNG')
+    assert headers['Content-Type'] == 'image/png'
+    assert 'immutable' in headers['Cache-Control']

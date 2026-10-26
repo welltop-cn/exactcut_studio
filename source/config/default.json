@@ -51,6 +51,24 @@
     "enabled": false,
     "delivery_enabled": false
   },
+  "title_extraction": {
+    "enabled": true,
+    "allow_live_requests": false,
+    "credentials_file": "",
+    "model": "gpt-image-2",
+    "quality": "high",
+    "timeout_seconds": 240,
+    "kes_base_url": "https://pre-api.welltop.tech",
+    "poster_base_url": "https://aigc-us.oss-accelerate.aliyuncs.com"
+  },
+  "title_image": {
+    "image_model": "gemini-3.1-flash-image",
+    "retries": 5,
+    "timeout_ms": 240000,
+    "aspect_ratio": "16:9",
+    "image_size": "1K",
+    "key_color": [0, 255, 0]
+  },
   "cutting": {
     "enabled": false,
     "max_source_bytes": 536870912,

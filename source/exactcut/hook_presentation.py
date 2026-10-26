@@ -184,9 +184,14 @@ def presentation(text: str, emphasis: dict, options: HookOptions, frames: list[b
 
 def preview_identity(request, timeline, sources):
     from .segment_effects import identity_timeline
-    return {'layout_version':HOOK_LAYOUT_VERSION, 'sampling_version':SAMPLING_VERSION, 'text':request.hook_text,
-            'options':request.hook_options.model_dump(exclude={'preview_key'}),
-            'timeline':identity_timeline(timeline), 'sources':sources}
+    identity = {'layout_version':HOOK_LAYOUT_VERSION, 'sampling_version':SAMPLING_VERSION, 'text':request.hook_text,
+                'options':request.hook_options.model_dump(exclude={'preview_key'}),
+                'timeline':identity_timeline(timeline), 'sources':sources}
+    brand = getattr(request, 'brand_overlay', None)
+    if brand is not None and (brand.title_enabled or brand.logo_enabled):
+        identity['brand_overlay'] = brand.model_dump(mode='json')
+        identity['brand_layer_version'] = 2
+    return identity
 
 
 def shot_index_identity(project,timeline):

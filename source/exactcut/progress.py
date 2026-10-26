@@ -1,7 +1,7 @@
 """Honest wall-clock observations; heartbeats never claim work completed."""
 from datetime import datetime, timezone
 
-STAGES = {'source_check': '校验原片', 'storage_check': '检查可用空间',
+STAGES = {'source_check': '校验原片', 'title_extraction': '提取封面剧名', 'storage_check': '检查可用空间',
           'rendering': '准备渲染', 'ai_emphasis': 'AI 理解重点词',
           'base_cache_check': '校验剪辑缓存', 'base_cut': '剪辑片段',
           'concat': '拼接片段', 'frame_sampling': '抽样检查 Hook 遮挡',
