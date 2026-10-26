@@ -224,9 +224,9 @@ def test_brand_reference_is_lazy_and_version_cached(app):
     auth = login(app)
     status, _, body = request(app, 'GET', '/home/', headers=auth)
     assert status == 200 and len(body) < 200_000
-    assert b'loading="lazy" src="brand-style.png?v=' in body
-    version = re.search(rb'brand-style.png\?v=([a-f0-9]+)', body).group(1).decode()
-    status, headers, image = request(app, 'GET', '/home/brand-style.png?v=' + version, headers=auth)
-    assert status == 200 and image.startswith(b'\x89PNG')
-    assert headers['Content-Type'] == 'image/png'
+    assert b'loading="lazy" src="brand-style.jpg?v=' in body
+    version = re.search(rb'brand-style.jpg\?v=([a-f0-9]+)', body).group(1).decode()
+    status, headers, image = request(app, 'GET', '/home/brand-style.jpg?v=' + version, headers=auth)
+    assert status == 200 and image.startswith(b'\xff\xd8')
+    assert headers['Content-Type'] == 'image/jpeg'
     assert 'immutable' in headers['Cache-Control']

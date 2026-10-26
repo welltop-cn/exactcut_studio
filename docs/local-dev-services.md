@@ -181,3 +181,5 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 2026-10-26 原片保存目录：确认无活动任务后，将 8793 从 PID 71732 重启为 PID 23012。沿用原参数。Chrome 下载可选文件夹，文件写入该文件夹下的剧号目录。未重跑用户成片。
 
 2026-10-26 原片未保存剧号：确认无活动任务、无 ffmpeg 后，将 8793 从 PID 23012 重启为 PID 3926（操作前须再核验）。沿用 development、material_fetch=1，发布、AI、外部写入为 0，正片下载命令仍是 `python3.12 -m exactcut.dev_fetch`。列表和单集地址使用输入框里的剧号，不必先点保存。未重跑用户成片。
+
+2026-10-26 水印参考图：确认无活动任务、无子进程后，将 8793 从 PID 3926 重启为 PID 85020（操作前须再核验）。沿用 development、material_fetch=1，发布、AI、外部写入为 0。参考图改为渐进 JPEG。未重跑用户成片。8794–8801 未动。

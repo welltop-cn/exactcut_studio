@@ -33,4 +33,4 @@
 
 ## 验证与发布
 
-相关测试覆盖透明校验、剧绑定、缓存修复、并发、指纹、真实 FFmpeg 层级及结尾无水印。安装包应包含 `assets/brand/*.png` 与说明图 `web/brand-style.png`。发布使用干净提交和 linux-ops，保留 schema 1、现有账号及业务数据。
+相关测试覆盖透明校验、剧绑定、缓存修复、并发、指纹、真实 FFmpeg 层级及结尾无水印。安装包应包含 `assets/brand/*.png` 与说明图 `web/brand-style.jpg`。发布使用干净提交和 linux-ops，保留 schema 1、现有账号及业务数据。
