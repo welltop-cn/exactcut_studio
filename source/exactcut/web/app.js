@@ -457,6 +457,8 @@ $('storageNav').onclick=()=>operation($('storageNav'),async()=>{renderStorage(aw
 $('closeStorage').onclick=()=>$('storageDialog').close();
 $('cleanupCache').onclick=()=>operation($('cleanupCache'),async()=>{if(!storageInfo||!window.confirm(`清理 ${storageInfo.cleanup_count} 项可重建的基础剪辑缓存？下次使用会重新剪辑，原片和正式成片保留。`))return;const data=await api('/api/storage/cleanup',{token:storageInfo.cleanup_token});renderStorage(data);$('storageReceipt').textContent=`已清理 ${data.result.removed} 项，释放 ${(data.result.freed_bytes/1024**2).toFixed(1)} MB；跳过 ${data.result.skipped_busy_or_changed} 项正在使用或已变化的缓存。`});
 
+document.addEventListener('click',e=>{if(e.target.closest('[data-brand-help]'))$('brandStyleDialog').showModal()});
+$('closeBrandStyle').onclick=()=>$('brandStyleDialog').close();
 function renderUsage(data){
  const bytes=n=>n<1024?`${n} B`:n<1024**2?`${(n/1024).toFixed(2)} KiB`:n<1024**3?`${(n/1024**2).toFixed(2)} MiB`:`${(n/1024**3).toFixed(2)} GiB`;
  const rows=(items,cells,columns)=>items.length?items.map(item=>'<tr>'+cells(item).map(value=>`<td>${esc(value)}</td>`).join('')+'</tr>').join(''):`<tr><td colspan="${columns}" class="hint">暂无数据</td></tr>`;
@@ -469,6 +471,3 @@ function renderUsage(data){
 }
 $('usageNav').onclick=()=>operation($('usageNav'),async()=>{renderUsage(await api('/api/usage'));$('usageDialog').showModal()});
 $('closeUsage').onclick=()=>$('usageDialog').close();
-
-document.addEventListener('click',e=>{if(e.target.closest('[data-brand-help]'))$('brandStyleDialog').showModal()});
-$('closeBrandStyle').onclick=()=>$('brandStyleDialog').close();

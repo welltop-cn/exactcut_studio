@@ -60,6 +60,7 @@ def test_feature_flags_follow_only_the_new_switches(monkeypatch):
 
 
 def test_review_sha_rejected_before_publish_flag_or_publications(tmp_path, monkeypatch):
+    monkeypatch.setenv('EXACTCUT_DATA_ROOT', str(tmp_path))
     monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'production')
     monkeypatch.delenv('EXACTCUT_ALLOW_PUBLISH', raising=False)
     monkeypatch.setattr(w, 'read_excel', read_excel)

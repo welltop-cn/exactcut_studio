@@ -10,7 +10,8 @@ from exactcut.webserver import Handler
 
 
 @pytest.fixture(autouse=True)
-def independent_helper_model_budget(monkeypatch):
+def independent_helper_model_budget(monkeypatch, tmp_path):
+    monkeypatch.setenv('EXACTCUT_DATA_ROOT', str(tmp_path))
     from exactcut import ai_rate
     monkeypatch.setattr(ai_rate, 'acquire', lambda: None)
 

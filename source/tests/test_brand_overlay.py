@@ -157,3 +157,12 @@ def test_hook_covers_brand_without_moving_and_brand_remains_after_hook(tmp_path,
             with Image.open(frame) as image:
                 pixel = image.convert('RGB').getpixel((50, 50))
             assert pixel[channel] > 200 and all(v < 30 for i, v in enumerate(pixel) if i != channel)
+
+
+def test_new_title_service_config_preserves_old_output_identity(tmp_path):
+    request = CutRequest(request_id='R1', seq=1, output_filename='x.mp4',
+                         timeline=[{'type': 'title_card', 'text': 'Old', 'duration_ms': 1000}])
+    old_config = {'render': {'fps': 30}}
+    new_config = {**old_config, 'title_image': {'unused': True},
+                  'title_extraction': {'enabled': True, 'allow_live_requests': True}}
+    assert _request_fingerprint(tmp_path, request, old_config) == _request_fingerprint(tmp_path, request, new_config)

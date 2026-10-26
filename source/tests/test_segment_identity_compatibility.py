@@ -16,7 +16,7 @@ def legacy_timeline(r):
 
 
 def legacy_fingerprint(r):
-    payload=r.model_dump(mode='json');payload['timeline']=legacy_timeline(r)
+    payload=r.model_dump(mode='json');payload.pop('brand_overlay', None);payload['timeline']=legacy_timeline(r)
     return json_sha256({'pipeline':'exact_timeline_v3_unit_qc','request':payload,'sources':[],'config':{}})
 
 

@@ -70,3 +70,7 @@ https://developers.openai.com/api/reference/resources/images/methods/edit
 - 生成锁按剧 ID 分开；同剧仍串行检查和生成，防止重复付费。双线程测试验证不同剧同时进入封面获取，同剧只调用一次图像编辑。
 - package-data 包含 assets/brand/*.png；在隔离临时目录实际构建 wheel，确认两张 logo、extraction.py 和 dev_fetch.py 均存在。
 - 23 项剧名提取及水印测试通过。此次没有调用真实图像 API、没有重新制作用户视频。
+
+## 正式发布前完整回归
+
+首轮完整回归发现旧测试把新增默认 brand_overlay 算入“历史”指纹，已修正历史fixture；两项测试依赖工作目录环境，改用独立临时数据根；用量页的JS片段测试受文件尾追加事件绑定影响，已将绑定移至对应初始化区。额外核查发现新增 title_image/title_extraction 服务配置会改变未启用水印的历史输出指纹，现从媒体指纹排除这两段；实际图片身份由已解析的 brand 资产哈希表示。新增回归断言旧配置与加入新服务配置后输出指纹相同。上述相关36项测试通过，完整回归重新执行后再发布。

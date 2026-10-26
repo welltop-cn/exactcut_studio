@@ -54,7 +54,7 @@ def _request_fingerprint(project_dir: Path, request: Any, config: dict[str, Any]
         image = image_file(project_dir, ending)
         sources.append({'path': str(image), 'sha256': file_sha256(image)})
     # Operational log retention does not change media bytes or cache identity.
-    media_config = {key: value for key, value in config.items() if key not in {'logging', 'preview'}}
+    media_config = {key: value for key, value in config.items() if key not in {'logging', 'preview', 'title_image', 'title_extraction'}}
     from .segment_effects import identity_timeline
     payload = request.model_dump(mode="json")
     payload['timeline'] = identity_timeline(payload['timeline'])
