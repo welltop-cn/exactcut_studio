@@ -6,6 +6,7 @@
   let seekTimer, toastTimer, quick = false, dragging = null, scanToken = 0, scanReport = null;
   let frameController = null, resultMode = false, scanLoading = false;
   let clips = [], editingId = null, clipSerial = 0;
+  let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
   const frames = new Map();
   const path = () => `/api/batches/${context.batch}/cuts/${context.session.id}`;
   const count = () => context.session.metadata.frame_count;
@@ -32,7 +33,25 @@
   const samePlan = job => job && !(job.mosaics || []).length && JSON.stringify(job.ranges) === JSON.stringify(ranges);
   const draftKey = () => `exactcut.cuts.delete.v1.${currentUser?.username}.${context.batch}.${context.session.id}${context.session.reset_at?'.'+context.session.reset_at:''}`;
   const active = version => version === epoch && context && dialog.open;
-  function status(message, error = false) { $('cutStatus').textContent = message; $('cutStatus').className = error ? 'error' : ''; }
+  function paintStatus(){
+    // Playback failures and workflow messages have independent lifetimes.
+    $('cutStatus').textContent=[statusMessage,playbackError?'暂时无法播放，请重试':''].filter(Boolean).join('\n');
+    $('cutStatus').classList.toggle('error',statusError||playbackError);
+  }
+  function status(message,error=false){statusMessage=message;statusError=error;paintStatus();}
+  function pausePlayback(){playAttempt++;video.pause();}
+  function playSource(){
+    if(!context||!dialog.open)return;
+    const attempt=++playAttempt,version=epoch,playback=context;
+    video.play().catch(error=>{
+      window.reportMediaPlayFailure?.(video,error,playback);
+      if(attempt!==playAttempt||!active(version)||context!==playback)return;
+      playbackError=true;paintStatus();
+    });
+  }
+  video.addEventListener('playing',()=>{
+    if(context&&dialog.open&&!video.paused&&playbackError){playbackError=false;paintStatus();}
+  });
   function notify(message) { clearTimeout(toastTimer); $('cutToast').textContent = message; $('cutToast').hidden = false; toastTimer = setTimeout(() => $('cutToast').hidden = true, 4000); }
   function guarded(fn) { return (...args) => { try { fn(...args); } catch (e) { status(e.message, true); } }; }
   function merge(items) {
@@ -92,7 +111,7 @@
     const previous=resultMode;
     resultMode = show;
     output.hidden = !show; video.hidden = show;
-    if (show) { clearTimeout(seekTimer);frameController?.abort();video.pause();image.hidden=true; }
+    if (show) { clearTimeout(seekTimer);frameController?.abort();pausePlayback();image.hidden=true; }
     else { output.pause(); image.hidden = frameReady !== wanted; }
     $('cutStageLabel').textContent = show ? '编辑后视频' : '原片';
     $('cutContinue').hidden = !show;
@@ -188,7 +207,7 @@
   function seek(frame, fast = false) {
     if (!context || !Number.isFinite(frame)) return;
     setResult(false); clearTimeout(seekTimer); quick = fast;
-    video.pause(); wanted = Math.max(0,Math.min(count()-1,Math.round(frame))); frameReady = -1; image.hidden = true;
+    pausePlayback(); wanted = Math.max(0,Math.min(count()-1,Math.round(frame))); frameReady = -1; image.hidden = true;
     if (Number.isFinite(video.duration)) video.currentTime = (wanted+.05)/fps();
     counter(); $('cutFrameHint').textContent = '快速预览 · 停下后显示准确帧';
     if (fast) seekTimer = setTimeout(()=>{quick=false;loadFrame();},220); else loadFrame();
@@ -241,7 +260,7 @@
   }
   async function open(batch, asset) {
     const version=++epoch; scanToken++; frameController?.abort(); frames.clear(); clearTimeout(seekTimer);
-    context=null; clips=[];editingId=null;clipSerial=0;ranges=[];undo=[];selection=null;selectedJob=null;busy=false;wanted=0;frameReady=-1;quick=false;resultMode=false;scanReport=null;scanLoading=false;syncRiskBulk();
+    context=null;playbackError=false;pausePlayback(); clips=[];editingId=null;clipSerial=0;ranges=[];undo=[];selection=null;selectedJob=null;busy=false;wanted=0;frameReady=-1;quick=false;resultMode=false;scanReport=null;scanLoading=false;syncRiskBulk();
     $('cutEditor').hidden=true; $('cutReplaceConfirm').hidden=true; $('cutToast').hidden=true; $('cutDownload').hidden=true; $('cutReplace').hidden=true; $('cutContinue').hidden=true; $('cutRender').disabled=true;
     $('cutRanges').innerHTML='';$('cutRiskMarkers').innerHTML='';$('cutRangeEditor').hidden=true;
     $('cutTitle').textContent='剪切 · '+asset.title;
@@ -290,7 +309,7 @@
     }
   }
   $('cutClose').onclick=()=>{if(!$('cutReplaceConfirm').hidden&&busy)return;dialog.close();};
-  dialog.addEventListener('close',()=>{epoch++;scanToken++;clearTimeout(seekTimer);frameController?.abort();context=null;video.pause();output.pause();for(const v of [video,output]){v.removeAttribute('src');v.load();}if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=null;image.removeAttribute('src');frames.clear();});
+  dialog.addEventListener('close',()=>{epoch++;scanToken++;clearTimeout(seekTimer);frameController?.abort();context=null;pausePlayback();output.pause();for(const v of [video,output]){v.removeAttribute('src');v.load();}if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=null;image.removeAttribute('src');frames.clear();});
   for(const which of ['start','end']) {
     const input=$(which==='start'?'cutStart':'cutEnd');
     input.onchange=guarded(()=>endpoint(which,parseTimecode(input.value)+1));
@@ -307,9 +326,9 @@
   $('cutPrevious').onclick=()=>seek(wanted-1,true);$('cutNext').onclick=()=>seek(wanted+1,true);
   $('cutFrameNumber').onchange=guarded(e=>seek(parseTimecode(e.target.value),true));$('cutSeek').oninput=e=>seek(Number(e.target.value),true);
   $('cutFrameRetry').onclick=()=>loadFrame();$('cutContinue').onclick=()=>{if(busy)return;setResult(false);paint();loadFrame();};
-  $('cutPlay').onclick=()=>{if(video.paused){setResult(false);clearTimeout(seekTimer);quick=false;image.hidden=true;const playback=context;video.play().catch(e=>{window.reportMediaPlayFailure?.(video,e,playback);status('暂时无法播放，请重试',true);});}else video.pause();};
+  $('cutPlay').onclick=()=>{if(video.paused){setResult(false);clearTimeout(seekTimer);quick=false;image.hidden=true;playSource();}else pausePlayback();};
   video.onplay=()=>{$('cutPlay').textContent='暂停';image.hidden=true;};
-  video.onpause=()=>{$('cutPlay').textContent='播放';if(context&&!quick&&!resultMode){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));frameReady=-1;counter();clearTimeout(seekTimer);seekTimer=setTimeout(loadFrame,220);}};
+  video.onpause=()=>{if(!video.paused)return;$('cutPlay').textContent='播放';if(context&&!quick&&!resultMode){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));frameReady=-1;counter();clearTimeout(seekTimer);seekTimer=setTimeout(loadFrame,220);}};
   video.ontimeupdate=()=>{if(context&&!video.paused){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));counter();}};
   const track=$('cutTrack');
   track.onpointerdown=e=>{if(!context||busy)return;const h=e.target.closest('#cutHandleStart,#cutHandleEnd');dragging={which:h?(h.id==='cutHandleStart'?'start':'end'):null,anchor:Math.min(count()-1,Math.max(0,Math.floor((e.clientX-track.getBoundingClientRect().left)/track.clientWidth*count())))};track.setPointerCapture(e.pointerId);if(!h){editingId=null;selection=[dragging.anchor,dragging.anchor+1];paintSelection();seek(dragging.anchor,true);}e.preventDefault();};
@@ -320,7 +339,7 @@
   $('cutRiskAddAll').onclick=guarded(()=>{if(busy||!clips.length)return;const checked=!clips.every(c=>c.checked);commitClips(clips.map(c=>({...c,checked})));});
   $('cutRiskMarkers').onclick=e=>{const b=e.target.closest('[data-clip-edit]');if(b)editClip(b.dataset.clipEdit);};
   $('cutScan').onclick=()=>{if(busy||scanLoading)return;if(window.confirm('重新识别将重置 AI 建议及其勾选、微调，手动添加的片段保留。是否继续？'))scan(true);};
-  $('cutRender').onclick=async()=>{if(busy||(selection&&!editingId)||!ranges.length)return;const version=epoch;busy=true;video.pause();paint();status('正在提交删除片段…');try{const job=await api(path()+'/render',plan());if(active(version))await watch(job.id,version);}catch(e){if(active(version))status(e.message,true);}finally{if(active(version)){busy=false;paint();}}};
+  $('cutRender').onclick=async()=>{if(busy||(selection&&!editingId)||!ranges.length)return;const version=epoch;busy=true;pausePlayback();paint();status('正在提交删除片段…');try{const job=await api(path()+'/render',plan());if(active(version))await watch(job.id,version);}catch(e){if(active(version))status(e.message,true);}finally{if(active(version)){busy=false;paint();}}};
   $('cutDiscard').onclick=async()=>{
     if(busy)return;
     const version=epoch,key=draftKey(),base=path(),reset_at=context.session.reset_at||'';busy=true;paint();status('正在放弃本次剪切…');
