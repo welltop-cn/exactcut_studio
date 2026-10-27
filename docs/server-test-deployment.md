@@ -256,3 +256,7 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 
 ## 2026-10-19 跟踪缓存复用修复
 测试实例test-cache-655e0b4，代码655e0b4：原始SAM缓存独立于效果视频版本，兼容历史5/6遮罩，保留当前强度。1574项本地全量、37项Linux通过；项目4142628fb23746149326953e8b8dd49c只读验证270+60帧复用且SAM调用0。公网health正常、worker_alive=true；生产容器启动时间未变。回滚记录/srv/exactcut-test/deployments/cache-655e0b4/release.json。未改用户数据。
+
+## 2026-10-27 播放复现专用运行状态
+
+用户授权重启已停止的测试实例，复制正式项目配置和视频用于播放复现。保留 test-cache-655e0b4 代码，未部署日志补丁；当前容器由 `recreate-playback-repro.sh` 启动，worker/AI/publish/external_writes=0，runtime 中 scan、delivery、OSS preview 关闭。历史 `recreate.sh` 未改，不应直接运行它恢复后台能力。备份在 `/srv/exactcut-test/backups/playback-repro-20261027/`。新项目及复现结果见 [播放复现记录](verification/playback-reproduction-2026-10-27.md)。正式服务未改动。
