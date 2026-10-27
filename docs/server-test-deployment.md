@@ -260,3 +260,9 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 ## 2026-10-27 播放复现专用运行状态
 
 用户授权重启已停止的测试实例，复制正式项目配置和视频用于播放复现。保留 test-cache-655e0b4 代码，未部署日志补丁；当前容器由 `recreate-playback-repro.sh` 启动，worker/AI/publish/external_writes=0，runtime 中 scan、delivery、OSS preview 关闭。历史 `recreate.sh` 未改，不应直接运行它恢复后台能力。备份在 `/srv/exactcut-test/backups/playback-repro-20261027/`。新项目及复现结果见 [播放复现记录](verification/playback-reproduction-2026-10-27.md)。正式服务未改动。
+
+## 2026-10-27 播放修复测试验收
+
+当前测试版本test-playback-62c42b3，包含播放诊断及取消竞态修复。1672项本地全量通过，Pi deepseek-flash high复审通过；真实Chrome复测快速拖动、恢复、关闭重开，诊断已落盘。仅测试部署，正式实例未更新。
+
+本轮保留播放复现隔离：worker/AI/material-fetch/publish/external-writes=0，scan/delivery/OSS预览关闭。**不得用历史recreate.sh无意恢复后台或交付能力**；最终启动脚本位于/srv/exactcut-test/deployments/playback-62c42b3/recreate.sh。测试账号、数据、复制项目均保留，详见[验收记录](verification/playback-test-acceptance-2026-10-27.md)。
