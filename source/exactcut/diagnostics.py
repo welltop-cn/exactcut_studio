@@ -86,10 +86,11 @@ def browser_fields(data):
     names = ('event', 'source', 'line', 'column', 'error_type', 'http_trace_id',
              'status', 'duration_ms', 'action', 'route', 'method', 'batch_id',
              'request_id', 'row_index', 'page_id', 'client_request_id', 'frontend_build',
-             'ready_state', 'network_state', 'media_error', 'current_ms', 'visibility', 'disabled')
+             'ready_state', 'network_state', 'media_error', 'current_ms', 'visibility', 'disabled',
+             'session_id', 'paused', 'seeking', 'ended')
     fields = {key: data[key] for key in names if key in data}
     numeric = {'line', 'column', 'status', 'duration_ms', 'row_index', 'ready_state',
-               'network_state', 'media_error', 'current_ms', 'disabled'}
+               'network_state', 'media_error', 'current_ms', 'disabled', 'paused', 'seeking', 'ended'}
     for key, value in fields.items():
         if key in numeric:
             valid = (not isinstance(value, bool) and isinstance(value, (int, float))

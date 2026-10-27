@@ -1760,16 +1760,16 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/client-events':
                 allowed = {'page_error', 'unhandled_rejection', 'network_error', 'slow_request', 'action',
                            'request_started', 'request_completed', 'media_error', 'media_stalled',
-                           'media_waiting', 'media_playing', 'page_ready', 'visibility'}
+                           'media_waiting', 'media_playing', 'media_play_rejection', 'page_ready', 'visibility'}
                 if data.get('event') not in allowed or size > 4096:
                     return self.respond(400, {'error': '无效诊断事件'})
                 fields = diag.browser_fields(data)
                 if not diag.allow_browser_event(self.user['username']):
                     return self.respond(200, {'ok': True})
                 key = tuple(fields.get(name) for name in ('event', 'page_id', 'route', 'batch_id', 'action',
-                            'status', 'request_id', 'client_request_id', 'source', 'line', 'error_type', 'visibility'))
+                            'status', 'request_id', 'client_request_id', 'source', 'line', 'error_type', 'visibility', 'session_id'))
                 diag.throttled('browser.event', (self.user['username'], key), interval=10,
-                               level='warning' if fields['event'] in {'page_error', 'unhandled_rejection', 'network_error', 'media_error'} or fields.get('status', 0) >= 400 else 'info',
+                               level='warning' if fields['event'] in {'page_error', 'unhandled_rejection', 'network_error', 'media_error', 'media_play_rejection'} or fields.get('status', 0) >= 400 else 'info',
                                actor=self.user['username'], browser=fields)
                 return self.respond(200, {'ok': True})
             if self.path == '/api/login':

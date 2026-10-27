@@ -341,6 +341,7 @@
     try{
       const session=await prepare(batch,asset);
       if(version!==epoch||!dialog.open)return;context={batch,asset,session};
+      for(const id of ['mosaicSource', 'mosaicBatchVideo', 'mosaicTrackVideo']){Object.assign($(id).dataset,{previewBatch:batch,previewRequest:asset.request_id,previewSession:session.id});}
       $('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);$('mosaicSeek').max=meta().frame_count-1;
       loadDraft();
       $('mosaicWorkspace').hidden=false;video.src=appUrl(base()+'/source');video.load();
@@ -797,7 +798,7 @@
     if(pointer?.original&&selectedBox())Object.assign(selectedBox(),pointer.original);
     pointer=null;drawing=false;candidates=candidates.filter(validBox);paint();
   };
-  $('mosaicPlay').onclick=()=>{if(video.paused){controller?.abort();resetCandidate();ready=-1;image.hidden=true;overlay.hidden=true;video.play().catch(()=>status('暂时无法播放，请重试',true));}else{video.pause();wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();loadFrame();}};
+  $('mosaicPlay').onclick=()=>{if(video.paused){controller?.abort();resetCandidate();ready=-1;image.hidden=true;overlay.hidden=true;const playback=context;video.play().catch(e=>{window.reportMediaPlayFailure?.(video,e,playback);status('暂时无法播放，请重试',true);});}else{video.pause();wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();loadFrame();}};
   video.onplay=()=>{$('mosaicPlay').textContent='暂停';image.hidden=true;overlay.hidden=true;paint();};
   video.onpause=()=>{$('mosaicPlay').textContent='播放';};
   video.ontimeupdate=()=>{if(context&&!video.paused){wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();}};

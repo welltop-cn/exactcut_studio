@@ -251,6 +251,7 @@
       const session=await api(`/api/batches/${batch}/cuts/open`,{request_id:asset.request_id,source_sha256:asset.sha256});
       if(version!==epoch||!dialog.open)return;
       context={batch,asset,session};
+      for(const id of ['cutSource', 'cutOutput']){Object.assign($(id).dataset,{previewBatch:batch,previewRequest:asset.request_id,previewSession:session.id});}
       const chosen=session.jobs.filter(j=>!j.discarded&&!(j.mosaics||[]).length).at(-1);
       ranges=chosen?.ranges?.map(r=>r.slice())||[];
       try { const saved=JSON.parse(localStorage.getItem(draftKey())||'null'); if(Array.isArray(saved)) ranges=merge(saved); } catch { /* Keep server recipe. */ }
@@ -306,7 +307,7 @@
   $('cutPrevious').onclick=()=>seek(wanted-1,true);$('cutNext').onclick=()=>seek(wanted+1,true);
   $('cutFrameNumber').onchange=guarded(e=>seek(parseTimecode(e.target.value),true));$('cutSeek').oninput=e=>seek(Number(e.target.value),true);
   $('cutFrameRetry').onclick=()=>loadFrame();$('cutContinue').onclick=()=>{if(busy)return;setResult(false);paint();loadFrame();};
-  $('cutPlay').onclick=()=>{if(video.paused){setResult(false);clearTimeout(seekTimer);quick=false;image.hidden=true;video.play().catch(()=>status('暂时无法播放，请重试',true));}else video.pause();};
+  $('cutPlay').onclick=()=>{if(video.paused){setResult(false);clearTimeout(seekTimer);quick=false;image.hidden=true;const playback=context;video.play().catch(e=>{window.reportMediaPlayFailure?.(video,e,playback);status('暂时无法播放，请重试',true);});}else video.pause();};
   video.onplay=()=>{$('cutPlay').textContent='暂停';image.hidden=true;};
   video.onpause=()=>{$('cutPlay').textContent='播放';if(context&&!quick&&!resultMode){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));frameReady=-1;counter();clearTimeout(seekTimer);seekTimer=setTimeout(loadFrame,220);}};
   video.ontimeupdate=()=>{if(context&&!video.paused){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));counter();}};

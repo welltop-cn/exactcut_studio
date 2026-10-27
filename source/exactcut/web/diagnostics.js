@@ -57,14 +57,30 @@
     if (/^\d{1,4}$/.test(data.row || '')) fields.row_index = Number(data.row);
     report(fields);
   }, true);
+  const mediaFields = video => ({
+    source: name(video.id), ready_state: video.readyState, network_state: video.networkState,
+    media_error: video.error?.code || 0, paused: Number(!!video.paused),
+    seeking: Number(!!video.seeking), ended: Number(!!video.ended),
+    current_ms: Number.isFinite(video.currentTime) ? Math.max(0, Math.round(video.currentTime * 1000)) : 0,
+    visibility: name(document.visibilityState)
+  });
+  // Explicit context belongs to the play attempt, even if the editor was reopened.
+  window.reportMediaPlayFailure = (video, error, context) => {
+    try {
+      if (!video || !context) return;
+      report({event: 'media_play_rejection', ...mediaFields(video), error_type: name(error?.name),
+        batch_id: name(context.batch), request_id: name(context.asset.request_id),
+        session_id: name(context.session.id)});
+    } catch (_) { /* Diagnostics must not change playback behavior. */ }
+  };
   for (const type of ['error', 'stalled', 'waiting', 'playing']) {
     listen(document, type, event => {
       const video = event.target;
       if (video?.tagName !== 'VIDEO' || !video.dataset?.previewRequest) return;
-      report({event: 'media_' + type, ...selectedBatch(), request_id: name(video.dataset.previewRequest),
-        ready_state: video.readyState, network_state: video.networkState, media_error: video.error?.code || 0,
-        current_ms: Number.isFinite(video.currentTime) ? Math.max(0, Math.round(video.currentTime * 1000)) : 0,
-        visibility: name(document.visibilityState)});
+      report({event: 'media_' + type, ...selectedBatch(), ...mediaFields(video),
+        request_id: name(video.dataset.previewRequest),
+        ...(video.dataset.previewBatch ? {batch_id: name(video.dataset.previewBatch)} : {}),
+        ...(video.dataset.previewSession ? {session_id: name(video.dataset.previewSession)} : {})});
     }, true);
   }
   listen(document, 'visibilitychange', () => report({event: 'visibility', ...selectedBatch(), visibility: name(document.visibilityState)}));

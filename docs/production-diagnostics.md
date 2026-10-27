@@ -70,3 +70,13 @@ docker exec <容器名> python -m exactcut.diagnostics --event hook_preview.admi
 ## 部署代理日志
 
 将 `source/deploy/nginx-observability.conf` 安装到 nginx http context；只在 Exact Cut 的 server 中添加 `access_log /srv/exactcut/data/logs/nginx-access.log exactcut_diagnostic;`。备份配置，先 nginx -t 再 reload。logrotate 模板安装到部署根 config，使用独立状态文件每小时调用，避免与系统 logrotate 重复管理。保留原 nginx error log 用于 upstream 连接失败等系统诊断。
+
+## 2026-10-27 剪切和打码播放诊断（本地补丁，待发布）
+
+剪切原片/结果、打码原片/结果/片段预览接入既有 `media_error`、`media_waiting`、`media_stalled`、`media_playing` 事件。`source` 为播放器 DOM ID，`session_id` 为编辑会话 ID，`batch_id` 和 `request_id` 取播放器所属项目和素材，避免切换项目后误关联。新增 `paused`、`seeking`、`ended` 为 0/1；保留 `ready_state`、`network_state`、`media_error`、`current_ms`。
+
+两个自定义播放按钮的 Promise 拒绝上报 `media_play_rejection`，`error_type` 只记录异常名称（如 AbortError），以 warning 入日志；会话归属在点击时捕获，播放器状态在拒绝时读取。延迟拒绝时播放器可能已经关闭或重新打开，应结合后续事件判读。诊断异常不会改变原有播放或提示逻辑。
+
+排查先按 `--batch <项目ID> --hours 2` 查询，再按 `browser.session_id`、`browser.source` 和时间对应 `/mosaics/<会话>/source` 或 `/cuts/<会话>/source` 的 `http.rejected` 与 nginx 请求。409 的原因若为“当前成片已变化”，说明旧会话版本检查拒绝；不能据此解释更早的播放失败。206 或应用侧写入完成不证明客户端收到并成功解码。
+
+继续沿用客户端分钟额度、服务端账号额度和 10 秒去重，去重键加入 session_id；不采集 URL、异常正文或凭据。未发布前线上不会产生新增事件，完全离线时上报仍可能丢失。

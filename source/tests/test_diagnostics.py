@@ -403,6 +403,14 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),
   assert.strictEqual(calls[1][1].method,'POST');
   events.error({target:{tagName:'VIDEO',dataset:{previewRequest:'R123'},readyState:0,networkState:3,error:{code:4},currentTime:0}});
   assert(sent.some(x=>x.event==='media_error'&&x.request_id==='R123'&&x.media_error===4));
+  const video={tagName:'VIDEO',id:'mosaicSource',dataset:{previewRequest:'R456',previewBatch:'c'.repeat(32),previewSession:'e'.repeat(32)},readyState:2,networkState:2,error:null,currentTime:12.5,paused:true,seeking:true,ended:false,src:'private-video-url'};
+  events.waiting({target:video});
+  assert(sent.some(x=>x.event==='media_waiting'&&x.source==='mosaicSource'&&x.batch_id==='c'.repeat(32)&&x.session_id==='e'.repeat(32)&&x.current_ms===12500&&x.seeking===1));
+  const context={batch:'c'.repeat(32),asset:{request_id:'R456'},session:{id:'e'.repeat(32)}};
+  video.dataset.previewSession='f'.repeat(32);
+  window.reportMediaPlayFailure(video,{name:'AbortError',message:'private-error-url'},context);
+  assert(sent.some(x=>x.event==='media_play_rejection'&&x.error_type==='AbortError'&&x.session_id==='e'.repeat(32)&&x.paused===1));
+  window.reportMediaPlayFailure(null,{},null); // Diagnostics must never interrupt the UI.
   for(let i=0;i<50;i++)events.click({target:{closest:()=>button}});
   const count=sent.length;now=61000;
   events.click({target:{closest:()=>button}});
@@ -415,3 +423,31 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),
 '''
     path = Path(__file__).resolve().parents[1] / 'exactcut/web/diagnostics.js'
     subprocess.run([node, '-e', script, str(path)], check=True, capture_output=True, text=True)
+
+
+def test_editor_media_diagnostic_fields_are_bounded():
+    from exactcut import diagnostics
+    fields = {'session_id': 'a'*32, 'paused': 1, 'seeking': 0, 'ended': 0}
+    assert diagnostics.browser_fields(fields) == fields
+    with pytest.raises(ValueError):
+        diagnostics.browser_fields({'session_id': 'https://private.invalid/video'})
+    with pytest.raises(ValueError):
+        diagnostics.browser_fields({'seeking': float('nan')})
+
+
+def test_play_rejection_http_preserves_session_and_warning(diag, app):
+    from test_web_base_path import request, login
+    _, root = diag
+    headers = login(app)
+    for sid in ('a'*32, 'b'*32):
+        payload = {'event': 'media_play_rejection', 'source': 'mosaicSource',
+                   'batch_id': 'c'*32, 'request_id': 'R456', 'session_id': sid,
+                   'error_type': 'AbortError', 'ready_state': 2, 'network_state': 2,
+                   'media_error': 0, 'paused': 1, 'seeking': 1, 'ended': 0,
+                   'current_ms': 12500, 'message': 'private-video-url'}
+        assert request(app, 'POST', '/home/api/client-events', payload, headers)[0] == 200
+    rows = [r for r in records(root) if r['event'] == 'browser.event']
+    assert len(rows) == 2
+    assert {r['browser']['session_id'] for r in rows} == {'a'*32, 'b'*32}
+    assert all(r['level'] == 'warning' for r in rows)
+    assert 'private-video-url' not in json.dumps(rows)
