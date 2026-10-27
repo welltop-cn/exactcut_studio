@@ -95,6 +95,22 @@ def test_pending_failure_and_newer_validation_error_both_remain_visible(playback
     assert page.evaluate('failures[0].name') == 'NotSupportedError'
 
 
+@pytest.mark.parametrize('action', ['pause', 'reopen'])
+def test_explicit_pause_resets_button_without_waiting_for_media_event(playback, action):
+    page, kind = playback
+    click_play(page, kind)
+    page.evaluate('finishPlay(0)')
+    assert page.locator('#'+kind+'Play').inner_text() == '暂停'
+    if action == 'pause':
+        click_play(page, kind)
+    else:
+        page.locator('#'+kind+'Close').click()
+        page.locator('[data-open-'+('mosaic' if kind=='mosaic' else 'cut')+']').evaluate('(el)=>el.click()')
+        page.locator('#'+kind+('Workspace' if kind=='mosaic' else 'Editor')).wait_for(state='visible')
+    assert page.locator('#'+kind+'Source').evaluate('v=>v.paused')
+    assert page.locator('#'+kind+'Play').inner_text() == '播放'
+
+
 def test_delayed_pause_event_does_not_reset_active_play_button(playback):
     page, kind = playback
     click_play(page, kind)

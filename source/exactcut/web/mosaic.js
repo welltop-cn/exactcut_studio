@@ -51,7 +51,7 @@
     targets=data.map(t=>({...t,uid:t.uid||regionId(),adopted:t.adopted!==false}));
     savedTargets=structuredClone(targets);
   }
-  function pausePlayback(){playAttempt++;video.pause();}
+  function pausePlayback(){playAttempt++;video.pause();$('mosaicPlay').textContent='播放';}
   function playSource(){
     if(!context||!dialog.open)return;
     const attempt=++playAttempt,version=epoch,playback=context;

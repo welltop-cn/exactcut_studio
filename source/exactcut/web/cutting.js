@@ -39,7 +39,7 @@
     $('cutStatus').classList.toggle('error',statusError||playbackError);
   }
   function status(message,error=false){statusMessage=message;statusError=error;paintStatus();}
-  function pausePlayback(){playAttempt++;video.pause();}
+  function pausePlayback(){playAttempt++;video.pause();$('cutPlay').textContent='播放';}
   function playSource(){
     if(!context||!dialog.open)return;
     const attempt=++playAttempt,version=epoch,playback=context;
