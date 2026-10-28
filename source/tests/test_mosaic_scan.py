@@ -221,3 +221,29 @@ def test_each_localized_event_is_published_before_next_finishes(configured,monke
         assert job['events'][1]['status']=='needs_review'
     finally:finish.set()
     poll(m,bid,sid)
+
+
+def test_scan_logs_lifecycle_and_request_context(configured,monkeypatch):
+    from exactcut import diagnostics
+    m=module();bid,sid=setup(configured);logged=[]
+    monkeypatch.setattr(diagnostics,'event',lambda name,**fields:logged.append((name,{**diagnostics.current(),**fields})))
+    monkeypatch.setattr(cutting_scan,'detect',coarse)
+    monkeypatch.setattr(mosaic_locate,'detect',lambda *a,**k: (_ for _ in ()).throw(RuntimeError('private-body')))
+    previous=diagnostics.current()
+    diagnostics.bind(trace_id='scan-test-trace',client_request_id='scan-test-client')
+    try:
+        job=m.start(bid,sid,'');result=poll(m,bid,sid)
+    finally:
+        diagnostics._context.set(previous)
+    assert result['status']=='completed'
+    entries={name:fields for name,fields in logged}
+    for name in ('mosaic.scan_started','mosaic.scan_completed','mosaic.localization_failed'):
+        fields=entries[name]
+        assert fields['job_id']==job['id'] and fields['batch_id']==bid
+        assert fields['trace_id']=='scan-test-trace'
+        assert fields['client_request_id']=='scan-test-client'
+        assert fields['duration_ms']>=0
+    assert entries['mosaic.scan_completed']['event_count']==10
+    assert entries['mosaic.scan_completed']['localized_count']==0
+    assert entries['mosaic.localization_failed']['phase']=='region_detect'
+    assert 'private-body' not in str(logged)

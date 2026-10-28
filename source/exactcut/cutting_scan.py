@@ -11,7 +11,7 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
-from . import cutting, ai_rate
+from . import cutting, ai_rate, diagnostics
 from .runtime import protect_path
 from .stage_results import ResourceDeferred
 from .util import load_config, file_sha256, json_sha256, read_json, write_json_atomic, now_iso
@@ -120,15 +120,18 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
     prompt=PROMPT+(STRICT if policy=='strict' else '')+f'\n原成片总时长 {duration} 毫秒。'
 
     def ask(parts, extra=''):
-        while True:
-            if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:
-                raise cutting.CutError('本次识别用时过长，未完成，请重试')
-            try:ai_rate.acquire();break
-            except ResourceDeferred as exc:time.sleep(min(1,max(.05,exc.not_before-time.time())))
-        response=client.models.generate_content(model=cfg['model'],contents=[*parts,types.Part.from_text(text=prompt+extra)],
-                    config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=deepcopy(SCHEMA)))
-        if not response.text:raise cutting.CutError('模型未返回可用结果（可能被拦截），识别未完成')
-        return checked_events(response.text,meta)
+        with diagnostics.span('scan.rate_wait',private_error=True,model=cfg['model']):
+            while True:
+                if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:
+                    raise cutting.CutError('本次识别用时过长，未完成，请重试')
+                try:ai_rate.acquire();break
+                except ResourceDeferred as exc:time.sleep(min(1,max(.05,exc.not_before-time.time())))
+        with diagnostics.span('scan.model_request',private_error=True,model=cfg['model'],timeout_ms=cfg['request_timeout_ms']):
+            response=client.models.generate_content(model=cfg['model'],contents=[*parts,types.Part.from_text(text=prompt+extra)],
+                        config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=deepcopy(SCHEMA)))
+        with diagnostics.span('scan.result_validate',private_error=True):
+            if not response.text:raise cutting.CutError('模型未返回可用结果（可能被拦截），识别未完成')
+            return checked_events(response.text,meta)
 
     warnings=[]
     try:
@@ -137,10 +140,12 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
             progress('正在准备检测视频')
             try:
                 if time.monotonic()+120>deadline:raise cutting.CutError('本次识别用时过长，未完成，请重试')
-                cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-an','-vf',
-                    'scale=540:540:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=15',
-                    '-c:v','libx264','-preset','veryfast','-crf','28','-movflags','+faststart',str(proxy)],120)
+                with diagnostics.span('scan.proxy',private_error=True):
+                    cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-an','-vf',
+                        'scale=540:540:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=15',
+                        '-c:v','libx264','-preset','veryfast','-crf','28','-movflags','+faststart',str(proxy)],120)
             finally:compute.close()
+            diagnostics.event('scan.proxy_ready',bytes=proxy.stat().st_size,video_duration_ms=duration,sample_fps=cfg['coarse_fps'])
             if proxy.stat().st_size>18*1024**2:raise cutting.CutError('检测代理过大，请使用更短成片')
             progress('正在识别疑似画面（视频抽样）')
             part=types.Part.from_bytes(data=proxy.read_bytes(),mime_type='video/mp4')
@@ -164,7 +169,8 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
                     if any(f['start_ms']<left or f['end_ms']>end for f in findings):
                         raise cutting.CutError('复查区间超出抽样窗口')
                     result.append(refined_event(event,findings))
-                except Exception:
+                except Exception as exc:
+                    diagnostics.event('scan.refinement_failed',level='warning',event_index=i,error=diagnostics.private_exception(exc))
                     result.append({**refined_event(event,[]),'review_note':'加密复查未完成，保留粗筛标记，请人工确认。'})
                     warnings.append(f'第 {i+1} 个疑似区间加密复查未完成')
             if len(coarse)>cfg['max_refine_events']:warnings.append('部分区间仅完成视频粗筛，尚未加密复查')

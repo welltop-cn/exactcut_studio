@@ -451,3 +451,22 @@ def test_play_rejection_http_preserves_session_and_warning(diag, app):
     assert {r['browser']['session_id'] for r in rows} == {'a'*32, 'b'*32}
     assert all(r['level'] == 'warning' for r in rows)
     assert 'private-video-url' not in json.dumps(rows)
+
+
+def test_private_span_keeps_provider_code_without_response(monkeypatch):
+    from exactcut import diagnostics
+    from google.genai.errors import ClientError
+    import pytest
+    logged=[]
+    monkeypatch.setattr(diagnostics,'event',lambda name,**fields:logged.append((name,fields)))
+    exc=ClientError(429,{'error':{'message':'private-provider-body','status':'RESOURCE_EXHAUSTED'}})
+    with pytest.raises(ClientError):
+        with diagnostics.span('scan.model',private_error=True):
+            raise exc
+    name,fields=logged[-1]
+    assert name=='scan.model.failed'
+    assert fields['error']['code']==429
+    assert fields['error']['type']=='ClientError'
+    assert fields['error']['frames']
+    assert 'private-provider-body' not in str(logged)
+    assert fields['duration_ms']>=0

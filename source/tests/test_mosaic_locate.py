@@ -76,6 +76,9 @@ def test_failure_recovery_disabled(configured,monkeypatch):
 
 
 def test_provider_single_jpeg_refusal(monkeypatch):
+    from exactcut import diagnostics
+    logged=[]
+    monkeypatch.setattr(diagnostics,'event',lambda name,**fields:logged.append((name,fields)))
     m=module()
     from google import genai
     requests=[];closed=[]
@@ -84,6 +87,10 @@ def test_provider_single_jpeg_refusal(monkeypatch):
     monkeypatch.setattr(scan.ai_rate,'acquire',lambda:None)
     with pytest.raises(cutting.CutError):m.detect(b'jpeg',{'width':100,'height':100},{'model':'fixture','request_timeout_ms':1000},'fixture-key')
     assert len(requests)==1 and closed
+    names=[name for name,_ in logged]
+    assert 'mosaic.region_request.completed' in names
+    assert 'mosaic.region_validate.failed' in names
+    assert 'fixture-key' not in str(logged)
     assert requests[0]['contents'][0].inline_data.mime_type=='image/jpeg'
 
 

@@ -234,14 +234,28 @@ def throttled(name, key, *, interval=60, **fields):
     event(name, **fields)
 
 
+def private_exception(exc):
+    """Exception metadata only; never stringify provider responses or subprocess args."""
+    result = {'type': type(exc).__name__,
+              'frames': [{'file': Path(f.filename).name, 'line': f.lineno, 'function': f.name}
+                         for f in traceback.extract_tb(exc.__traceback__)[-12:]],
+              'cause_type': type(exc.__cause__).__name__ if exc.__cause__ else None}
+    # google.genai.errors.APIError.code is the documented numeric HTTP code.
+    code = getattr(exc, 'code', None)
+    if type(code) is int and 100 <= code <= 599:
+        result['code'] = code
+    return result
+
+
 @contextmanager
-def span(name, **fields):
+def span(name, *, private_error=False, **fields):
     started = time.monotonic()
     event(name + '.started', **fields)
     try:
         yield
     except BaseException as exc:
-        event(name + '.failed', level='error', duration_ms=round((time.monotonic()-started)*1000), error=exc, **fields)
+        event(name + '.failed', level='error', duration_ms=round((time.monotonic()-started)*1000),
+              error=private_exception(exc) if private_error else exc, **fields)
         raise
     else:
         event(name + '.completed', duration_ms=round((time.monotonic()-started)*1000), **fields)

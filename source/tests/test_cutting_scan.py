@@ -84,6 +84,9 @@ def test_scan_http_lifecycle_cache_recovery_and_acl(configured, monkeypatch):
 
 
 def test_detector_preserves_coarse_on_provider_refinement_failure(tmp_path, monkeypatch):
+    from exactcut import diagnostics
+    logged=[]
+    monkeypatch.setattr(diagnostics,'event',lambda name,**fields:logged.append((name,fields)))
     from google import genai
     from types import SimpleNamespace
     calls=[]
@@ -106,6 +109,12 @@ def test_detector_preserves_coarse_on_provider_refinement_failure(tmp_path, monk
     assert result['risk_events'][0]['start_frame']==1
     assert result['risk_events'][0]['refinement']=='inconclusive'
     assert result['warnings'] and compute.closed and closed
+    names=[name for name,_ in logged]
+    assert 'scan.proxy.completed' in names and 'scan.rate_wait.completed' in names
+    assert 'scan.model_request.completed' in names and 'scan.model_request.failed' in names
+    assert 'scan.result_validate.completed' in names and 'scan.refinement_failed' in names
+    assert 'provider blocked refinement' not in str(logged)
+    assert 'fixture-key' not in str(logged)
     assert calls[0]['contents'][0].video_metadata.fps==2
     assert '普通亲吻、拥抱不单独标记' in calls[0]['contents'][-1].text
 
