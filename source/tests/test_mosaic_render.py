@@ -71,6 +71,9 @@ def test_batch_http_restore_download_and_immutable_source(ready,monkeypatch):
     monkeypatch.setattr(tracking,'settings',lambda:{'enabled':True})
     def fake(source,directory,meta,target,cfg):
         calls.append(target)
+        write_json_atomic(directory/'progress.json',{'frames_done':3,'frames_total':target['end']-target['start']})
+        live=render.latest(bid,sid)['job']
+        assert live['progress']==f"正在跟踪 3/{target['end']-target['start']} 帧（区域 {len(calls)}/2）"
         return make_track(directory,target,meta,empty=(target['start'],))['result']
     monkeypatch.setattr(tracking,'run_tracker',fake)
     target={'start':10,'end':20,'seed_frame':15,'x':0,'y':0,'w':40,'h':40}
@@ -459,3 +462,23 @@ def test_legacy_raw_cache_rejects_incomplete_or_different_inputs(ready,monkeypat
     monkeypatch.setattr(tracking,'run_tracker',infer)
     render.prepare_track(bid,session['id'],session,target,cfg,root/'new')
     assert len(calls)==1 and calls[0]!=old
+
+
+def test_live_tracking_progress_is_scoped_and_tolerates_missing_file(tmp_path):
+    job={'status':'running','stage':'tracking','tracking_inference':'inference-'+'a'*32,
+         'completed_regions':1,'total_regions':3,'targets':[{}, {'start':10,'end':145}],
+         'progress':'正在准备第 2 / 3 个打码区域'}
+    assert render.tracking_progress(tmp_path,job)==job
+    file=tmp_path/job['tracking_inference']/'progress.json'
+    write_json_atomic(file,{'frames_done':60,'frames_total':135})
+    assert render.tracking_progress(tmp_path,job)['progress']=='正在跟踪 60/135 帧（区域 2/3）'
+    assert job['progress']=='正在准备第 2 / 3 个打码区域'
+    for fields in ({'stage':'composing'},{'status':'completed'},{'cancel_requested':True},
+                   {'tracking_inference':'../outside'},{'completed_regions':0}):
+        other={**job,**fields}
+        assert render.tracking_progress(tmp_path,other)==other
+    for data in ({'frames_done':136,'frames_total':135},{'frames_done':60,'frames_total':140}):
+        write_json_atomic(file,data)
+        assert render.tracking_progress(tmp_path,job)==job
+    file.write_text('{')
+    assert render.tracking_progress(tmp_path,job)==job

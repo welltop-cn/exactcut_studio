@@ -112,6 +112,18 @@ def recover(path):
     return job
 
 
+def tracking_progress(root,job):
+    if job.get('status')!='running' or job.get('stage')!='tracking' or job.get('cancel_requested'):return job
+    name=job.get('tracking_inference','')
+    if not isinstance(name,str) or not re.fullmatch(r'inference-[0-9a-f]{32}',name):return job
+    try:
+        index=job['completed_regions'];target=job['targets'][index]
+        p=read_json(root/name/'progress.json');done=p['frames_done'];total=p['frames_total']
+        if type(done) is not int or type(total) is not int or total!=target['end']-target['start'] or not 0<=done<=total:return job
+    except (OSError,ValueError,KeyError,IndexError,TypeError):return job
+    return {**job,'progress':f"正在跟踪 {done}/{total} 帧（区域 {index+1}/{job['total_regions']}）"}
+
+
 def state(bid,sid,jid):
     if not isinstance(jid,str) or not re.fullmatch('[0-9a-f]{32}',jid):raise cutting.CutError('完整视频任务不存在',404)
     path=sessions.session_path(bid,sid)/f'render-{jid}.json'
@@ -125,7 +137,7 @@ def state(bid,sid,jid):
         # Its commit can change the source between two version reads.
         if job.get('replacement',{}).get('status')=='running':return job
         if not mosaic_replace.is_current(bid,session,job):mosaic_locate.current(bid,sid,job)
-        return job
+        return tracking_progress(path.parent,job)
 
 
 def latest(bid,sid):
@@ -197,7 +209,7 @@ def stop(bid,sid,jid,reset_at):
         return job
 
 
-def prepare_track(bid,sid,session,target,cfg,directory):
+def prepare_track(bid,sid,session,target,cfg,directory,*,on_tracking=None):
     if target.get('motion')=='fixed':
         return {'target':target,'result':{'width':session['metadata']['width'],'height':session['metadata']['height'],'frames':[]}}
     # compute.lock is already held by this batch. Never recursively enqueue a single job.
@@ -240,6 +252,8 @@ def prepare_track(bid,sid,session,target,cfg,directory):
             tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
             if all((legacy/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
                 return {'target':target,'directory':legacy,'result':result}
+    (inference/'progress.json').unlink(missing_ok=True)
+    if on_tracking:on_tracking(inference.name)
     result=tracking.run_tracker(root/'source.mp4',inference,session['metadata'],geometry,{**cfg,'masks_only':True})
     return {'target':target,'directory':inference,'result':result}
 
@@ -263,9 +277,9 @@ def _work_cancelable(bid,sid,path,job,cfg,leases):
         directory.mkdir(exist_ok=True);tracks=[];warnings=[];skipped=set()
         for index,target in enumerate(job['targets']):
             mosaic_locate.current(bid,sid,job)
-            update(progress=f"正在准备第 {index+1} / {len(job['targets'])} 个打码区域",completed_regions=index)
+            update(progress=f"正在准备第 {index+1} / {len(job['targets'])} 个打码区域",completed_regions=index,tracking_inference='')
             try:
-                track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}')
+                track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}',on_tracking=lambda name:update(tracking_inference=name))
                 for frame in track['result']['frames']:
                     if frame['box'] is None:skipped.add(frame['frame'])
                 for warning in track['result'].get('warnings',[]):warnings.append({'region':index+1,**warning})
