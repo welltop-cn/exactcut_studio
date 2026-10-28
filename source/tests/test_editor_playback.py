@@ -52,7 +52,7 @@ def test_active_failure_is_visible_and_cleared_on_playing(playback, name):
     before = page.locator('#'+kind+'Status').inner_text()
     click_play(page, kind)
     page.evaluate('name=>rejectPlay(0,name)', name)
-    assert '暂时无法播放' in page.locator('#'+kind+'Status').inner_text()
+    assert ('点击播放以继续' if name=='NotAllowedError' else '暂时无法播放') in page.locator('#'+kind+'Status').inner_text()
     click_play(page, kind)
     page.evaluate('finishPlay(1)')
     assert page.locator('#'+kind+'Status').inner_text() == before

@@ -10,7 +10,7 @@ def test_versioned_scripts_compressed_and_private(app):
     _, page_headers, html = request(app, 'GET', '/home/', headers=headers)
     urls = re.findall(rb'src="([^"]+\.js\?v=[0-9a-f]+)"', html)
     assert {url.split(b'?')[0] for url in urls} == {
-        b'diagnostics.js', b'app.js', b'cutting.js', b'mosaic.js', b'helper.js'
+        b'diagnostics.js', b'app.js', b'editor-source.js', b'cutting.js', b'mosaic.js', b'helper.js'
     }
     assert page_headers['Cache-Control'] == 'no-store'
     for url in urls:

@@ -39,6 +39,7 @@ def editor():
           $('assets').innerHTML='<article data-asset="0"><div class="cut-tools"><button data-open-cut>剪切</button></div></article>';
           $('assets').closest('[hidden]')?.removeAttribute('hidden');
         }''')
+        page.add_script_tag(content=(root/'editor-source.js').read_text())
         script=root/'mosaic.js'
         if script.exists():
             page.add_script_tag(content=script.read_text())

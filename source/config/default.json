@@ -71,6 +71,7 @@
   },
   "cutting": {
     "enabled": false,
+    "oss_playback_enabled": false,
     "max_source_bytes": 536870912,
     "max_duration_seconds": 300,
     "scan": {

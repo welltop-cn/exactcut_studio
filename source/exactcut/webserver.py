@@ -1053,7 +1053,8 @@ class Handler(BaseHTTPRequestHandler):
         if name == 'index.html':
             body = body.replace(b'<script src="app.js">', b'<script src="diagnostics.js"></script><script src="app.js">')
         if name == 'index.html':
-            for script in ('app.js', 'helper.js', 'diagnostics.js', 'cutting.js', 'mosaic.js'):
+            body = body.replace(b'<script src="cutting.js">', b'<script src="editor-source.js"></script><script src="cutting.js">')
+            for script in ('app.js', 'helper.js', 'diagnostics.js', 'editor-source.js', 'cutting.js', 'mosaic.js'):
                 version = hashlib.sha256((CODE_ROOT / 'exactcut/web' / script).read_bytes()).hexdigest()[:20]
                 body = body.replace(f'src="{script}"'.encode(), f'src="{script}?v={version}"'.encode())
             app_version = hashlib.sha256((CODE_ROOT / 'exactcut/web/app.js').read_bytes()).hexdigest()[:20]
@@ -1264,6 +1265,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.script('helper.js')
         if self.path == '/mosaic.js':
             return self.script('mosaic.js')
+        if self.path == '/editor-source.js':
+            return self.script('editor-source.js')
         if self.path == '/cutting.js':
             return self.script('cutting.js')
         if self.path == '/app.js':

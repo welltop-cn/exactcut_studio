@@ -23,7 +23,7 @@ def handle(handler,bid,suffix,method):
         with cutting.batch_lease(bid):
             if not handler.can_access(bid):raise cutting.CutError('项目不存在或无权访问',404)
             if method=='POST' and suffix=='open':return handler.respond(200,sessions.open_session(bid,data.get('request_id'),data.get('source_sha256')))
-            match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|scan|discard|replace|stop|clip-preview|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/preview)?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
+            match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|source-url|scan|discard|replace|stop|clip-preview|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/preview)?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
             if not match:raise cutting.CutError('打码入口不存在',404)
             sid,action=match.groups();session=sessions.read_session(bid,sid)
             if action!='replace' and not (method=='GET' and action and re.fullmatch(r'render/[0-9a-f]{32}',action)):
@@ -40,6 +40,9 @@ def handle(handler,bid,suffix,method):
                     if len(parts)==3:return handler.stream_video(mosaic_tracking.preview_file(bid,sid,parts[1]))
                     return handler.respond(200,mosaic_tracking.state(bid,sid,parts[1]))
                 if action=='scan':return handler.respond(200,mosaic_scan.state(bid,sid))
+                if action=='source-url':
+                    from . import editor_source
+                    return handler.respond(200,editor_source.resolve(bid,session,f'/api/batches/{bid}/mosaics/{sid}/source'))
                 if action=='source':return handler.stream_video(sessions.session_path(bid,sid)/'source.mp4')
                 if action.startswith('frame/'):return handler.respond(200,sessions.frame_file(bid,sid,int(action[6:])).read_bytes(),'image/jpeg')
                 if action.startswith('locate/'):return handler.respond(200,mosaic_locate.state(bid,sid,action[7:]))

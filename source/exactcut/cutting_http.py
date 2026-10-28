@@ -52,7 +52,7 @@ def handle(handler, batch_id, suffix, method):
                         cutting.require_reset(cutting.read_session(batch_id, sid), data.get('reset_at', ''))
                         return handler.respond(202, cutting_scan.start(batch_id, sid, data.get('policy', 'standard'), force=data.get('force', False)))
                 raise cutting.CutError('识别入口不存在', 404)
-            match = re.fullmatch(r'([0-9a-f]{32})(?:/(source|frame/[0-9]+|output/[0-9a-f]{32}|render|save|replace|discard))?', suffix)
+            match = re.fullmatch(r'([0-9a-f]{32})(?:/(source|source-url|frame/[0-9]+|output/[0-9a-f]{32}|render|save|replace|discard))?', suffix)
             if not match:
                 raise cutting.CutError('剪切入口不存在', 404)
             sid, action = match.groups()
@@ -64,6 +64,9 @@ def handle(handler, batch_id, suffix, method):
             if method == 'GET':
                 if not action:
                     return handler.respond(200, cutting.get_session(batch_id, sid))
+                if action == 'source-url':
+                    from . import editor_source
+                    return handler.respond(200, editor_source.resolve(batch_id, session, f'/api/batches/{batch_id}/cuts/{sid}/source'))
                 if action == 'source':
                     return handler.stream_video(cutting.session_path(batch_id, sid)/'source.mp4')
                 if action.startswith('frame/'):

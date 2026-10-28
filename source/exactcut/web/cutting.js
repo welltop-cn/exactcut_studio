@@ -7,6 +7,7 @@
   let frameController = null, resultMode = false, scanLoading = false;
   let clips = [], editingId = null, clipSerial = 0;
   let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
+  let sourceManager=null,sourceBinding=null;
   const frames = new Map();
   const path = () => `/api/batches/${context.batch}/cuts/${context.session.id}`;
   const count = () => context.session.metadata.frame_count;
@@ -35,18 +36,19 @@
   const active = version => version === epoch && context && dialog.open;
   function paintStatus(){
     // Playback failures and workflow messages have independent lifetimes.
-    $('cutStatus').textContent=[statusMessage,playbackError?'暂时无法播放，请重试':''].filter(Boolean).join('\n');
+    $('cutStatus').textContent=[statusMessage,playbackError==='NotAllowedError'?'点击播放以继续':playbackError?'暂时无法播放，请重试':''].filter(Boolean).join('\n');
     $('cutStatus').classList.toggle('error',statusError||playbackError);
   }
   function status(message,error=false){statusMessage=message;statusError=error;paintStatus();}
-  function pausePlayback(){playAttempt++;video.pause();$('cutPlay').textContent='播放';}
-  function playSource(){
+  function pausePlayback(){sourceBinding?.pause();playAttempt++;video.pause();$('cutPlay').textContent='播放';}
+  function playSource(){if(sourceBinding)sourceBinding.play();else playDirect();}
+  function playDirect(){
     if(!context||!dialog.open)return;
     const attempt=++playAttempt,version=epoch,playback=context;
-    video.play().catch(error=>{
+    return video.play().catch(error=>{
       window.reportMediaPlayFailure?.(video,error,playback);
       if(attempt!==playAttempt||!active(version)||context!==playback)return;
-      playbackError=true;paintStatus();
+      sourceBinding?.rejected();playbackError=error.name||true;paintStatus();
     });
   }
   video.addEventListener('playing',()=>{
@@ -112,7 +114,7 @@
     resultMode = show;
     output.hidden = !show; video.hidden = show;
     if (show) { clearTimeout(seekTimer);frameController?.abort();pausePlayback();image.hidden=true; }
-    else { output.pause(); image.hidden = frameReady !== wanted; }
+    else { output.pause(); if(previous&&sourceBinding)sourceBinding.open(); image.hidden = frameReady !== wanted; }
     $('cutStageLabel').textContent = show ? '编辑后视频' : '原片';
     $('cutContinue').hidden = !show;
     $('cutDiscard').hidden = !show;
@@ -208,7 +210,8 @@
     if (!context || !Number.isFinite(frame)) return;
     setResult(false); clearTimeout(seekTimer); quick = fast;
     pausePlayback(); wanted = Math.max(0,Math.min(count()-1,Math.round(frame))); frameReady = -1; image.hidden = true;
-    if (Number.isFinite(video.duration)) video.currentTime = (wanted+.05)/fps();
+    if(sourceBinding)sourceBinding.seek((wanted+.05)/fps());
+    else if (Number.isFinite(video.duration)) video.currentTime = (wanted+.05)/fps();
     counter(); $('cutFrameHint').textContent = '快速预览 · 停下后显示准确帧';
     if (fast) seekTimer = setTimeout(()=>{quick=false;loadFrame();},220); else loadFrame();
   }
@@ -259,6 +262,7 @@
     finally { if(valid()) { scanLoading=false;syncRiskBulk(); } }
   }
   async function open(batch, asset) {
+    sourceManager?.dispose();sourceManager=sourceBinding=null;
     const version=++epoch; scanToken++; frameController?.abort(); frames.clear(); clearTimeout(seekTimer);
     context=null;playbackError=false;pausePlayback(); clips=[];editingId=null;clipSerial=0;ranges=[];undo=[];selection=null;selectedJob=null;busy=false;wanted=0;frameReady=-1;quick=false;resultMode=false;scanReport=null;scanLoading=false;syncRiskBulk();
     $('cutEditor').hidden=true; $('cutReplaceConfirm').hidden=true; $('cutToast').hidden=true; $('cutDownload').hidden=true; $('cutReplace').hidden=true; $('cutContinue').hidden=true; $('cutRender').disabled=true;
@@ -284,7 +288,13 @@
       }catch{}
       $('cutSourceInfo').textContent=`${session.metadata.width} × ${session.metadata.height} · ${fps().toFixed(2)} fps · ${duration(count())}`;
       $('cutSeek').max=count()-1;$('cutTimelineEnd').textContent=timecode(count());
-      $('cutEditor').hidden=false;video.src=appUrl(path()+'/source');video.load();image.hidden=true;
+      $('cutEditor').hidden=false;
+      if(session.capabilities?.oss_playback){
+        sourceManager=EditorSource.create({endpoint:path()+'/source-url',local:path()+'/source',enabled:true});
+        sourceBinding=sourceManager.attach(video,{valid:()=>active(version)&&!resultMode,beforeChange:()=>{playAttempt++;},play:playDirect,failed:()=>{playbackError=true;paintStatus();},anchor:$('cutStatus')});
+        sourceBinding.open();
+      }else{video.src=appUrl(path()+'/source');video.load();}
+      image.hidden=true;
       paintSelection();counter();loadFrame();scan();status('勾选要删除的片段，生成后预览，再决定是否替换。');
       if(chosen&&samePlan(chosen)) {
         if(chosen.status==='running') {busy=true;paint();try{await watch(chosen.id,version);}finally{if(active(version)){busy=false;paint();}}}
@@ -309,7 +319,7 @@
     }
   }
   $('cutClose').onclick=()=>{if(!$('cutReplaceConfirm').hidden&&busy)return;dialog.close();};
-  dialog.addEventListener('close',()=>{epoch++;scanToken++;clearTimeout(seekTimer);frameController?.abort();context=null;pausePlayback();output.pause();for(const v of [video,output]){v.removeAttribute('src');v.load();}if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=null;image.removeAttribute('src');frames.clear();});
+  dialog.addEventListener('close',()=>{if(dialog.open)return;sourceManager?.dispose();sourceManager=sourceBinding=null;epoch++;scanToken++;clearTimeout(seekTimer);frameController?.abort();context=null;pausePlayback();output.pause();for(const v of [video,output]){v.removeAttribute('src');v.load();}if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=null;image.removeAttribute('src');frames.clear();});
   for(const which of ['start','end']) {
     const input=$(which==='start'?'cutStart':'cutEnd');
     input.onchange=guarded(()=>endpoint(which,parseTimecode(input.value)+1));
@@ -326,10 +336,10 @@
   $('cutPrevious').onclick=()=>seek(wanted-1,true);$('cutNext').onclick=()=>seek(wanted+1,true);
   $('cutFrameNumber').onchange=guarded(e=>seek(parseTimecode(e.target.value),true));$('cutSeek').oninput=e=>seek(Number(e.target.value),true);
   $('cutFrameRetry').onclick=()=>loadFrame();$('cutContinue').onclick=()=>{if(busy)return;setResult(false);paint();loadFrame();};
-  $('cutPlay').onclick=()=>{if(video.paused){setResult(false);clearTimeout(seekTimer);quick=false;image.hidden=true;playSource();}else pausePlayback();};
+  $('cutPlay').onclick=()=>{if(video.paused&&!sourceBinding?.wantsPlay){setResult(false);clearTimeout(seekTimer);quick=false;image.hidden=true;playSource();}else pausePlayback();};
   video.onplay=()=>{$('cutPlay').textContent='暂停';image.hidden=true;};
-  video.onpause=()=>{if(!video.paused)return;$('cutPlay').textContent='播放';if(context&&!quick&&!resultMode){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));frameReady=-1;counter();clearTimeout(seekTimer);seekTimer=setTimeout(loadFrame,220);}};
-  video.ontimeupdate=()=>{if(context&&!video.paused){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));counter();}};
+  video.onpause=()=>{if(sourceBinding?.changing||!video.paused)return;$('cutPlay').textContent='播放';if(context&&!quick&&!resultMode){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));frameReady=-1;counter();clearTimeout(seekTimer);seekTimer=setTimeout(loadFrame,220);}};
+  video.ontimeupdate=()=>{if(context&&!sourceBinding?.changing&&!video.paused){wanted=Math.min(count()-1,Math.floor(video.currentTime*fps()));counter();}};
   const track=$('cutTrack');
   track.onpointerdown=e=>{if(!context||busy)return;const h=e.target.closest('#cutHandleStart,#cutHandleEnd');dragging={which:h?(h.id==='cutHandleStart'?'start':'end'):null,anchor:Math.min(count()-1,Math.max(0,Math.floor((e.clientX-track.getBoundingClientRect().left)/track.clientWidth*count())))};track.setPointerCapture(e.pointerId);if(!h){editingId=null;selection=[dragging.anchor,dragging.anchor+1];paintSelection();seek(dragging.anchor,true);}e.preventDefault();};
   track.onpointermove=e=>{if(!dragging)return;const frame=Math.max(0,Math.min(count()-1,Math.floor((e.clientX-track.getBoundingClientRect().left)/track.clientWidth*count())));if(dragging.which==='start')selection[0]=Math.min(frame,selection[1]-1);else if(dragging.which==='end')selection[1]=Math.max(frame+1,selection[0]+1);else selection=[Math.min(frame,dragging.anchor),Math.max(frame,dragging.anchor)+1];paintSelection();seek(dragging.which==='start'?selection[0]:selection[1]-1,true);};

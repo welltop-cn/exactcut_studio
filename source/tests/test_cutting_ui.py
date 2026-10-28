@@ -34,6 +34,7 @@ def editor():
           $('assets').innerHTML='<article data-asset="0"><label class="approve">确认</label></article>';
           $('assets').closest('[hidden]')?.removeAttribute('hidden');
         }''')
+        page.add_script_tag(content=(root/'editor-source.js').read_text())
         page.add_script_tag(content=(root/'cutting.js').read_text())
         page.locator('[data-open-cut]').evaluate('(el)=>el.click()')
         page.locator('#cutEditor').wait_for(state='visible')

@@ -9,6 +9,7 @@
   let deletions=[],savedDeletions=[],oldDraftRaw=null,mutationBusy=false,resultBefore=false,resultMode=false;
   let stopPending=false,previewBusy=false,previewClose=false,previewJob=null,previewEndpoint=null,previewReset="";
   let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
+  let sourceManager=null,sourceBinding=null,beforeBinding=null;
   const editLocked=()=>scanLoading||previewBusy||batchLoading||batchJob?.status==='running'||stopPending||mutationBusy;
   const defaultEffect={style:'pixel',strength:'medium',expansion:'small'};
   let effect={...defaultEffect},savedEffect={...defaultEffect},clipEffects={},savedClipEffects={};
@@ -51,14 +52,15 @@
     targets=data.map(t=>({...t,uid:t.uid||regionId(),adopted:t.adopted!==false}));
     savedTargets=structuredClone(targets);
   }
-  function pausePlayback(){playAttempt++;video.pause();$('mosaicPlay').textContent='播放';}
-  function playSource(){
+  function pausePlayback(){sourceBinding?.pause();playAttempt++;video.pause();$('mosaicPlay').textContent='播放';}
+  function playSource(){if(sourceBinding)sourceBinding.play();else playDirect();}
+  function playDirect(){
     if(!context||!dialog.open)return;
     const attempt=++playAttempt,version=epoch,playback=context;
-    video.play().catch(error=>{
+    return video.play().catch(error=>{
       window.reportMediaPlayFailure?.(video,error,playback);
       if(attempt!==playAttempt||!active(version)||context!==playback)return;
-      playbackError=true;paintStatus();
+      sourceBinding?.rejected();playbackError=error.name||true;paintStatus();
     });
   }
   video.addEventListener('playing',()=>{
@@ -66,7 +68,7 @@
   });
   function paintStatus(){
     // Playback failures and workflow messages have independent lifetimes.
-    $('mosaicStatus').textContent=[statusMessage,playbackError?'暂时无法播放，请重试':''].filter(Boolean).join('\n');
+    $('mosaicStatus').textContent=[statusMessage,playbackError==='NotAllowedError'?'点击播放以继续':playbackError?'暂时无法播放，请重试':''].filter(Boolean).join('\n');
     $('mosaicStatus').classList.toggle('error',statusError||playbackError);
   }
   function status(message,error=false){statusMessage=message;statusError=error;paintStatus();}
@@ -315,7 +317,8 @@
     if(!context)return;clearTimeout(timer);controller?.abort();pausePlayback();
     wanted=Math.max(0,Math.min(meta().frame_count-1,Math.round(frame)));ready=-1;image.hidden=true;
     if(!keep)resetCandidate();
-    if(Number.isFinite(video.duration))video.currentTime=(wanted+.05)/rate();
+    if(sourceBinding)sourceBinding.seek((wanted+.05)/rate());
+    else if(Number.isFinite(video.duration))video.currentTime=(wanted+.05)/rate();
     paint();timer=setTimeout(loadFrame,100);
   }
   async function recognize(){
@@ -351,6 +354,7 @@
     return preparing.get(id);
   }
   async function open(batch,asset){
+    sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;
     const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;playbackError=false;pausePlayback();motion='tracked';wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
     batchToken++;batchJob=null;batchLoading=false;stopPending=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
     autoScanPending=false;clearRemovedClip();scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;addingClip=false;manualClips=[];aiEvents=[];clipEdits={};$('mosaicAdjust').open=false;$('mosaicEffects').close();
@@ -363,7 +367,12 @@
       for(const id of ['mosaicSource', 'mosaicBatchVideo', 'mosaicTrackVideo']){Object.assign($(id).dataset,{previewBatch:batch,previewRequest:asset.request_id,previewSession:session.id});}
       $('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);$('mosaicSeek').max=meta().frame_count-1;
       loadDraft();
-      $('mosaicWorkspace').hidden=false;video.src=appUrl(base()+'/source');video.load();
+      $('mosaicWorkspace').hidden=false;
+      if(session.capabilities?.oss_playback){
+        sourceManager=EditorSource.create({endpoint:base()+'/source-url',local:base()+'/source',enabled:true});
+        sourceBinding=sourceManager.attach(video,{valid:()=>active(version)&&!resultMode,beforeChange:()=>{playAttempt++;},play:playDirect,failed:()=>{playbackError=true;paintStatus();},anchor:$('mosaicStatus')});
+        sourceBinding.open();
+      }else{video.src=appUrl(base()+'/source');video.load();}
       status(session.capabilities?.region_recognition?'正在加载视频首帧，准备完成后自动识别…':'本机未启用 Gemini 识别，可先手动框选目标。');
       autoScanPending=true;paint();loadFrame();restoreBatch();
     }catch(e){if(version===epoch)status(e.message,true);}
@@ -382,7 +391,7 @@
   }
   $('mosaicClose').onclick=()=>{if(!mutationBusy){$('mosaicEffects').close();dialog.close();}};
   dialog.addEventListener('cancel',e=>{if(mutationBusy)e.preventDefault();});
-  dialog.addEventListener('close',()=>{if(dialog.open)return;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
+  dialog.addEventListener('close',()=>{if(dialog.open)return;sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
   $('mosaicScan').onclick=()=>scanVideo(!scanError&&scanReport?.status!=='running');
   $('mosaicScanEvents').onclick=e=>{const b=e.target.closest('[data-scan-event]');if(b)viewScanEvent(b.dataset.scanEvent);};
   $('mosaicScanMarkers').onclick=e=>{const b=e.target.closest('[data-scan-marker]');if(b)viewScanEvent(b.dataset.scanMarker);};
@@ -588,7 +597,7 @@
     $('mosaicBatchStart').hidden=generating||(resultMode&&batchJob?.status==='completed');
     $('mosaicBatchView').hidden=generating||resultMode||batchJob?.status==='cancelled'||(!batchJob&&!batchError);
     $('mosaicBatchDownload').hidden=!resultMode; $('mosaicReplace').hidden=!resultMode;
-    if(!resultMode)return;
+    if(!resultMode){beforeBinding?.dispose();beforeBinding=null;return;}
     const done=batchJob?.status==='completed';
     $('mosaicReplace').hidden=!done;$('mosaicReplace').disabled=mutationBusy||!sameBatch();
     $('mosaicBatchBefore').hidden=!done;$('mosaicBatchAfter').hidden=!done;
@@ -599,8 +608,17 @@
     if(done){
       $('mosaicBatchStatus').textContent=batchError||'完整视频已生成，可预览或下载。';
       const outputUrl=appUrl(base()+'/render/'+batchJob.id+'/video?v='+encodeURIComponent(batchJob.completed_at||''));
-      const url=resultBefore?appUrl(base()+'/source'):outputUrl;
-      if($('mosaicBatchVideo').getAttribute('src')!==url)$('mosaicBatchVideo').src=url;
+      if(resultBefore&&sourceManager){
+        if(!beforeBinding){
+          const version=epoch;
+          beforeBinding=sourceManager.attach($('mosaicBatchVideo'),{valid:()=>active(version)&&resultMode&&resultBefore,anchor:$('mosaicBatchStatus')});
+          beforeBinding.open();
+        }
+      }else{
+        beforeBinding?.dispose();beforeBinding=null;
+        const url=resultBefore?appUrl(base()+'/source'):outputUrl;
+        if($('mosaicBatchVideo').getAttribute('src')!==url)$('mosaicBatchVideo').src=url;
+      }
       $('mosaicBatchDownload').href=outputUrl;$('mosaicBatchDownload').download=context.asset.title+'_处理后.mp4';
     }else $('mosaicBatchStatus').textContent=batchError||batchJob?.error||batchJob?.progress||'正在提交全部已打码区域…';
   }
@@ -651,7 +669,7 @@
 
   function showResult(show){
     resultMode=show;
-    if(show){pausePlayback();}else if(!show){$('mosaicBatchVideo').pause();loadFrame();}
+    if(show){pausePlayback();}else if(!show){$('mosaicBatchVideo').pause();sourceBinding?.open();loadFrame();}
     paintBatch();
   }
   function clearDraft(){for(const k of [draftKey(),oldDraftKey(),key()])localStorage.removeItem(k);}
@@ -681,7 +699,14 @@
   };
   function outputFrame(frame){return frame-(batchJob?.ranges||[]).reduce((n,[a,b])=>n+Math.max(0,Math.min(frame,b)-a),0);}
   function sourceFrame(frame){let start=0,remaining=frame;for(const [a,b] of batchJob?.ranges||[]){if(remaining<a-start)return start+remaining;remaining-=a-start;start=b;}return start+remaining;}
-  function compareResult(before){const p=$('mosaicBatchVideo'),frame=p.currentTime*rate();const mapped=before?sourceFrame(frame):outputFrame(frame);resultBefore=before;paintBatch();p.onloadedmetadata=()=>{p.currentTime=mapped/rate();p.onloadedmetadata=null;};}
+  function compareResult(before){
+    const p=$('mosaicBatchVideo'),frame=p.currentTime*rate(),version=epoch;
+    const mapped=before?sourceFrame(frame):outputFrame(frame);
+    p.onloadedmetadata=null;resultBefore=before;paintBatch();
+    if(beforeBinding){beforeBinding.seek(mapped/rate());return;}
+    const url=p.getAttribute('src');
+    p.onloadedmetadata=()=>{if(active(version)&&resultBefore===before&&p.getAttribute('src')===url)p.currentTime=mapped/rate();p.onloadedmetadata=null;};
+  }
   $('mosaicBatchBefore').onclick=()=>{if(!resultBefore)compareResult(true);};
   $('mosaicBatchAfter').onclick=()=>{if(resultBefore)compareResult(false);};
   $('mosaicSaveTime').onclick=guard(()=>{
@@ -818,10 +843,10 @@
     if(pointer?.original&&selectedBox())Object.assign(selectedBox(),pointer.original);
     pointer=null;drawing=false;candidates=candidates.filter(validBox);paint();
   };
-  $('mosaicPlay').onclick=()=>{if(video.paused){controller?.abort();resetCandidate();ready=-1;image.hidden=true;overlay.hidden=true;playSource();}else{pausePlayback();wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();loadFrame();}};
+  $('mosaicPlay').onclick=()=>{if(video.paused&&!sourceBinding?.wantsPlay){controller?.abort();resetCandidate();ready=-1;image.hidden=true;overlay.hidden=true;playSource();}else{const time=sourceBinding?.position??video.currentTime;pausePlayback();wanted=Math.min(meta().frame_count-1,Math.floor(time*rate()));paint();loadFrame();}};
   video.onplay=()=>{$('mosaicPlay').textContent='暂停';image.hidden=true;overlay.hidden=true;paint();};
-  video.onpause=()=>{if(!video.paused)return;$('mosaicPlay').textContent='播放';};
-  video.ontimeupdate=()=>{if(context&&!video.paused){wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();}};
+  video.onpause=()=>{if(sourceBinding?.changing||!video.paused)return;$('mosaicPlay').textContent='播放';};
+  video.ontimeupdate=()=>{if(context&&!sourceBinding?.changing&&!video.paused){wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();}};
   video.onended=()=>{if(context){wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();loadFrame();}};
   new ResizeObserver(drawOverlay).observe($('mosaicStage'));
   window.Mosaic={mount};mount();

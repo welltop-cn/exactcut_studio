@@ -307,7 +307,9 @@ def get_session(batch_id, session_id):
     # Check existence before lock_file's parent creation.
     read_session(batch_id, session_id)
     with lock_file(path/'state.lock', blocking=True):
-        return recover(path, read_session(batch_id, session_id))
+        from . import editor_source
+        return {**recover(path, read_session(batch_id, session_id)),
+                "capabilities": {"oss_playback": editor_source.enabled()}}
 
 
 def require_reset(session, reset_at):
@@ -370,7 +372,8 @@ def open_session(batch_id, request_id, source_sha256):
                     'source_sha256': source_sha256, 'source_filename': source.name, 'metadata': meta,
                     'created_at': now_iso(), 'jobs': []}
             write_json_atomic(path/'session.json', data)
-            return data
+            from . import editor_source
+            return {**data, 'capabilities': {'oss_playback': editor_source.enabled()}}
         except Exception:
             shutil.rmtree(path, ignore_errors=True)
             raise

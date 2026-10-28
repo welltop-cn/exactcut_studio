@@ -66,7 +66,8 @@ def test_prefixed_login_redirect_pages_and_session(app):
     status, _, body = request(app, 'GET', '/home/', headers=headers)
     assert status == 200 and b'<base href="/home/">' in body
     assert b'src="app.js?v=' in body and b'href="template.xlsx"' not in body
-    for path in ('app.js', 'helper.js', 'template.xlsx', 'api/me', 'api/batches', 'healthz'):
+    assert b'src="editor-source.js?v=' in body
+    for path in ('app.js', 'editor-source.js', 'helper.js', 'template.xlsx', 'api/me', 'api/batches', 'healthz'):
         assert request(app, 'GET', '/home/' + path, headers=headers)[0] == 200
     assert request(app, 'GET', '/healthz')[0] == 200
 
