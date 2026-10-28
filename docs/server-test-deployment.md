@@ -266,3 +266,9 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 当前测试版本test-playback-62c42b3，包含播放诊断及取消竞态修复。1672项本地全量通过，Pi deepseek-flash high复审通过；真实Chrome复测快速拖动、恢复、关闭重开，诊断已落盘。仅测试部署，正式实例未更新。
 
 本轮保留播放复现隔离：worker/AI/material-fetch/publish/external-writes=0，scan/delivery/OSS预览关闭。**不得用历史recreate.sh无意恢复后台或交付能力**；最终启动脚本位于/srv/exactcut-test/deployments/playback-62c42b3/recreate.sh。测试账号、数据、复制项目均保留，详见[验收记录](verification/playback-test-acceptance-2026-10-27.md)。
+
+## 2026-10-28 OSS 正式原片播放测试
+
+当前测试版本 `test-editor-oss-0a3825b`，应用提交 `0a3825b`。干净提交完整回归 1723 passed、1 skipped；公网 Chrome 验证 OSS 主播放/定位、错误后服务器回退、处理前同源、处理后与下载仍为独立结果。测试实例保持运行，入口仍为 HTTP `/test/`。
+
+本次只重新开启 test namespace OSS 预览及 `cutting.oss_playback_enabled`；worker/AI/material-fetch/publish/external-writes=0，scan/delivery 关闭。安全启动脚本 `/srv/exactcut-test/deployments/editor-oss-0a3825b/recreate.sh`，不要使用历史根目录 recreate.sh。正式实例未修改。详细记录见 [本轮验收](verification/editor-oss-test-deployment-2026-10-28.md)。
