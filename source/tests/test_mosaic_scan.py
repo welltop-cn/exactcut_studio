@@ -64,6 +64,25 @@ def test_http_whole_scan_and_failure(configured,monkeypatch):
     finally:app.shutdown();app.server_close()
 
 
+def test_scan_failure_records_private_diagnostics_without_provider_body(configured,monkeypatch):
+    from exactcut import diagnostics
+    m=module();bid,sid=setup(configured);logged=[]
+    def fail(*args,**kwargs):
+        raise RuntimeError('private provider response')
+    monkeypatch.setattr(cutting_scan,'detect',fail)
+    monkeypatch.setattr(diagnostics,'event',lambda name,**fields:logged.append((name,fields)))
+    started=m.start(bid,sid,'');result=poll(m,bid,sid)
+    assert result['status']=='failed'
+    failures=[fields for name,fields in logged if name=='mosaic.scan_failed']
+    assert len(failures)==1
+    record=failures[0]
+    assert (record['batch_id'],record['session_id'],record['job_id'])==(bid,sid,started['id'])
+    assert record['error']['type']=='RuntimeError'
+    assert record['error']['frames'][-1]['function']=='fail'
+    assert 'private provider response' not in str(record)
+    assert 'private provider response' not in str(result)
+
+
 def test_partial_localization_retains_evidence(configured,monkeypatch):
     m=module();bid,sid=setup(configured);seen=[]
     monkeypatch.setattr(cutting_scan,'detect',coarse)

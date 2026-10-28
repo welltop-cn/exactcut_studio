@@ -2,7 +2,7 @@
 import threading
 import time
 import uuid
-from . import cutting, cutting_scan as scan, mosaic_locate as locate, mosaic_session as sessions, cutting_access, workflow
+from . import cutting, cutting_scan as scan, mosaic_locate as locate, mosaic_session as sessions, cutting_access, workflow, diagnostics
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 
 NOTICE='整片抽样发现疑似时间段，再自动抽帧定位区域；可能遗漏短闪帧，候选框不代表整段覆盖，需人工复核。'
@@ -117,6 +117,11 @@ def _work(bid,sid,path,job,cfg,key,leases):
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败，结果已失效')
             update(status='completed',events=events,warnings=warnings,completed_at=now_iso(),progress='整片识别完成，请人工复核')
     except Exception as exc:
+        # Provider exception text can contain response bodies; retain only metadata.
+        error=diagnostics.safe(exc)
+        error.pop('message',None)
+        diagnostics.event('mosaic.scan_failed',level='error',batch_id=bid,session_id=sid,
+                          job_id=job['id'],model=cfg['model'],error=error)
         update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '整片识别失败，请重试；原成片未修改')
     finally:
         for lease in reversed(leases):lease.close()
