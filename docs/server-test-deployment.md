@@ -272,3 +272,5 @@ Chrome真实播放验收：OSS签名视频320×568、1秒，readyState=4、ended
 当前测试版本 `test-editor-oss-0a3825b`，应用提交 `0a3825b`。干净提交完整回归 1723 passed、1 skipped；公网 Chrome 验证 OSS 主播放/定位、错误后服务器回退、处理前同源、处理后与下载仍为独立结果。测试实例保持运行，入口仍为 HTTP `/test/`。
 
 本次只重新开启 test namespace OSS 预览及 `cutting.oss_playback_enabled`；worker/AI/material-fetch/publish/external-writes=0，scan/delivery 关闭。安全启动脚本 `/srv/exactcut-test/deployments/editor-oss-0a3825b/recreate.sh`，不要使用历史根目录 recreate.sh。正式实例未修改。详细记录见 [本轮验收](verification/editor-oss-test-deployment-2026-10-28.md)。
+
+2026-10-28 后续：用户授权正式发布并关闭测试实例。正式版本 `us-east-20261028-editor-oss-33b0d1b` 健康正常后，测试专用 control stop 已完成，确认 exactcut-test=exited，账号/配置/视频保留。此状态取代上文“保持运行”。正式发布证据见 [记录](verification/editor-oss-production-release-2026-10-28.md)。
