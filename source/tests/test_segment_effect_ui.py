@@ -3,22 +3,22 @@ from test_clip_text_ui import page, parse
 
 def test_clip_effect_controls_and_invalidation(page):
     page.evaluate("current.draft.rows[0].clips=[{...blankClip(),episode:'1',end_s:'02'},{...blankClip(),episode:'2',end_s:'03'}];hookOptions(current.draft.rows[0]).preview_key='old';renderEditor()")
-    assert page.get_by_label('进入下一段时闪白', exact=True).count()==1
+    assert page.get_by_label('进入本段时闪白', exact=True).count()==1
     captions=page.get_by_label('本段字幕（选填）', exact=True)
     assert captions.count()==2
     captions.nth(1).fill('第二段字幕')
     assert page.get_by_label('本段字幕时长（秒）', exact=True).input_value()=='1.5'
     page.get_by_label('本段字幕时长（秒）', exact=True).fill('2.3')
-    page.get_by_label('进入下一段时闪白', exact=True).check()
+    page.get_by_label('进入本段时闪白', exact=True).check()
     assert page.evaluate('current.draft.rows[0].clips[1].segment_caption')=={'text':'第二段字幕','duration_ms':2300}
     assert page.evaluate('current.draft.rows[0].clips[1].transition_in')=='flash_white'
     duration=page.get_by_label('闪白时长（秒）',exact=True)
     assert duration.input_value()=='0.5'
     duration.fill('0.8')
     assert page.evaluate('current.draft.rows[0].clips[1].transition_duration_ms')==800
-    page.get_by_label('进入下一段时闪白',exact=True).uncheck()
+    page.get_by_label('进入本段时闪白',exact=True).uncheck()
     assert duration.count()==0
-    page.get_by_label('进入下一段时闪白',exact=True).check()
+    page.get_by_label('进入本段时闪白',exact=True).check()
     assert duration.input_value()=='0.8'
     assert not page.evaluate('current.draft.rows[0].hook_options.preview_key')
     captions.nth(1).fill('')
@@ -28,7 +28,7 @@ def test_clip_effect_controls_and_invalidation(page):
 def test_composition_effect_controls(page):
     page.evaluate("delete current.draft.rows[0].clips;current.draft.rows[0].composition=blankComposition();current.draft.rows[0].composition.plots.push({episode:'2',start:'00:00',end:'00:02'});renderEditor()")
     page.get_by_label('本段字幕（选填）',exact=True).nth(1).fill('剧情字幕')
-    page.get_by_label('进入下一段时闪白',exact=True).check()
+    page.get_by_label('进入本段时闪白',exact=True).check()
     assert page.evaluate('current.draft.rows[0].composition.plots[1].segment_caption.text')=='剧情字幕'
     assert page.evaluate('current.draft.rows[0].composition.plots[1].transition_in')=='flash_white'
     page.get_by_label('闪白时长（秒）',exact=True).fill('1.2')
