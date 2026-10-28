@@ -204,6 +204,7 @@ import fcntl
 import re
 import shutil
 import threading
+import time
 from contextlib import contextmanager
 from .util import read_json, write_json_atomic, json_sha256, now_iso
 
@@ -226,6 +227,25 @@ def lock_file(path, *, shared=False, blocking=False):
 def lock_root():
     from . import workflow
     return workflow.BATCHES.parent/'cut-locks'
+
+
+@contextmanager
+def frame_lease(path, *, timeout=2.0):
+    """Absorb short frame-window contention without unbounded HTTP waits."""
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            stream = lock_file(path)
+            break
+        except CutError as exc:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise CutError('准确帧正在生成，请稍后重试', 429) from exc
+            time.sleep(min(.05, remaining))
+    try:
+        yield
+    finally:
+        stream.close()
 
 
 @contextmanager
@@ -480,7 +500,7 @@ def frame_file(batch_id, session_id, index):
     if output.is_file():
         output.touch()
         return output
-    with lock_file(lock_root()/'frame.lock'):
+    with frame_lease(lock_root()/'frame.lock'):
         cache.mkdir(exist_ok=True)
         if output.is_file():
             output.touch()

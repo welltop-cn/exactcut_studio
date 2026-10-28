@@ -194,3 +194,21 @@ def test_discard_fences_stale_window_mutations(ready):
         assert call(app, 'POST', route+'/discard', {'reset_at': reset['reset_at']})[0] == 200
     finally:
         app.shutdown(); app.server_close()
+
+
+@pytest.mark.parametrize('kind', ['cuts', 'mosaics'])
+def test_source_stream_works_while_compute_and_frame_locks_busy(ready, kind):
+    bid, rid, sha, source = ready
+    app = serve()
+    base = f'/api/batches/{bid}/{kind}'
+    try:
+        status, session = call(app, 'POST', base+'/open', {
+            'request_id': rid, 'source_sha256': sha})
+        assert status == 200
+        with cutting.lock_file(cutting.lock_root()/'compute.lock'), \
+                cutting.lock_file(cutting.lock_root()/'frame.lock'):
+            status, video = call(app, 'GET', base+'/'+session['id']+'/source')
+        assert status == 200
+        assert video == source.read_bytes()
+    finally:
+        app.shutdown(); app.server_close()

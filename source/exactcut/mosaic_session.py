@@ -5,7 +5,7 @@ import tempfile
 from fractions import Fraction
 from pathlib import Path
 from . import cutting, cutting_scan, cutting_access, workflow, storage
-from .cutting import CutError, lock_file, lock_root, run
+from .cutting import CutError, lock_file, lock_root, run, frame_lease
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 
 
@@ -62,7 +62,7 @@ def frame_file(batch_id, session_id, index):
     if output.is_file():
         output.touch()
         return output
-    with lock_file(lock_root()/'frame.lock'):
+    with frame_lease(lock_root()/'frame.lock'):
         cache.mkdir(exist_ok=True)
         if output.is_file():
             output.touch()
