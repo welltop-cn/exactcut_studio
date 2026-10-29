@@ -65,3 +65,9 @@ def guidance(message, stage=None, *, continuation=False, fbbm_status=None):
     elif any(s in lower for s in ('中断', '启动失败', '进程已结束')):
         code, title, action = 'interrupted', '执行进程中断', '查看服务日志后重试，已校验成片及已保存上传记录会复用。'
     return {'code': code, 'title': title, 'action': action, 'detail': redact(message)}
+
+
+def editor_resource_busy(message):
+    """Explicit admission errors only; never classify by status or message text."""
+    return {'code': 'editor_resource_busy', 'title': '处理资源暂忙',
+            'action': '请稍候重试；当前选择会保留。', 'detail': redact(message)}

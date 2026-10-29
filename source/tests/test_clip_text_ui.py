@@ -15,6 +15,7 @@ def page():
         page = browser.new_page()
         page.route('**/*', lambda route: route.fulfill(body=html, content_type='text/html'))
         page.goto('http://fixture.test/')
+        page.add_script_tag(content=(root/'editor-busy.js').read_text())
         page.add_script_tag(content=source)
         page.evaluate('''() => {
             currentUser={features:{material_fetch:false}};

@@ -1054,7 +1054,7 @@ class Handler(BaseHTTPRequestHandler):
             body = body.replace(b'<script src="app.js">', b'<script src="diagnostics.js"></script><script src="app.js">')
         if name == 'index.html':
             body = body.replace(b'<script src="cutting.js">', b'<script src="editor-source.js"></script><script src="cutting.js">')
-            for script in ('app.js', 'helper.js', 'diagnostics.js', 'editor-source.js', 'cutting.js', 'mosaic.js'):
+            for script in ('app.js', 'helper.js', 'diagnostics.js', 'editor-source.js', 'editor-busy.js', 'cutting.js', 'mosaic.js'):
                 version = hashlib.sha256((CODE_ROOT / 'exactcut/web' / script).read_bytes()).hexdigest()[:20]
                 body = body.replace(f'src="{script}"'.encode(), f'src="{script}?v={version}"'.encode())
             app_version = hashlib.sha256((CODE_ROOT / 'exactcut/web/app.js').read_bytes()).hexdigest()[:20]
@@ -1079,11 +1079,15 @@ class Handler(BaseHTTPRequestHandler):
         return self.respond(200, gzip.compress(body, mtime=0) if compressed else body,
                             'text/javascript; charset=utf-8', cache=cache, encoding='gzip' if compressed else None, vary=True)
 
-    def respond(self, code, body, kind='application/json; charset=utf-8', *, cache='no-store', encoding=None, vary=False):
+    def respond(self, code, body, kind='application/json; charset=utf-8', *, cache='no-store', encoding=None, vary=False, retry_after=None):
+        if retry_after is not None and (type(retry_after) is not int or not 1 <= retry_after <= 3600):
+            raise ValueError('retry_after must be an integer between 1 and 3600')
         if code >= 400:
             diag.event('http.rejected', level='warning', status=code, route=getattr(self, 'diagnostic_route', None),
                        actor=(getattr(self, 'user', None) or {}).get('username'),
-                       reason=body.get('error') if isinstance(body, dict) else None)
+                       reason=body.get('error') if isinstance(body, dict) else None,
+                       error_code=body.get('code') if isinstance(body, dict) else None,
+                       resource=body.get('resource') if isinstance(body, dict) else None)
         if isinstance(body, dict) and body.get('error'):
             from .error_guidance import guidance, redact
             body = {**body, 'error': redact(body['error']),
@@ -1100,6 +1104,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', kind)
         self.send_header('Content-Length', str(len(body)))
         self.send_header('Cache-Control', cache)
+        if retry_after is not None:
+            self.send_header('Retry-After', str(retry_after))
         if encoding:
             self.send_header('Content-Encoding', encoding)
         if vary:
@@ -1265,6 +1271,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.script('helper.js')
         if self.path == '/mosaic.js':
             return self.script('mosaic.js')
+        if self.path == '/editor-busy.js':
+            return self.script('editor-busy.js')
         if self.path == '/editor-source.js':
             return self.script('editor-source.js')
         if self.path == '/cutting.js':
@@ -1763,7 +1771,8 @@ class Handler(BaseHTTPRequestHandler):
             if self.path == '/api/client-events':
                 allowed = {'page_error', 'unhandled_rejection', 'network_error', 'slow_request', 'action',
                            'request_started', 'request_completed', 'media_error', 'media_stalled',
-                           'media_waiting', 'media_playing', 'media_play_rejection', 'page_ready', 'visibility'}
+                           'media_waiting', 'media_playing', 'media_play_rejection', 'page_ready', 'visibility',
+                           'editor_retry', 'editor_action_latency', 'editor_long_task'}
                 if data.get('event') not in allowed or size > 4096:
                     return self.respond(400, {'error': '无效诊断事件'})
                 fields = diag.browser_fields(data)

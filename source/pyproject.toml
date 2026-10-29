@@ -34,4 +34,4 @@ addopts = "-q"
 
 
 [tool.setuptools.package-data]
-exactcut = ["hook_visual_styles.json", "web/index.html", "web/app.js", "web/helper.js", "web/editor-source.js", "web/cutting.js", "web/mosaic.js", "help/*.json", "fonts/*", "title_image/*.mjs", "assets/brand/*.png", "web/brand-style.jpg"]
+exactcut = ["hook_visual_styles.json", "web/index.html", "web/app.js", "web/helper.js", "web/editor-source.js", "web/editor-busy.js", "web/cutting.js", "web/mosaic.js", "help/*.json", "fonts/*", "title_image/*.mjs", "assets/brand/*.png", "web/brand-style.jpg"]

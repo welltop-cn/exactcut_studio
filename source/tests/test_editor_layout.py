@@ -10,7 +10,7 @@ def test_grouped_editor_preserves_fields_and_delegated_events(mode):
     with pytest.importorskip('playwright.sync_api').sync_playwright() as p:
         browser=p.chromium.launch(headless=True)
         page=browser.new_page(viewport={'width':1280,'height':1000}); errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
-        page.route('**/*',lambda route:route.fulfill(body=html,content_type='text/html'));page.goto('http://fixture.test');page.add_script_tag(content=js)
+        page.route('**/*',lambda route:route.fulfill(body=html,content_type='text/html'));page.goto('http://fixture.test');page.add_script_tag(content=(root/'editor-busy.js').read_text());page.add_script_tag(content=js)
         row=dict(request_id='R1',seq=1,hook_text='Hello world',timeline_text='字卡|Story|1.5s',hook_options=dict(mode='none',style='default',position='top',duration_ms=3000,manual_ranges=[]))
         if mode=='clips':row['clips']=[dict(episode='1',start_s='0',end_s='2')]
         if mode=='composition':row['composition']=dict(opening=dict(text='Hello world',style='default',position='top',duration_s=3),plots=[dict(episode='1',start='00:00',end='00:02')])

@@ -49,6 +49,8 @@
 
 识别初期优先覆盖open/frame/scan(force=false)。后续要开放生成任务的网络恢复，另行设计持久操作ID与按ID查询，使请求ID、配方、任务ID一一关联；不能把HTTP trace/client_request_id冒充幂等键。
 
+实现范围补充（架构师审查后）：本轮 scan 恢复仅覆盖默认统一编辑器 mosaic.js；旧剪切入口 cutting.js 只接入 open/frame，其 scan 恢复另行跟进，不计为本轮已完成能力。浏览器 retry 事件首期只提供资源、身份与耗时，操作类型、attempt、链标识及取消终态尚未实现，因此“请求数/意图”和完整恢复率仍是后续诊断验收目标。
+
 ### 减少请求冲突
 
 直接复用已有100ms seek防抖、AbortController、prepare()的preparing Promise Map及128帧缓存，不另建一套去重机制。只补同帧未完成请求复用的缺口测试和重试定时器取消；新seek立即清除旧重试。取消前请求无法停止服务器工作，需记录frame生成/缓存命中，验证优化是否确实减少计算。跨用户仍由现有frame锁控制，不先增加多进程并发。

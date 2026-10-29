@@ -7,6 +7,7 @@ import tempfile
 from fractions import Fraction
 from pathlib import Path
 
+from . import diagnostics
 from .media import bounded_ffmpeg, ffprobe
 from .util import load_config, file_sha256
 
@@ -15,6 +16,28 @@ class CutError(ValueError):
     def __init__(self, message, status=400):
         super().__init__(message)
         self.status = status
+
+
+class ResourceBusy(CutError):
+    """A known resource refused admission before any work was accepted."""
+    def __init__(self, resource):
+        messages = {'frame': '准确帧正在生成，请稍后重试',
+                    'compute': '视频处理资源暂忙，请稍后重试',
+                    'scan': '识别资源暂忙，请稍后重试'}
+        if resource not in messages:
+            raise ValueError('unsupported retryable editor resource')
+        super().__init__(messages[resource], 429)
+        self.resource = resource
+
+
+def respond_error(handler, exc):
+    body = {'error': str(exc)}
+    if isinstance(exc, ResourceBusy):
+        from .error_guidance import editor_resource_busy
+        body.update(code='editor_resource_busy', retryable=True, resource=exc.resource,
+                    retry_after_ms=1000, error_info=editor_resource_busy(str(exc)))
+        return handler.respond(exc.status, body, retry_after=1)
+    return handler.respond(exc.status, body)
 
 
 def settings():
@@ -94,7 +117,8 @@ def probe_source(source):
     if source.stat().st_size > config.get('max_source_bytes', 512*1024**2):
         raise CutError('本机剪切支持 512 MB 以内的成片')
     try:
-        data = ffprobe(source)
+        with diagnostics.span('editor.prepare.probe_basic', private_error=True):
+            data = ffprobe(source)
         video = next(s for s in data['streams'] if s['codec_type'] == 'video')
         rate = Fraction(video['avg_frame_rate'])
         tick = Fraction(video['time_base'])
@@ -107,8 +131,9 @@ def probe_source(source):
             raise CutError('本机剪切支持最长边 1920 像素以内的成片')
         if abs(start) > float(tick) or any(s.get('rotation', 0) % 360 for s in video.get('side_data_list', [])):
             raise CutError('暂不支持带时间偏移或旋转标记的视频，请使用项目生成的成片')
-        raw = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_frames',
-                   '-show_entries', 'frame=best_effort_timestamp_time', '-of', 'json', str(source)], 60)
+        with diagnostics.span('editor.prepare.probe_timestamps', private_error=True):
+            raw = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_frames',
+                       '-show_entries', 'frame=best_effort_timestamp_time', '-of', 'json', str(source)], 60)
         frames = json.loads(raw)['frames']
         if not frames or any(abs(Fraction(f['best_effort_timestamp_time']) - Fraction(n, 1)/rate)
                              > max(tick*2, Fraction(2, 1000000)) for n, f in enumerate(frames)):
@@ -209,7 +234,9 @@ from contextlib import contextmanager
 from .util import read_json, write_json_atomic, json_sha256, now_iso
 
 
-def lock_file(path, *, shared=False, blocking=False):
+def lock_file(path, *, shared=False, blocking=False, resource=None):
+    if resource is not None and resource not in {'frame', 'compute', 'scan'}:
+        raise ValueError('unsupported retryable editor resource')
     path.parent.mkdir(parents=True, exist_ok=True)
     stream = path.open('a')
     try:
@@ -217,6 +244,8 @@ def lock_file(path, *, shared=False, blocking=False):
                     | (0 if blocking else fcntl.LOCK_NB))
     except BlockingIOError as exc:
         stream.close()
+        if resource is not None:
+            raise ResourceBusy(resource) from exc
         raise CutError('后台正在处理其他视频，请稍候点击重试', 429) from exc
     except BaseException:
         stream.close()
@@ -232,7 +261,8 @@ def lock_root():
 @contextmanager
 def frame_lease(path, *, timeout=2.0):
     """Absorb short frame-window contention without unbounded HTTP waits."""
-    deadline = time.monotonic() + timeout
+    started = time.monotonic()
+    deadline = started + timeout
     while True:
         try:
             stream = lock_file(path)
@@ -240,8 +270,10 @@ def frame_lease(path, *, timeout=2.0):
         except CutError as exc:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise CutError('准确帧正在生成，请稍后重试', 429) from exc
+                diagnostics.event('editor.frame_wait', duration_ms=round((time.monotonic()-started)*1000), admitted=False)
+                raise ResourceBusy('frame') from exc
             time.sleep(min(.05, remaining))
+    diagnostics.event('editor.frame_wait', duration_ms=round((time.monotonic()-started)*1000), admitted=True)
     try:
         yield
     finally:
@@ -338,45 +370,49 @@ def discard(batch_id, session_id, *, reset_at=''):
 
 
 def open_session(batch_id, request_id, source_sha256):
-    from . import workflow, storage
-    if not isinstance(request_id, str) or not isinstance(source_sha256, str) or not re.fullmatch('[0-9a-f]{64}', source_sha256):
-        raise CutError('成片版本参数无效')
-    from .cutting_access import require_editable
-    require_editable(workflow.folder(batch_id), request_id, source_sha=source_sha256)
-    source, record = workflow.preview_file(batch_id, request_id)
-    if record.get('output_sha256') != source_sha256:
-        raise CutError('成片版本已变化，请刷新页面后重新打开剪切', 409)
-    sid = json_sha256([batch_id, request_id, source_sha256])[:32]
-    path = session_path(batch_id, sid)
-    if (path/'session.json').is_file():
-        return get_session(batch_id, sid)
-    with lock_file(lock_root()/'compute.lock'):
+    with diagnostics.span('editor.open', private_error=True, editor='cuts'):
+        from . import workflow, storage
+        if not isinstance(request_id, str) or not isinstance(source_sha256, str) or not re.fullmatch('[0-9a-f]{64}', source_sha256):
+            raise CutError('成片版本参数无效')
+        from .cutting_access import require_editable
+        require_editable(workflow.folder(batch_id), request_id, source_sha=source_sha256)
+        source, record = workflow.preview_file(batch_id, request_id)
+        if record.get('output_sha256') != source_sha256:
+            raise CutError('成片版本已变化，请刷新页面后重新打开剪切', 409)
+        sid = json_sha256([batch_id, request_id, source_sha256])[:32]
+        path = session_path(batch_id, sid)
         if (path/'session.json').is_file():
             return get_session(batch_id, sid)
-        if source.stat().st_size > settings().get('max_source_bytes', 512*1024**2):
-            raise CutError('本机剪切支持 512 MB 以内的成片')
-        storage.require_space(source.parent, source.stat().st_size*3)
-        path.mkdir(parents=True, exist_ok=True)
-        temporary = path/'source.partial.mp4'
-        try:
-            shutil.copyfile(source, temporary)
-            if file_sha256(temporary) != source_sha256:
-                raise CutError('原成片内容已变化，请重新打开剪切', 409)
-            meta = probe_source(temporary)
-            # Recheck after copying to reject a concurrent generation switch.
-            _, current_record = workflow.preview_file(batch_id, request_id)
-            if current_record.get('output_sha256') != source_sha256:
-                raise CutError('成片版本已变化，请重新打开剪切', 409)
-            temporary.replace(path/'source.mp4')
-            data = {'schema_version': 1, 'id': sid, 'batch_id': batch_id, 'request_id': request_id,
-                    'source_sha256': source_sha256, 'source_filename': source.name, 'metadata': meta,
-                    'created_at': now_iso(), 'jobs': []}
-            write_json_atomic(path/'session.json', data)
-            from . import editor_source
-            return {**data, 'capabilities': {'oss_playback': editor_source.enabled()}}
-        except Exception:
-            shutil.rmtree(path, ignore_errors=True)
-            raise
+        with lock_file(lock_root()/'compute.lock', resource='compute'):
+            if (path/'session.json').is_file():
+                return get_session(batch_id, sid)
+            if source.stat().st_size > settings().get('max_source_bytes', 512*1024**2):
+                raise CutError('本机剪切支持 512 MB 以内的成片')
+            storage.require_space(source.parent, source.stat().st_size*3)
+            path.mkdir(parents=True, exist_ok=True)
+            temporary = path/'source.partial.mp4'
+            try:
+                with diagnostics.span('editor.prepare.copy', private_error=True):
+                    shutil.copyfile(source, temporary)
+                with diagnostics.span('editor.prepare.hash', private_error=True):
+                    copied_sha = file_sha256(temporary)
+                if copied_sha != source_sha256:
+                    raise CutError('原成片内容已变化，请重新打开剪切', 409)
+                meta = probe_source(temporary)
+                # Recheck after copying to reject a concurrent generation switch.
+                _, current_record = workflow.preview_file(batch_id, request_id)
+                if current_record.get('output_sha256') != source_sha256:
+                    raise CutError('成片版本已变化，请重新打开剪切', 409)
+                temporary.replace(path/'source.mp4')
+                data = {'schema_version': 1, 'id': sid, 'batch_id': batch_id, 'request_id': request_id,
+                        'source_sha256': source_sha256, 'source_filename': source.name, 'metadata': meta,
+                        'created_at': now_iso(), 'jobs': []}
+                write_json_atomic(path/'session.json', data)
+                from . import editor_source
+                return {**data, 'capabilities': {'oss_playback': editor_source.enabled()}}
+            except Exception:
+                shutil.rmtree(path, ignore_errors=True)
+                raise
 
 
 def get_job(data, job_id):
@@ -408,7 +444,7 @@ def start_render(batch_id, session_id, ranges, mosaics=None):
             return existing
         if not existing and len(data['jobs']) >= 20:
             raise CutError('本次成片最多生成 20 个剪切方案')
-        compute = lock_file(lock_root()/'compute.lock')
+        compute = lock_file(lock_root()/'compute.lock', resource='compute')
         worker_lease = batch_lock = None
         try:
             worker_lease = lock_file(path/(recipe+'.lock'))
@@ -501,11 +537,13 @@ def frame_file(batch_id, session_id, index):
     cache = path/'frames'
     output = cache/f'{index}.jpg'
     if output.is_file():
+        diagnostics.event('editor.frame_cache_hit', editor='cuts', after_wait=False)
         output.touch()
         return output
     with frame_lease(lock_root()/'frame.lock'):
         cache.mkdir(exist_ok=True)
         if output.is_file():
+            diagnostics.event('editor.frame_cache_hit', editor='cuts', after_wait=True)
             output.touch()
             return output
         meta = data['metadata']
@@ -519,9 +557,10 @@ def frame_file(batch_id, session_id, index):
             command = ['ffmpeg', '-y', '-v', 'error']
             if start:
                 command += ['-ss', f'{float(seek):.9f}']
-            run(command + ['-i', str(path/'source.mp4'), '-an', '-vf', "scale=w='min(540,iw)':h=-2",
-                 '-frames:v', str(size), '-fps_mode', 'passthrough', '-q:v', '2',
-                 '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60)
+            with diagnostics.span('editor.frame_generate', private_error=True, editor='cuts'):
+                run(command + ['-i', str(path/'source.mp4'), '-an', '-vf', "scale=w='min(540,iw)':h=-2",
+                     '-frames:v', str(size), '-fps_mode', 'passthrough', '-q:v', '2',
+                     '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60)
             files = [Path(directory)/f'{n}.jpg' for n in range(start, start+size)]
             if not all(f.is_file() and f.stat().st_size for f in files):
                 raise CutError('准确帧窗口不完整，请重试')

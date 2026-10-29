@@ -18,6 +18,7 @@
   let manualClips=[],savedManualClips=[],addingClip=false,manualAction='delete';
   let aiEvents=[],clipEdits={},savedAiEvents=[],savedClipEdits={};
   const allEvents=()=>[...(aiEvents.length?aiEvents:scanReport?.status==='running'?(scanReport.events||[]):[]),...manualClips];
+  let scanController=null, releasePreparation=null, pendingFrame=-1;
   let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
   const base=()=>`/api/batches/${context.batch}/mosaics/${context.session.id}`;
   const meta=()=>context.session.metadata;
@@ -248,18 +249,37 @@
   async function scanVideo(start=false,autoStart=false){
     if(!context||scanLoading||loading)return;
     autoScanPending=false;
-    const version=epoch,request=++scanToken,endpoint=base(),valid=()=>active(version)&&request===scanToken;
+    const version=epoch,request=++scanToken,endpoint=base(),identity=JSON.stringify([context.session.source_sha256,context.session.reset_at]),valid=()=>active(version)&&request===scanToken&&identity===JSON.stringify([context.session.source_sha256,context.session.reset_at]);
+    scanController?.abort();const scanAbort=new AbortController();scanController=scanAbort;
+    const submit=async force=>{
+      const body={reset_at:context.session.reset_at||'',force},previous=scanReport?.id;
+      const send=()=>api(endpoint+'/scan',body,{signal:scanAbort.signal});
+      try{return await (force?send():EditorBusy.run(send,{signal:scanAbort.signal,valid,diagnostics:{batch:context.batch,request:context.asset.request_id,session:context.session.id},onWait:(n,max)=>status(`处理资源暂忙，正在重试（${n}/${max}）`)}));}
+      catch(e){
+        if(!valid()||scanAbort.signal.aborted||e.status||!(e instanceof TypeError||e.outcomeUnknown))throw e;
+        status('正在核对任务状态…');
+        try{
+          const observed=await api(endpoint+'/scan',undefined,{signal:scanAbort.signal});
+          if(!valid()||scanAbort.signal.aborted)throw new DOMException('已取消等待','AbortError');
+          const report=checkedReport(observed.report);
+          if(observed.enabled===true&&report?.id&&report.source_sha256===context.session.source_sha256&&report.reset_at===(context.session.reset_at||'')&&report.id!==previous&&['running','completed'].includes(report.status)){
+            status('已读取当前识别任务状态；提交回执未确认。');return report;
+          }
+        }catch(checkError){if(checkError.name==='AbortError')throw checkError;}
+        throw Error('识别提交结果待核实，未重复提交。请稍后重新读取状态；再次手动识别可能产生新任务。');
+      }
+    };
     scanLoading=true;scanError='';paint();
     try{
       let state;
       if(start){
-        const report=await api(endpoint+'/scan',{reset_at:context.session.reset_at||'',force:!!scanReport});
+        const report=await submit(!!scanReport);
         state={enabled:true,report};
       }else {
         state=await api(endpoint+'/scan');
         if(valid()&&autoStart&&state.enabled===true&&state.report===null){
           status('正在自动识别整段视频…');
-          state={enabled:true,report:await api(endpoint+'/scan',{reset_at:context.session.reset_at||'',force:false})};
+          state={enabled:true,report:await submit(false)};
         }
       }
       while(valid()){
@@ -298,16 +318,17 @@
     overlay.innerHTML=candidates.map(c=>`<button class="mosaic-box ${c.id===selected?'selected':''}" data-box="${esc(c.id)}" aria-label="选择 ${esc(c.label)}" style="left:${c.x/meta().width*100}%;top:${c.y/meta().height*100}%;width:${c.w/meta().width*100}%;height:${c.h/meta().height*100}%"><span>${esc(c.label)}</span>${c.id===selected&&!editLocked()?['n','s','e','w','ne','nw','se','sw'].map(edge=>`<i data-resize="${edge}" class="mosaic-handle ${edge}"></i>`).join(''):''}</button>`).join('');
   }
   async function loadFrame(){
-    if(!context||!dialog.open||!video.paused)return;
+    if(document.hidden||!context||!dialog.open||!video.paused||resultMode)return;
+    if(frameLoading&&pendingFrame===wanted&&!controller?.signal.aborted)return;
     const version=epoch,frame=wanted,url=base()+`/frame/${frame}`;
-    controller?.abort();const request=new AbortController();controller=request;frameLoading=true;paint();
+    controller?.abort();const request=new AbortController();controller=request;pendingFrame=frame;frameLoading=true;paint();
     $('mosaicFrameHint').textContent='正在读取准确帧…';$('mosaicFrameRetry').hidden=true;
     try{
-      const response=await fetch(appUrl(url),{signal:request.signal});if(!response.ok)throw Error('准确帧读取失败，请重试');
-      const blob=await response.blob();if(!active(version)||request!==controller)return;
+      const response=await EditorBusy.run(()=>EditorBusy.frame(appUrl(url),request.signal),{signal:request.signal,maxRetries:1,diagnostics:{batch:context.batch,request:context.asset.request_id,session:context.session.id},valid:()=>active(version)&&request===controller&&wanted===frame,onWait:(n,max)=>{$('mosaicFrameHint').textContent=`处理资源暂忙，正在重试（${n}/${max}）`;}});
+      const blob=await response.blob();if(!active(version)||request!==controller||request.signal.aborted||document.hidden)return;
       const next=URL.createObjectURL(blob);image.src=next;
       try{await image.decode();}catch{URL.revokeObjectURL(next);throw Error('准确帧读取失败，请重试');}
-      if(!active(version)||request!==controller||frame!==wanted||!video.paused){URL.revokeObjectURL(next);return;}
+      if(!active(version)||request!==controller||request.signal.aborted||document.hidden||frame!==wanted||!video.paused){URL.revokeObjectURL(next);return;}
       if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=next;ready=frame;image.hidden=false;
       $('mosaicFrameHint').textContent=motion==='fixed'?'固定位置 · 所选时间内保持此位置':'准确帧 · 框仅对应当前参考帧，尚未跟踪';
     }catch(e){if(active(version)&&request===controller&&e.name!=='AbortError'){$('mosaicFrameHint').textContent=e.message;$('mosaicFrameRetry').hidden=false;}}
@@ -344,16 +365,27 @@
   // Keep only in-flight requests so re-entry joins the same preparation, while
   // later opens still validate the current source and editing permissions.
   const preparing=new Map();
-  function prepare(batch,asset){
+  function prepare(batch,asset,valid){
     const id=JSON.stringify([currentUser?.username,batch,asset.request_id,asset.sha256]);
-    if(!preparing.has(id)){
-      const pending=api(`/api/batches/${batch}/mosaics/open`,{request_id:asset.request_id,source_sha256:asset.sha256})
-        .finally(()=>preparing.delete(id));
-      preparing.set(id,pending);
+    let entry=preparing.get(id);
+    if(!entry){
+      entry={consumers:new Set(),abort:new AbortController()};
+      const body={request_id:asset.request_id,source_sha256:asset.sha256};
+      const live=()=>[...entry.consumers].some(v=>v());
+      // The initial microtask lets the first consumer register before sending.
+      entry.pending=Promise.resolve().then(()=>EditorBusy.run(()=>api(`/api/batches/${batch}/mosaics/open`,body),{
+        signal:entry.abort.signal,valid:live,diagnostics:{batch,request:asset.request_id},
+        onWait:(n,max)=>{entry.waiting=true;if(live())status(`处理资源暂忙，正在重试（${n}/${max}）`);},
+        onSend:()=>{entry.waiting=false;if(live())status('正在准备原片，首次打开需要一些时间；关闭后重新进入会继续等待…');}
+      })).finally(()=>{if(preparing.get(id)===entry)preparing.delete(id);});
+      preparing.set(id,entry);
     }
-    return preparing.get(id);
+    entry.consumers.add(valid);
+    releasePreparation=()=>{entry.consumers.delete(valid);if(!entry.consumers.size){entry.abort.abort();if(entry.waiting&&preparing.get(id)===entry)preparing.delete(id);}};
+    return entry.pending;
   }
   async function open(batch,asset){
+    releasePreparation?.();scanController?.abort();
     sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;
     const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;playbackError=false;pausePlayback();motion='tracked';wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
     batchToken++;batchJob=null;batchLoading=false;stopPending=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
@@ -362,7 +394,7 @@
     for(const v of $('assets').querySelectorAll('video'))v.pause();
     if(!dialog.open)dialog.showModal();status('正在准备原片，首次打开需要一些时间；关闭后重新进入会继续等待…');
     try{
-      const session=await prepare(batch,asset);
+      const session=await prepare(batch,asset,()=>version===epoch&&dialog.open&&!document.hidden);
       if(version!==epoch||!dialog.open)return;context={batch,asset,session};
       for(const id of ['mosaicSource', 'mosaicBatchVideo', 'mosaicTrackVideo']){Object.assign($(id).dataset,{previewBatch:batch,previewRequest:asset.request_id,previewSession:session.id});}
       $('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);$('mosaicSeek').max=meta().frame_count-1;
@@ -391,7 +423,8 @@
   }
   $('mosaicClose').onclick=()=>{if(!mutationBusy){$('mosaicEffects').close();dialog.close();}};
   dialog.addEventListener('cancel',e=>{if(mutationBusy)e.preventDefault();});
-  dialog.addEventListener('close',()=>{if(dialog.open)return;sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
+  dialog.addEventListener('close',()=>{if(dialog.open)return;releasePreparation?.();releasePreparation=null;scanController?.abort();sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){releasePreparation?.();scanController?.abort();controller?.abort();clearTimeout(timer);}else if(context&&dialog.open&&video.paused&&!resultMode&&ready!==wanted){loadFrame();}});
   $('mosaicScan').onclick=()=>scanVideo(!scanError&&scanReport?.status!=='running');
   $('mosaicScanEvents').onclick=e=>{const b=e.target.closest('[data-scan-event]');if(b)viewScanEvent(b.dataset.scanEvent);};
   $('mosaicScanMarkers').onclick=e=>{const b=e.target.closest('[data-scan-marker]');if(b)viewScanEvent(b.dataset.scanMarker);};

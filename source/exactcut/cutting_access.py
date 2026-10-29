@@ -21,7 +21,10 @@ def gate(path, request_id=None):
     try:
         if request_id is not None:
             key = sha256(request_id.encode()).hexdigest()
-            asset = lock_file(directory / (path.name + '-' + key + '.lock'))
+            try:
+                asset = lock_file(directory / (path.name + '-' + key + '.lock'))
+            except CutError as exc:
+                raise CutError('该素材正在执行其他操作，请稍后重试', 429) from exc
         yield
     finally:
         if asset: asset.close()

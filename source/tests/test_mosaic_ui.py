@@ -39,6 +39,7 @@ def editor():
           $('assets').innerHTML='<article data-asset="0"><div class="cut-tools"><button data-open-cut>剪切</button></div></article>';
           $('assets').closest('[hidden]')?.removeAttribute('hidden');
         }''')
+        page.add_script_tag(content=(root/'editor-busy.js').read_text())
         page.add_script_tag(content=(root/'editor-source.js').read_text())
         script=root/'mosaic.js'
         if script.exists():
@@ -1209,3 +1210,76 @@ def test_auto_scan_waits_for_first_frame_and_recovers_after_frame_retry(editor):
     editor.route('**/frame/*',lambda r:r.fulfill(body=jpeg.getvalue(),content_type='image/jpeg'))
     editor.locator('#mosaicFrameRetry').click()
     editor.wait_for_function('scanWrites===1')
+
+
+def test_resource_busy_open_retries_same_body(editor):
+    editor.clock.install()
+    editor.evaluate('''() => {Math.random=()=>0; const original=api;window.opens=[];
+      window.api=async(url,body)=>{if(url.endsWith('/open')){opens.push(JSON.stringify(body));if(opens.length===1)throw Object.assign(Error('busy'),{status:429,code:'editor_resource_busy',resource:'compute',retryable:true});}return original(url,body)};
+    }''')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.wait_for_function('opens.length===1')
+    assert '正在重试' in editor.locator('#mosaicStatus').inner_text()
+    editor.clock.run_for(1000)
+    editor.wait_for_function('opens.length===2')
+    assert editor.evaluate('opens[0]===opens[1]')
+    editor.wait_for_function("!document.getElementById('mosaicWorkspace').hidden")
+
+
+def test_close_cancels_busy_open_retry(editor):
+    editor.clock.install()
+    editor.evaluate('''() => {window.opens=0;window.api=async()=>{opens++;throw Object.assign(Error('busy'),{status:429,code:'editor_resource_busy',resource:'compute',retryable:true});};}''')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.wait_for_function('opens===1')
+    editor.locator('#mosaicClose').click()
+    editor.clock.run_for(20000)
+    assert editor.evaluate('opens') == 1
+
+
+@pytest.mark.parametrize('outcome', ['old', 'new', 'failed'])
+def test_scan_lost_response_queries_once_never_reposts(editor, outcome):
+    open_editor(editor)
+    editor.wait_for_function("!document.getElementById('mosaicScan').disabled")
+    editor.evaluate('''outcome=>{window.writes=0;window.reads=0;const original=api;window.api=async(url,body)=>{
+      if(!url.endsWith('/scan'))return original(url,body);
+      if(body){writes++;throw Object.assign(Error('timeout'),{outcomeUnknown:true});}
+      reads++;if(outcome==='failed')throw TypeError('offline');
+      return {enabled:true,report:{id:outcome==='new'?'new-task':'existing',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]}};
+    }}''', outcome)
+    editor.locator('#mosaicScan').evaluate('(el)=>el.click()')
+    editor.wait_for_function('reads===1')
+    editor.wait_for_function("!document.getElementById('mosaicScan').disabled")
+    assert editor.evaluate('writes') == 1
+    if outcome != 'new':
+        assert '待核实' in editor.locator('#mosaicScanStatus').inner_text()
+    else:
+        assert '已读取当前识别任务状态' in editor.locator('#mosaicStatus').inner_text()
+
+
+@pytest.mark.parametrize('failure', ['disconnect', 'timeout'])
+def test_real_api_scan_accepted_body_failure_reconciles_once(editor, failure):
+    open_editor(editor)
+    editor.wait_for_function("!document.getElementById('mosaicScan').disabled")
+    editor.clock.install()
+    editor.clock.pause_at(editor.evaluate('Date.now()'))
+    source=(Path(__file__).parents[1]/'exactcut/web/app.js').read_text()
+    api_source=source[source.index('async function api('):source.index('function positionToast(')]
+    editor.evaluate('source=>{window.batchCache=[];window.api=eval("("+source+")")}', api_source)
+    editor.evaluate('''failure=>{window.posts=0;window.gets=0;window.fetch=async(url,options)=>{
+      if(options.method==='POST'){
+        posts++;
+        const body=new ReadableStream({start(controller){
+          if(failure==='disconnect')controller.error(TypeError('body disconnected'));
+          else options.signal.addEventListener('abort',()=>controller.error(new DOMException('timeout','AbortError')));
+        }});
+        return new Response(body,{status:202});
+      }
+      gets++;return new Response(JSON.stringify({enabled:true,report:{id:'new-task',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]}}));
+    };$('mosaicScan').click();}''',failure)
+    editor.wait_for_function('posts===1')
+    if failure=='timeout':
+        editor.clock.run_for(120000)
+    editor.wait_for_function('gets===1')
+    editor.wait_for_function("!document.getElementById('mosaicScan').disabled")
+    assert editor.evaluate('posts')==1
+    assert '已读取当前识别任务状态' in editor.locator('#mosaicStatus').inner_text()

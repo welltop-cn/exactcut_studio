@@ -17,6 +17,7 @@ def frame_page():
             else: req.fulfill(body=html,content_type='text/html')
         page.route('**/*',route)
         page.goto('http://fixture.test/')
+        page.add_script_tag(content=(ROOT/'editor-busy.js').read_text())
         page.add_script_tag(content=script)
         page.evaluate('''() => {
           currentUser={features:{material_fetch:false}};

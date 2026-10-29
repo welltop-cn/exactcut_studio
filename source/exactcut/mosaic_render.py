@@ -179,8 +179,8 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False):
                 return old
             leases=[]
             try:
-                for lock,shared in [(cutting.lock_root()/'compute.lock',False),(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
-                    leases.append(cutting.lock_file(lock,shared=shared))
+                for lock,shared,resource in [(cutting.lock_root()/'compute.lock',False,'compute'),(path.with_suffix('.worker.lock'),False,None),(cutting.lock_root()/f'{bid}.lock',True,None)]:
+                    leases.append(cutting.lock_file(lock,shared=shared,resource=resource))
                 job={'schema_version':1,'id':jid,'status':'running','stage':'tracking','source_sha256':session['source_sha256'],'reset_at':reset_at,
                      'targets':targets,'ranges':ranges,'effect':effect,'preview':preview,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
                 write_json_atomic(path,job)
