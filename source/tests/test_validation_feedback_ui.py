@@ -1,5 +1,6 @@
 """UI regressions use the backend's real validation projection."""
 from exactcut.intake import validate_draft
+import pytest
 from test_source_frame_ui import frame_page
 
 
@@ -46,12 +47,14 @@ def test_correcting_one_field_keeps_other_errors_visible(frame_page):
     assert '未保存' in page.locator('#saveState').inner_text()
 
 
-def test_saving_invalid_draft_focuses_first_error(frame_page):
+@pytest.mark.parametrize('managed', [False, True])
+def test_saving_invalid_draft_focuses_first_error(frame_page, managed):
     page = frame_page
     invalid_editor(page)
+    page.evaluate('(managed)=>{current.media_managed=managed;controls.editingId=current.id;controls();}', managed)
     page.evaluate('''() => {api=async()=>structuredClone(current);renderRuntime=()=>{};}''')
     page.locator('#saveButton').click()
-    page.wait_for_function('document.activeElement?.dataset.clipPart === "episode"')
+    page.wait_for_function('document.activeElement?.dataset.clipPart === "episode"', timeout=5000)
     assert page.evaluate('document.activeElement.dataset.row') == '5'
 
 
