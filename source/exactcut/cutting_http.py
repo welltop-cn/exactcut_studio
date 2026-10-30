@@ -90,6 +90,6 @@ def handle(handler, batch_id, suffix, method):
                 return handler.respond(200, cutting.save_job(batch_id, sid, data.get('job_id')))
             raise cutting.CutError('剪切入口不存在', 404)
     except cutting.CutError as exc:
-        return handler.respond(exc.status, {'error': str(exc)})
+        return cutting.respond_error(handler, exc)
     except (ValueError, OSError, RuntimeError):
         return handler.respond(400, {'error': '剪切文件或处理资源暂不可用，请刷新后重试'})

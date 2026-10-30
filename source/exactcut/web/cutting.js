@@ -4,6 +4,7 @@
   let context = null, epoch = 0, ranges = [], undo = [], selectedJob = null, busy = false;
   let wanted = 0, selection = null, frameReady = -1, imageUrl = null, frameBusy = false;
   let seekTimer, toastTimer, quick = false, dragging = null, scanToken = 0, scanReport = null;
+  let openController=null;
   let frameController = null, resultMode = false, scanLoading = false;
   let clips = [], editingId = null, clipSerial = 0;
   let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
@@ -180,18 +181,21 @@
   }
   function counter() { if (!context) return; $('cutPosition').textContent = `${timecode(wanted)} / ${timecode(count())}`; $('cutSeek').value = wanted; $('cutFrameNumber').value = timecode(wanted); }
   async function loadFrame() {
-    if (!context || !dialog.open || quick || frameBusy || !video.paused || resultMode) return;
+    if (document.hidden || !context || !dialog.open || quick || frameBusy || !video.paused || resultMode) return;
     const version = epoch; frameBusy = true;
     try {
       while (active(version) && !quick && video.paused && !resultMode && frameReady !== wanted) {
         const target = wanted;
+        // A cached image has no active fetch; do not inherit cancellation from a prior seek.
+        frameController = null;
         $('cutFrameHint').textContent = '正在读取准确帧…'; $('cutFrameRetry').hidden = true;
         let blob = frames.get(target);
         if (!blob) {
           frameController = new AbortController();
-          const response = await fetch(appUrl(path()+`/frame/${target}`), {signal:frameController.signal});
-          if (!response.ok) throw Error('准确帧读取失败，请重试');
+          const signal=frameController.signal;
+          const response = await EditorBusy.run(()=>EditorBusy.frame(appUrl(path()+`/frame/${target}`),signal),{signal,maxRetries:1,diagnostics:{batch:context.batch,request:context.asset.request_id,session:context.session.id},valid:()=>active(version)&&target===wanted&&!quick&&!resultMode,onWait:(n,max)=>{$('cutFrameHint').textContent=`处理资源暂忙，正在重试（${n}/${max}）`;}});
           blob = await response.blob();
+          frameController = null;
           if (!active(version)) return;
           frames.set(target,blob); if (frames.size > 40) frames.delete(frames.keys().next().value);
         }
@@ -204,11 +208,11 @@
         $('cutFrameHint').textContent = '准确帧 · 可用两端的 ‹ › 逐帧微调';
       }
     } catch(e) { if (active(version) && e.name !== 'AbortError') { $('cutFrameHint').textContent = e.message; $('cutFrameRetry').hidden = false; } }
-    finally { frameBusy = false; if (version !== epoch && context && dialog.open) loadFrame(); }
+    finally { frameBusy = false; if (!document.hidden && context && dialog.open && frameReady !== wanted && !quick && !resultMode && video.paused && (version !== epoch || frameController?.signal.aborted)) loadFrame(); }
   }
   function seek(frame, fast = false) {
     if (!context || !Number.isFinite(frame)) return;
-    setResult(false); clearTimeout(seekTimer); quick = fast;
+    setResult(false); clearTimeout(seekTimer); frameController?.abort();quick = fast;
     pausePlayback(); wanted = Math.max(0,Math.min(count()-1,Math.round(frame))); frameReady = -1; image.hidden = true;
     if(sourceBinding)sourceBinding.seek((wanted+.05)/fps());
     else if (Number.isFinite(video.duration)) video.currentTime = (wanted+.05)/fps();
@@ -262,6 +266,7 @@
     finally { if(valid()) { scanLoading=false;syncRiskBulk(); } }
   }
   async function open(batch, asset) {
+    openController?.abort();openController=new AbortController();
     sourceManager?.dispose();sourceManager=sourceBinding=null;
     const version=++epoch; scanToken++; frameController?.abort(); frames.clear(); clearTimeout(seekTimer);
     context=null;playbackError=false;pausePlayback(); clips=[];editingId=null;clipSerial=0;ranges=[];undo=[];selection=null;selectedJob=null;busy=false;wanted=0;frameReady=-1;quick=false;resultMode=false;scanReport=null;scanLoading=false;syncRiskBulk();
@@ -271,7 +276,8 @@
     for(const v of $('assets').querySelectorAll('video'))v.pause();
     if(!dialog.open)dialog.showModal(); status('正在准备视频…');
     try {
-      const session=await api(`/api/batches/${batch}/cuts/open`,{request_id:asset.request_id,source_sha256:asset.sha256});
+      const body={request_id:asset.request_id,source_sha256:asset.sha256};
+      const session=await EditorBusy.run(()=>api(`/api/batches/${batch}/cuts/open`,body),{signal:openController.signal,diagnostics:{batch,request:asset.request_id},valid:()=>version===epoch&&dialog.open,onWait:(n,max)=>status(`处理资源暂忙，正在重试（${n}/${max}）`)});
       if(version!==epoch||!dialog.open)return;
       context={batch,asset,session};
       for(const id of ['cutSource', 'cutOutput']){Object.assign($(id).dataset,{previewBatch:batch,previewRequest:asset.request_id,previewSession:session.id});}
@@ -318,8 +324,9 @@
       box.onclick=()=>open(batch,asset);
     }
   }
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){openController?.abort();frameController?.abort();clearTimeout(seekTimer);quick=false;}else if(context&&dialog.open&&video.paused&&!resultMode&&frameReady!==wanted){loadFrame();}});
   $('cutClose').onclick=()=>{if(!$('cutReplaceConfirm').hidden&&busy)return;dialog.close();};
-  dialog.addEventListener('close',()=>{if(dialog.open)return;sourceManager?.dispose();sourceManager=sourceBinding=null;epoch++;scanToken++;clearTimeout(seekTimer);frameController?.abort();context=null;pausePlayback();output.pause();for(const v of [video,output]){v.removeAttribute('src');v.load();}if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=null;image.removeAttribute('src');frames.clear();});
+  dialog.addEventListener('close',()=>{if(dialog.open)return;openController?.abort();sourceManager?.dispose();sourceManager=sourceBinding=null;epoch++;scanToken++;clearTimeout(seekTimer);frameController?.abort();context=null;pausePlayback();output.pause();for(const v of [video,output]){v.removeAttribute('src');v.load();}if(imageUrl)URL.revokeObjectURL(imageUrl);imageUrl=null;image.removeAttribute('src');frames.clear();});
   for(const which of ['start','end']) {
     const input=$(which==='start'?'cutStart':'cutEnd');
     input.onchange=guarded(()=>endpoint(which,parseTimecode(input.value)+1));

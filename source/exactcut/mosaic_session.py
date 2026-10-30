@@ -4,7 +4,7 @@ import shutil
 import tempfile
 from fractions import Fraction
 from pathlib import Path
-from . import cutting, cutting_scan, cutting_access, workflow, storage
+from . import diagnostics, cutting, cutting_scan, cutting_access, workflow, storage
 from .cutting import CutError, lock_file, lock_root, run, frame_lease
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 
@@ -29,27 +29,32 @@ def get_session(bid,sid):
 
 
 def open_session(bid,rid,sha):
-    if not isinstance(rid,str) or not isinstance(sha,str) or not re.fullmatch('[0-9a-f]{64}',sha):raise CutError('成片版本参数无效')
-    with cutting_access.gate(workflow.folder(bid),rid):
-        cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha)
-        sid=json_sha256([bid,rid,sha])[:32];path=session_path(bid,sid)
-        if (path/'session.json').is_file():return get_session(bid,sid)
-        with lock_file(lock_root()/'compute.lock'):
-            source,_=workflow.preview_file(bid,rid)
-            if source.stat().st_size>cutting.settings().get('max_source_bytes',512*1024**2):raise CutError('本机支持 512 MB 以内的成片')
-            storage.require_space(source.parent,source.stat().st_size*3)
-            path.mkdir(parents=True,exist_ok=True)
-            try:
-                temporary=path/'source.partial.mp4';shutil.copyfile(source,temporary)
-                if file_sha256(temporary)!=sha:raise CutError('原成片内容已变化，请重新打开',409)
-                meta=cutting.probe_source(temporary)
-                cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha)
-                temporary.replace(path/'source.mp4')
-                write_json_atomic(path/'session.json',{'schema_version':1,'id':sid,'batch_id':bid,'request_id':rid,
-                    'source_sha256':sha,'source_filename':source.name,'metadata':meta,'created_at':now_iso(),'reset_at':''})
-            except Exception:
-                shutil.rmtree(path,ignore_errors=True);raise
-        return get_session(bid,sid)
+    with diagnostics.span('editor.open', private_error=True, editor='mosaics'):
+        if not isinstance(rid,str) or not isinstance(sha,str) or not re.fullmatch('[0-9a-f]{64}',sha):raise CutError('成片版本参数无效')
+        with cutting_access.gate(workflow.folder(bid),rid):
+            cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha)
+            sid=json_sha256([bid,rid,sha])[:32];path=session_path(bid,sid)
+            if (path/'session.json').is_file():return get_session(bid,sid)
+            with lock_file(lock_root()/'compute.lock', resource='compute'):
+                source,_=workflow.preview_file(bid,rid)
+                if source.stat().st_size>cutting.settings().get('max_source_bytes',512*1024**2):raise CutError('本机支持 512 MB 以内的成片')
+                storage.require_space(source.parent,source.stat().st_size*3)
+                path.mkdir(parents=True,exist_ok=True)
+                try:
+                    temporary=path/'source.partial.mp4'
+                    with diagnostics.span('editor.prepare.copy', private_error=True):
+                        shutil.copyfile(source,temporary)
+                    with diagnostics.span('editor.prepare.hash', private_error=True):
+                        copied_sha=file_sha256(temporary)
+                    if copied_sha!=sha:raise CutError('原成片内容已变化，请重新打开',409)
+                    meta=cutting.probe_source(temporary)
+                    cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha)
+                    temporary.replace(path/'source.mp4')
+                    write_json_atomic(path/'session.json',{'schema_version':1,'id':sid,'batch_id':bid,'request_id':rid,
+                        'source_sha256':sha,'source_filename':source.name,'metadata':meta,'created_at':now_iso(),'reset_at':''})
+                except Exception:
+                    shutil.rmtree(path,ignore_errors=True);raise
+            return get_session(bid,sid)
 
 
 def frame_file(batch_id, session_id, index):
@@ -60,11 +65,13 @@ def frame_file(batch_id, session_id, index):
     cache = path/'frames'
     output = cache/f'{index}.jpg'
     if output.is_file():
+        diagnostics.event('editor.frame_cache_hit', editor='mosaics', after_wait=False)
         output.touch()
         return output
     with frame_lease(lock_root()/'frame.lock'):
         cache.mkdir(exist_ok=True)
         if output.is_file():
+            diagnostics.event('editor.frame_cache_hit', editor='mosaics', after_wait=True)
             output.touch()
             return output
         meta = data['metadata']
@@ -78,9 +85,10 @@ def frame_file(batch_id, session_id, index):
             command = ['ffmpeg', '-y', '-v', 'error']
             if start:
                 command += ['-ss', f'{float(seek):.9f}']
-            run(command + ['-i', str(path/'source.mp4'), '-an', '-vf', "scale=w='min(540,iw)':h=-2",
-                 '-frames:v', str(size), '-fps_mode', 'passthrough', '-q:v', '2',
-                 '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60)
+            with diagnostics.span('editor.frame_generate', private_error=True, editor='mosaics'):
+                run(command + ['-i', str(path/'source.mp4'), '-an', '-vf', "scale=w='min(540,iw)':h=-2",
+                     '-frames:v', str(size), '-fps_mode', 'passthrough', '-q:v', '2',
+                     '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60)
             files = [Path(directory)/f'{n}.jpg' for n in range(start, start+size)]
             if not all(f.is_file() and f.stat().st_size for f in files):
                 raise CutError('准确帧窗口不完整，请重试')

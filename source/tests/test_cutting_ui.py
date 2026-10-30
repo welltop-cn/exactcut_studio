@@ -34,6 +34,7 @@ def editor():
           $('assets').innerHTML='<article data-asset="0"><label class="approve">确认</label></article>';
           $('assets').closest('[hidden]')?.removeAttribute('hidden');
         }''')
+        page.add_script_tag(content=(root/'editor-busy.js').read_text())
         page.add_script_tag(content=(root/'editor-source.js').read_text())
         page.add_script_tag(content=(root/'cutting.js').read_text())
         page.locator('[data-open-cut]').evaluate('(el)=>el.click()')
@@ -307,3 +308,17 @@ def test_new_window_sends_current_reset_marker(editor):
     select(editor,11,20);editor.locator('#cutAdd').click();editor.locator('#cutRender').click()
     editor.wait_for_function("calls.some(c=>c.url.endsWith('/render'))")
     assert editor.evaluate("calls.find(c=>c.url.endsWith('/render')).body.reset_at")=='new-session'
+
+
+def test_cached_frame_decode_failure_does_not_restart_aborted_fetch(editor):
+    editor.locator('#cutFrameRetry').wait_for(state='visible')
+    editor.evaluate('''() => {window.decodeCalls=0;window.frameFetches=0;
+      const original=fetch;window.fetch=(url,options)=>{if(String(url).includes('/frame/'))frameFetches++;return original(url,options)};
+      $('cutFrame').decode=()=>new Promise((resolve,reject)=>{decodeCalls++;setTimeout(()=>reject(Error('bad cached image')),5)});
+      $('cutFrameNumber').value='00:00:00';$('cutFrameNumber').dispatchEvent(new Event('change'));
+    }''')
+    editor.wait_for_function('decodeCalls>0')
+    editor.wait_for_timeout(150)
+    assert editor.evaluate('decodeCalls') == 1
+    assert editor.evaluate('frameFetches') == 0
+    assert editor.locator('#cutFrameRetry').is_visible()

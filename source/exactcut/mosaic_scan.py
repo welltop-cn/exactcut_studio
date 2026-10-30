@@ -52,9 +52,9 @@ def start(bid,sid,reset_at,*,force=False):
                 return previous
             leases=[]
             try:
-                for target,shared in [(cutting.lock_root()/'scan.lock',False),(path.with_suffix('.worker.lock'),False),
-                                      (cutting.lock_root()/f'{bid}.lock',True),(cutting.lock_root()/'compute.lock',False)]:
-                    leases.append(cutting.lock_file(target,shared=shared))
+                for target,shared,resource in [(cutting.lock_root()/'scan.lock',False,'scan'),(path.with_suffix('.worker.lock'),False,None),
+                                      (cutting.lock_root()/f'{bid}.lock',True,None),(cutting.lock_root()/'compute.lock',False,'compute')]:
+                    leases.append(cutting.lock_file(target,shared=shared,resource=resource))
                 from .storage import require_space
                 require_space(path.parent,512*1024**2)
                 job={'schema_version':1,'id':uuid.uuid4().hex,'identity':identifier,'status':'running',

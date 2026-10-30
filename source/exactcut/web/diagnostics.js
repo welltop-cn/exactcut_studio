@@ -84,6 +84,69 @@
     }, true);
   }
   listen(document, 'visibilitychange', () => report({event: 'visibility', ...selectedBatch(), visibility: name(document.visibilityState)}));
+  // Only caller-selected metadata is accepted, never arbitrary error/body fields.
+  window.reportEditorRetry = data => {
+    try {
+      if (!['retry_scheduled', 'retry_recovered', 'retry_exhausted'].includes(data?.action)) return;
+      const fields = {event: 'editor_retry', action: data.action, source: name(data.source)};
+      for (const key of ['batch_id', 'request_id', 'session_id']) if (data[key]) fields[key] = name(data[key]);
+      if (Number.isFinite(data.duration_ms)) fields.duration_ms = Math.max(0, Math.round(data.duration_ms));
+      report(fields);
+    } catch (_) {}
+  };
+  // Sample only interactions in a visible editor. A delayed animation callback is
+  // an action-to-next-frame opportunity measurement, not proof of a rendered frame.
+  let interaction = null, actionSampleAt = -Infinity, longTaskAt = -Infinity;
+  const editorGenerations = new WeakMap();
+  listen(document, 'close', event => {
+    if (['mosaicDialog', 'cutDialog'].includes(event.target?.id)) {
+      editorGenerations.set(event.target, (editorGenerations.get(event.target) || 0) + 1);
+      if (interaction?.dialog === event.target) interaction = null;
+    }
+  }, true);
+  const editorContext = dialog => {
+    if (!dialog?.open || document.visibilityState !== 'visible') return null;
+    const source = {mosaicDialog: 'mosaicSource', cutDialog: 'cutSource'}[dialog.id];
+    const workspace = {mosaicDialog: 'mosaicWorkspace', cutDialog: 'cutEditor'}[dialog.id];
+    if (document.getElementById?.(workspace)?.hidden) return null;
+    const data = source && document.getElementById?.(source)?.dataset;
+    if (!data?.previewSession || !data.previewBatch || !data.previewRequest) return null;
+    return {source, batch_id: name(data.previewBatch), request_id: name(data.previewRequest), session_id: name(data.previewSession)};
+  };
+  const sameInteraction = sample => {
+    const current = editorContext(sample.dialog);
+    return current && (editorGenerations.get(sample.dialog) || 0) === sample.generation && ['source', 'batch_id', 'request_id', 'session_id'].every(k => current[k] === sample.context[k]);
+  };
+  const observeAction = event => {
+    const dialog = event.target.closest?.('dialog'), context = editorContext(dialog), start = performance.now();
+    if (!context || start - actionSampleAt < 5000) return;
+    actionSampleAt = start;
+    const sample = {dialog, context, start, generation: editorGenerations.get(dialog) || 0, action: event.type === 'keydown' ? 'keyboard' : 'pointer'};
+    interaction = sample;
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => {
+      try {
+        const duration = Math.round(performance.now() - start);
+        if (duration >= 100 && sameInteraction(sample)) report({event: 'editor_action_latency', ...context, action: sample.action, duration_ms: duration});
+      } catch (_) {}
+    });
+  };
+  listen(document, 'pointerdown', observeAction, true);
+  listen(document, 'keydown', observeAction, true);
+  try {
+    if (typeof PerformanceObserver !== 'undefined' && PerformanceObserver.supportedEntryTypes?.includes('longtask')) {
+      new PerformanceObserver(list => {
+        try {
+          const sample = interaction, now = performance.now();
+          if (!sample || !sameInteraction(sample) || now - sample.start > 10000 || now - longTaskAt < 5000) return;
+          const entry = list.getEntries().find(e => e.duration >= 200 && e.startTime <= now && e.startTime + e.duration >= sample.start);
+          if (entry) {
+            longTaskAt = now;
+            report({event: 'editor_long_task', ...sample.context, action: sample.action, duration_ms: Math.round(entry.duration)});
+          }
+        } catch (_) {}
+      }).observe({type: 'longtask'});
+    }
+  } catch (_) { /* Unsupported performance APIs must not affect editing. */ }
   window.fetch = async (...args) => {
     let context = null;
     try {

@@ -63,5 +63,5 @@ def handle(handler,bid,suffix,method):
             if method=='POST' and action=='locate':
                 return handler.respond(202,mosaic_locate.start(bid,sid,data.get('start'),data.get('end'),data.get('seed_frame'),data.get('reset_at','')))
             raise cutting.CutError('打码入口不存在',404)
-    except cutting.CutError as exc:return handler.respond(exc.status,{'error':str(exc)})
+    except cutting.CutError as exc:return cutting.respond_error(handler, exc)
     except (ValueError,OSError,RuntimeError):return handler.respond(400,{'error':'打码文件或处理资源暂不可用，请刷新后重试'})

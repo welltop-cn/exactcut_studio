@@ -115,8 +115,8 @@ def start(bid,sid,target,reset_at,effect=None):
             if previous and (previous['status']=='running' or previous['status']=='completed' and not any(f.get('box') is None for f in previous.get('result',{}).get('frames',[])) and (path.parent/f'track-{jid}'/'preview.mp4').is_file()):return previous
             leases=[]
             try:
-                for lock,shared in [(cutting.lock_root()/'compute.lock',False),(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
-                    leases.append(cutting.lock_file(lock,shared=shared))
+                for lock,shared,resource in [(cutting.lock_root()/'compute.lock',False,'compute'),(path.with_suffix('.worker.lock'),False,None),(cutting.lock_root()/f'{bid}.lock',True,None)]:
+                    leases.append(cutting.lock_file(lock,shared=shared,resource=resource))
                 job={'schema_version':1,'id':jid,'status':'running','source_sha256':session['source_sha256'],'reset_at':reset_at,'target':target,'effect':effect,'created_at':now_iso(),'progress':'SAM 2 正在跟踪并生成预览'}
                 write_json_atomic(path,job)
             except Exception:

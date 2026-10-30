@@ -115,8 +115,8 @@ def start(bid,sid,start,end,seed,reset_at):
             if previous and previous['status'] in ('running','completed'):return previous
             leases=[]
             try:
-                for target,shared in [(cutting.lock_root()/'scan.lock',False),(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
-                    leases.append(cutting.lock_file(target,shared=shared))
+                for target,shared,resource in [(cutting.lock_root()/'scan.lock',False,'scan'),(path.with_suffix('.worker.lock'),False,None),(cutting.lock_root()/f'{bid}.lock',True,None)]:
+                    leases.append(cutting.lock_file(target,shared=shared,resource=resource))
                 job={'schema_version':1,'id':jid,'status':'running','source_sha256':session['source_sha256'],'reset_at':session.get('reset_at',''),
                      'start':start,'end':end,'seed_frame':seed,'model':cfg['model'],'candidates':[],'created_at':now_iso(),'progress':'正在识别所选帧','notice':NOTICE}
                 write_json_atomic(path,job)

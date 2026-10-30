@@ -217,11 +217,11 @@ def start(bid,sid,policy,*,force=False):
         if previous and (previous['status']=='running' or (previous['status']=='completed' and not force)):return previous
         leases=[]
         try:
-            for target,shared in [(cutting.lock_root()/'scan.lock',False),
-                                  (path.with_suffix('.worker.lock'),False),
-                                  (cutting.lock_root()/f'{bid}.lock',True),
-                                  (cutting.lock_root()/'compute.lock',False)]:
-                leases.append(cutting.lock_file(target,shared=shared))
+            for target,shared,resource in [(cutting.lock_root()/'scan.lock',False,'scan'),
+                                  (path.with_suffix('.worker.lock'),False,None),
+                                  (cutting.lock_root()/f'{bid}.lock',True,None),
+                                  (cutting.lock_root()/'compute.lock',False,'compute')]:
+                leases.append(cutting.lock_file(target,shared=shared,resource=resource))
             from .storage import require_space
             require_space(path.parent,512*1024**2)
             report={'schema_version':1,'id':identifier,'source_sha256':session['source_sha256'],
