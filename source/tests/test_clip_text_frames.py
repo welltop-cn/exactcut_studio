@@ -197,6 +197,8 @@ def test_source_frame_confirmation_requires_every_explicit_time_field(app, monke
     draft['rows'][0]['clips'] = m.read_clip_text('EP1 00:00:019-00:01:012', time_format='source_frames_v1')['clips']
     source_frames.prepare(path, draft, 'EP1')
     draft['rows'][0]['clips'][0][field] = ''
-    manifest, errors = intake.validate_draft(draft, str(path / 'source.xlsx'))
+    issues = []
+    manifest, errors = intake.validate_draft(draft, str(path / 'source.xlsx'), validation_issues=issues)
     assert manifest is None and errors
-    assert any('必填' in error for error in errors)
+    assert any('请填写' in error for error in errors)
+    assert any(issue['fields'] == [field] and issue['code'] == 'required' for issue in issues)

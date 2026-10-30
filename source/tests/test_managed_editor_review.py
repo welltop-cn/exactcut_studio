@@ -99,7 +99,7 @@ def test_managed_editor_is_locked_during_mutation_request():
     run("""
 const elements={},$=id=>elements[id]??={id,textContent:'save'},input={dataset:{meta:'author'}};
 const document={querySelectorAll:selector=>selector.startsWith('#editorTab')?[input]:[]};
-const busy=new Set(),activeStatuses=[],hasDraftData=()=>true,renderAssets=()=>{};
+const busy=new Set(),activeStatuses=[],hasDraftData=()=>true,renderAssets=()=>{},focusValidationIssue=()=>{};
 let dirty=true,current={media_managed:true,draft:{text:'unsaved'},runtime:{status:'review'},assets:[],errors:[]};
 """ + controls + '\n' + operation + """
 (async()=>{

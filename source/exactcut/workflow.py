@@ -678,7 +678,7 @@ def _clone_batch(batch_id, *, purpose='copy'):
         raise ValueError('请等待当前制作结束，再修改后重新制作')
     data = material_versions.detail(source) if managed else read_json(source / 'draft.json')
     if managed:
-        for key in ('assets', 'runtime', 'media_managed', 'deleted_assets', 'deleted_at', 'errors', 'plan', 'feedback', 'feedback_count', 'timing_explanation', 'clip_editor'):
+        for key in ('assets', 'runtime', 'media_managed', 'deleted_assets', 'deleted_at', 'errors', 'validation_issues', 'plan', 'feedback', 'feedback_count', 'timing_explanation', 'clip_editor'):
             data.pop(key, None)
         for row in data['draft']['rows']:
             row['request_id'] = 'R' + uuid.uuid4().hex

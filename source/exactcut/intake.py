@@ -562,7 +562,7 @@ def clip_field_issues(row):
         episode = stored['episode']
         if not episode:
             add('episode', ['episode'], '请填写集号')
-        elif not (episode.isdigit() and 1 <= int(episode) <= 500):
+        elif not (episode.isdecimal() and 1 <= int(episode) <= 500):
             add('episode', ['episode'], '集号须为 1～500')
         frames = stored.get('time_format') == 'source_frames_v1'
         for key, number in numbers.items():
@@ -573,7 +573,8 @@ def clip_field_issues(row):
             elif number is None:
                 limit = 59 if key.endswith('_s') else 999
                 add('number', [key], f'{side}时间的{unit}须为 0～{limit} 的整数')
-        if all(n is not None for n in numbers.values()):
+        complete = not frames or all(stored[key] != '' for key in numbers)
+        if complete and all(n is not None for n in numbers.values()):
             suffix = 'f' if stored.get('time_format') else 'ms'
             start = tuple(numbers['start_' + key] for key in ('m', 's', suffix))
             end = tuple(numbers['end_' + key] for key in ('m', 's', suffix))
