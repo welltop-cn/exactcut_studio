@@ -396,6 +396,7 @@ $('events').innerHTML=eventMarkup(operationEvents(r.events));
 $('previewReady').hidden=previewable===0;$('previewReadyTitle').textContent=`${previewable} 条成片可在线播放`;if($('statusBanner'))$('statusBanner').hidden=!$('liveMessage').textContent.trim()&&$('previewReady').hidden;document.querySelector('[data-tab="review"]').textContent=previewable?`成片预览 (${previewable})`:'成片预览';$('reviewCount').textContent=`${previewable} 条可预览 · ${current.feedback_count} 条反馈`;renderAssets();controls()}
 const previewRequests=new Map();
 function stopPreviewLoads(){
+ globalThis.PreviewSubtitles?.dispose();
  for(const controller of previewRequests.values())controller.abort();previewRequests.clear();
  for(const video of $('assets').querySelectorAll('video')){video.onplay=null;video.onseeking=null;video.onerror=null;video.onloadedmetadata=null;video.pause();video.removeAttribute('src');for(const source of video.querySelectorAll('source'))source.removeAttribute('src');video.load();delete video.dataset.previewState;delete video.dataset.expiresAt}
 }
@@ -424,6 +425,7 @@ async function loadPreview(video,{resume=false,position=0}={}){
 }
 function preparePreviewLoads(){
  if(activeTab!=='review'||!current||$('workspace').hidden)return;
+ globalThis.PreviewSubtitles?.mount();
  requestAnimationFrame(()=>{
   if(activeTab!=='review'||!current||$('workspace').hidden)return;
   // Limit simultaneous preparation requests; completed videos download directly from OSS.

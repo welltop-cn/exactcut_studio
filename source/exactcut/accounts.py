@@ -77,6 +77,12 @@ def users(path):
         return [public(r) for r in db.execute('SELECT * FROM users ORDER BY username')]
 
 
+def get(path, username):
+    """Single account lookup, enabled or not; used to revalidate a queued actor."""
+    with connect(path) as db:
+        return public(db.execute('SELECT * FROM users WHERE username=?', (str(username).lower(),)).fetchone())
+
+
 def manage(path, actor, data):
     username = str(data.get('username','')).strip().lower()
     if not re.fullmatch(r'[a-z][a-z0-9_-]{2,31}',username):
