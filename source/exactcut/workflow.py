@@ -492,11 +492,13 @@ def detail(batch_id):
     if material_versions.managed(path):
         return material_versions.detail(path)
     data = read_json(path / 'draft.json')
-    manifest, errors = validate_draft(data['draft'], str(path / 'source.xlsx'))
+    validation_issues = []
+    manifest, errors = validate_draft(data['draft'], str(path / 'source.xlsx'), validation_issues=validation_issues)
     if (path / 'confirmed.json').exists():
         manifest = BatchManifest.model_validate(read_json(path / 'confirmed.json'))
         errors = []
-    data.update(runtime=batch_control.present(path, runtime(path)), errors=errors, plan=download_plan(manifest) if manifest else None)
+        validation_issues = []
+    data.update(runtime=batch_control.present(path, runtime(path)), errors=errors, validation_issues=validation_issues, plan=download_plan(manifest) if manifest else None)
     from .intake import timing_explanation
     project=ROOT/'projects'/manifest.drama_id if manifest else None
     data['timing_explanation'] = timing_explanation(manifest,project,wait=False)

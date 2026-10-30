@@ -5,6 +5,15 @@
 .batch-card{position:relative;border-radius:8px;margin-bottom:6px;flex-shrink:0}.batch-card .batch{margin-bottom:0;padding-bottom:44px}.batch-actions{position:absolute;bottom:9px;right:10px;display:flex;gap:6px;opacity:0;pointer-events:none;transition:opacity .15s}.batch-actions button{font-size:11px;padding:5px 9px}.batch-card:hover .batch-actions,.batch-card:focus-within .batch-actions{opacity:1;pointer-events:auto}@media(hover:none){.batch-actions{opacity:1;pointer-events:auto}}
 #accountsDialog{max-height:90vh;overflow:auto}#accountsDialog form label{margin-top:14px}header{height:auto;min-height:72px;flex-wrap:wrap;gap:12px;padding-top:12px;padding-bottom:12px}@media(max-width:700px){header .actions{gap:6px}header button{padding:8px;font-size:12px}}
 
+.request.validation-error{border:2px solid #bc3939;background:#fff8f7;scroll-margin-top:90px}
+.request.validation-error>.requesthead{background:#ffedeb;flex-wrap:wrap}
+.validation-card-summary{color:#a32727;font-size:13px;font-weight:600}
+.validation-clip-error{background:#fff0ee;border:1px solid #dc7770;border-radius:8px;padding:10px}
+#editorTab [aria-invalid="true"]{outline:2px solid #c63c35;outline-offset:1px;background:#fff5f3}
+.validation-field-message{flex-basis:100%;margin:4px 0;color:#a32727;font-size:13px;line-height:1.5}
+.validation-links{display:grid;gap:6px}.validation-links p{margin:4px 0}
+.validation-link{background:transparent;border:0;padding:4px 0;color:#a32727;text-align:left;text-decoration:underline;white-space:normal}
+.validation-link:hover,.validation-link:focus-visible{background:#ffebe7;color:#751b1b}
 .compact-request{margin-top:16px}
 .compact-request .requesthead{padding:10px 16px;min-height:48px}
 .request-number{display:flex;align-items:center;gap:8px}

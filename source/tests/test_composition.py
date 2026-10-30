@@ -59,5 +59,6 @@ def test_web_form_compiles_minute_second_millisecond(workspace, monkeypatch):
     bad = json.loads((path / 'draft.json').read_text())
     bad['draft']['rows'][0]['clips'][0]['start_s'] = '60'
     saved = w.save_draft(item['id'], {'revision': bad['revision'], 'draft': bad['draft']})
-    assert any('秒为 0～59' in error for error in saved['errors'])
+    assert saved['errors'] == ['素材 1 · 片段 1：开始时间的秒须为 0～59 的整数']
+    assert saved['validation_issues'][0]['fields'] == ['start_s']
     assert saved['draft']['rows'][0]['timeline_text'] == ''

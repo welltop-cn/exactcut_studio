@@ -548,7 +548,41 @@ def clip_problems(row):
     return problems
 
 
-def validate_draft(draft, source=''):
+def clip_field_issues(row):
+    """Field locations in the editable clip, before source indexes are consulted."""
+    issues = []
+    for index, clip in enumerate(row.get('clips') or []):
+        if not isinstance(clip, dict):
+            continue
+        stored, numbers = _clip_fields(clip)
+        if _clip_idle(stored, numbers) and all(n == 0 for n in numbers.values()):
+            continue
+        def add(code, fields, message):
+            issues.append(dict(clip_index=index, fields=fields, code=code, message=message))
+        episode = stored['episode']
+        if not episode:
+            add('episode', ['episode'], '请填写集号')
+        elif not (episode.isdigit() and 1 <= int(episode) <= 500):
+            add('episode', ['episode'], '集号须为 1～500')
+        frames = stored.get('time_format') == 'source_frames_v1'
+        for key, number in numbers.items():
+            side = '开始' if key.startswith('start_') else '结束'
+            unit = {'m': '分', 's': '秒', 'f': '帧', 'ms': '毫秒'}[key.split('_')[1]]
+            if frames and stored[key] == '':
+                add('required', [key], f'请填写{side}时间的{unit}（可填 0）')
+            elif number is None:
+                limit = 59 if key.endswith('_s') else 999
+                add('number', [key], f'{side}时间的{unit}须为 0～{limit} 的整数')
+        if all(n is not None for n in numbers.values()):
+            suffix = 'f' if stored.get('time_format') else 'ms'
+            start = tuple(numbers['start_' + key] for key in ('m', 's', suffix))
+            end = tuple(numbers['end_' + key] for key in ('m', 's', suffix))
+            if end < start or (not frames and end == start):
+                add('time_order', list(numbers), '结束时间不能早于开始时间' if frames else '结束时间必须晚于开始时间')
+    return issues
+
+
+def validate_draft(draft, source='', *, validation_issues=None):
     errors, requests = [], []
     brand, brand_errors = parse_brand(draft)
     errors.extend(brand_errors)
@@ -569,6 +603,18 @@ def validate_draft(draft, source=''):
     for i, row in enumerate(rows, 1):
         if not isinstance(row, dict):
             errors.append(f'素材 {i}：内容必须是字段对象')
+            continue
+        label = ('成片' if row.get('composition') else '素材') + ' ' + str(row.get('seq', i))
+        def report(message, **location):
+            clip_index = location.get('clip_index')
+            text = label + (f' · 片段 {clip_index + 1}' if clip_index is not None else '') + '：' + message
+            errors.append(text)
+            if validation_issues is not None:
+                validation_issues.append(dict(row_index=i - 1, message=message, text=text, **location))
+        field_issues = clip_field_issues(row) if isinstance(row.get('clips'), list) else []
+        if field_issues:
+            for issue in field_issues:
+                report(**issue)
             continue
         try:
             request_id = str(row.get('request_id', '')).strip()
@@ -619,7 +665,7 @@ def validate_draft(draft, source=''):
                                        brand_overlay=brand,
                                        **{k: str(row.get(k, '')) for k in ('title_cn', 'hook_text', 'structure', 'notes')}))
         except (ValueError, TypeError, RuntimeError) as exc:
-            errors.append(f'素材 {i}：{exc}')
+            report(str(exc), clip_index=getattr(exc, 'clip_index', None), fields=getattr(exc, 'fields', []))
     if errors:
         return None, errors
     try:

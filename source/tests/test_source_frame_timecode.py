@@ -76,8 +76,11 @@ def test_vfr_invalid_frame_and_unknown_format_block_execution(source):
     assert not errors, errors
     assert manifest.requests[0].timeline[0].start_ms == meta['times_ms'][3]
     data['rows'][0]['clips'][0]['end_f'] = '999'
-    _, errors = intake.validate_draft(data, str(path / 'source.xlsx'))
-    assert errors and errors[0].startswith('素材 1：EP1 结束时间 00:01:999 超出这一秒的帧数，请填 0 到 ')
+    issues = []
+    _, errors = intake.validate_draft(data, str(path / 'source.xlsx'), validation_issues=issues)
+    assert errors and errors[0].startswith('素材 1 · 片段 1：EP1 结束时间 00:01:999 超出这一秒的帧数，请填 0 到 ')
+    assert issues[0]['clip_index'] == 0
+    assert issues[0]['fields'] == ['end_f']
     data['rows'][0]['clips'][0]['time_format'] = 'unknown'
     intake.compile_clips(data['rows'][0])
     assert intake.validate_draft(data, str(path / 'source.xlsx'))[0] is None
@@ -183,7 +186,7 @@ def test_time_past_episode_names_the_last_frame(source):
     last_ordinal = len(meta['times_ms']) - next(i for i, time in enumerate(meta['times_ms']) if time >= last_second * 1000) - 1
     minutes, seconds = divmod(last_second, 60)
     last = f'{minutes:02d}:{seconds:02d}:{last_ordinal:03d}'
-    assert errors == [f'素材 1：EP1 结束时间 01:56:008 超出这一集的长度，请改到 {last} 或更早']
+    assert errors == [f'素材 1 · 片段 1：EP1 结束时间 01:56:008 超出这一集的长度，请改到 {last} 或更早']
 
 
 def test_empty_second_inside_episode_does_not_claim_the_file_ended():

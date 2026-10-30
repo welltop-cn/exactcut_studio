@@ -593,7 +593,8 @@ def detail(path):
     from urllib.parse import quote
     state = read(path)
     document = copy.deepcopy(state['document'])
-    manifest, errors = validate_draft(state['draft'], str(path / 'source.xlsx'))
+    validation_issues = []
+    manifest, errors = validate_draft(state['draft'], str(path / 'source.xlsx'), validation_issues=validation_issues)
     requests = {r.request_id: r for r in manifest.requests} if manifest else {}
     from .progress import observation
     assets, candidates, downloads = [], [], []
@@ -694,7 +695,7 @@ def detail(path):
         runtime['message'] = '交付状态查询暂时不可用，系统将自动重试；已有成片仍可播放'
     feedback = sorted([read_json(f) for f in w.FEEDBACK.glob(path.name + '-*.json')], key=lambda e: e['created_at'], reverse=True)
     document.update(revision=state['revision'], draft=copy.deepcopy(state['draft']), assets=assets,
-                    media_managed=True, media_delivery_enabled=delivery_enabled(), deleted_at=state['deleted_at'], runtime=runtime, errors=errors,
+                    media_managed=True, media_delivery_enabled=delivery_enabled(), deleted_at=state['deleted_at'], runtime=runtime, errors=errors, validation_issues=validation_issues,
                     plan=download_plan(manifest) if manifest else None, clip_editor=clip_editor(manifest), timing_explanation=[], feedback=feedback,
                     feedback_count=len(feedback), deleted_assets=[{'request_id': a['asset_id'], 'title': a['row'].get('title_cn') or a['asset_id']}
                         for a in state['assets'].values() if a['deleted_at']])
