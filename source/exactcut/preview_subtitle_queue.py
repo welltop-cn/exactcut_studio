@@ -14,6 +14,7 @@ import time
 from contextlib import contextmanager
 
 from . import diagnostics, workflow
+from .runtime import maintenance_file, mutation_lock
 from .util import now_iso, read_json, write_json_atomic
 
 SCHEMA_VERSION = 1
@@ -271,7 +272,12 @@ class Dispatcher:
                         from . import preview_subtitles
                         limit = preview_subtitles.settings()['max_active_tasks']
                         if len(workers) < limit:
-                            item = claim(limit)
+                            # Order matches HTTP admission and the release manager.
+                            # Record the claim before releasing the short barrier;
+                            # the manager can then drain active work and keep pending.
+                            with mutation_lock():
+                                if not self.stop_event.is_set() and not maintenance_file().exists():
+                                    item = claim(limit)
                 except (OSError, ValueError, RuntimeError) as exc:
                     diagnostics.event('preview_subtitles.queue_unavailable', level='warning',
                                       error_type=type(exc).__name__)

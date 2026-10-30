@@ -212,8 +212,24 @@ def verify(root, version, engine):
 
 def active_records(root):
     state = root / 'data/.web-state'
-    records = [*(state / 'jobs').glob('*.json'), *(state / 'batches').glob('*/runtime.json')]
-    return [str(path.relative_to(root)) for path in records if read(path).get('status') in ACTIVE]
+    records = [*(state / 'jobs').glob('*.json'), *(state / 'batches').glob('*/runtime.json'),
+               *(state / 'batches').glob('*/preview-subtitles/*/report.json')]
+    active = [str(path.relative_to(root)) for path in records if read(path).get('status') in ACTIVE]
+    subtitle_queue = state / 'queue.json'
+    if subtitle_queue.exists():
+        try:
+            queue = read(subtitle_queue)
+            if (not isinstance(queue,dict) or queue.get('schema_version') != 1
+                    or not isinstance(queue.get('pending'),list)
+                    or (queue.get('active') is not None and not isinstance(queue['active'],dict))
+                    or not isinstance(queue.get('active_extra',[]),list)):
+                raise ValueError('invalid queue')
+            occupied = bool(queue.get('active') or queue.get('active_extra'))
+        except (OSError,ValueError,TypeError):
+            occupied = True  # unknown active work must block a service stop
+        if occupied:
+            active.append(str(subtitle_queue.relative_to(root)))
+    return active
 
 
 def phase_blockers(root):

@@ -1,9 +1,10 @@
 """Authenticated preview subtitle adapter, outside the global web mutation lock."""
 import json
+from contextlib import nullcontext
 from urllib.parse import unquote
 
 from . import cutting, preview_subtitle_queue, preview_subtitles as subtitles
-from .runtime import maintenance_file
+from .runtime import maintenance_file, mutation_lock
 
 
 def handle(handler,batch_id,request_id,method):
@@ -35,14 +36,17 @@ def handle(handler,batch_id,request_id,method):
         sha = handler.query.get('source_sha256',[None])[0]
         version = handler.query.get('version_id',[''])[0] or None
     try:
-        with cutting.batch_lease(batch_id):
-            if not handler.can_access(batch_id):
-                return handler.respond(404,{'error':'项目不存在或无权访问'})
-            if method == 'POST':
-                # The queued actor is the authenticated session, never a request field.
-                result = subtitles.start(batch_id,unquote(request_id),sha,version,handler.user['username'])
-                return handler.respond(202 if result['report']['status'] in {'queued','running'} else 200,result)
-            return handler.respond(200,subtitles.state(batch_id,unquote(request_id),sha,version))
+        with mutation_lock() if method == 'POST' else nullcontext():
+            if method == 'POST' and maintenance_file().exists():
+                return handler.respond(503,{'error':'系统正在维护，请稍后重试'})
+            with cutting.batch_lease(batch_id):
+                if not handler.can_access(batch_id):
+                    return handler.respond(404,{'error':'项目不存在或无权访问'})
+                if method == 'POST':
+                    # The queued actor is the authenticated session, never a request field.
+                    result = subtitles.start(batch_id,unquote(request_id),sha,version,handler.user['username'])
+                    return handler.respond(202 if result['report']['status'] in {'queued','running'} else 200,result)
+                return handler.respond(200,subtitles.state(batch_id,unquote(request_id),sha,version))
     except subtitles.SubtitleError as exc:
         return handler.respond(exc.status,{'error':str(exc)})
     except preview_subtitle_queue.QueueError as exc:
