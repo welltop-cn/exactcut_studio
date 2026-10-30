@@ -206,6 +206,10 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 
 用户要求多测本地dev：四素材独立副本移除交付状态供编辑测试，原片/预览文件均为副本，8821和线上状态不变。真实Chromium+HTTP/FFmpeg完成四次计算锁重试恢复、四次抽帧锁重试恢复、快速多次seek、八轮关闭重开及两轮受控visibility恢复，无页面JS异常；四条字幕缓存正常。风险识别、跟踪、正式worker、下载和外部发布/写入关闭，未调用付费风险扫描。1891项完整回归通过/1跳过，打包声明后续修正另有10项相关回归通过；详见 `docs/verification/reviewed-integration-2026-10-30.md`。保留该独立实例供复查；不重启8793/8800/8801/8810/8820/8821。
 
+## 2026-10-30 历史 worktree 清理
+
+用户授权整理剩余历史文件后，旧 SAM2 草稿和恢复出的剪切实验已保存到独立归档分支，并将补丁、忽略的非缓存文件和恢复 bundle 校验保存到私有 `cleanup-archives/exactcut-20261030-190609/`。移除12个无进程占用的历史 worktree，另清除1条目录已不存在的登记；没有删除原分支或stash。上文的旧 worktree 路径保留为历史记录，当前可恢复方式及8个保留工作区见[清理记录](verification/local-cleanup-2026-10-30.md)。main、8801所在mosaic-gemini、8810/8821/8822及其数据保留；两个暂缓选帧工作区和仍被进程使用的Paseo工作区也保留。应用候选仍固定ea3db64，本轮新增内容仅为文档和截图。
+
 ## 2026-10-30 素材校验红色高亮验收（8793 保留运行）
 
 用户要求启动并打开本地 dev。核验 8793 原 PID 85020 的 cwd、无活动任务及子进程后，沿用原开发数据、title-images / dev-fetch 配置重启，当前 PID 62449（后续操作须重查），release `development-material-validation-aebc64a`。补充 `/opt/homebrew/bin` 至启动 PATH，以便本地 ffmpeg/ffprobe 可执行。healthz 为 development/ok、worker_alive=true；其他端口未动。
