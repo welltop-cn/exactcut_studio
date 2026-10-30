@@ -69,6 +69,24 @@
     "image_size": "1K",
     "key_color": [0, 255, 0]
   },
+  "preview_subtitles": {
+    "enabled": false,
+    "model": "gemini-3.8-flash",
+    "sample_fps": 4,
+    "proxy_long_edge": 1280,
+    "proxy_crf": 20,
+    "max_duration_seconds": 300,
+    "max_source_bytes": 536870912,
+    "max_inline_request_bytes": 19000000,
+    "min_duration_seconds": 1,
+    "chunk_seconds": 60,
+    "request_timeout_ms": 120000,
+    "prepare_timeout_seconds": 120,
+    "total_timeout_seconds": 1800,
+    "max_cues": 1000,
+    "max_active_tasks": 2,
+    "max_queued_tasks": 20
+  },
   "cutting": {
     "enabled": false,
     "oss_playback_enabled": false,

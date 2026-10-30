@@ -1054,7 +1054,7 @@ class Handler(BaseHTTPRequestHandler):
             body = body.replace(b'<script src="app.js">', b'<script src="diagnostics.js"></script><script src="app.js">')
         if name == 'index.html':
             body = body.replace(b'<script src="cutting.js">', b'<script src="editor-source.js"></script><script src="cutting.js">')
-            for script in ('app.js', 'helper.js', 'diagnostics.js', 'editor-source.js', 'cutting.js', 'mosaic.js'):
+            for script in ('app.js', 'helper.js', 'diagnostics.js', 'editor-source.js', 'cutting.js', 'mosaic.js', 'preview-subtitles.js'):
                 version = hashlib.sha256((CODE_ROOT / 'exactcut/web' / script).read_bytes()).hexdigest()[:20]
                 body = body.replace(f'src="{script}"'.encode(), f'src="{script}?v={version}"'.encode())
             app_version = hashlib.sha256((CODE_ROOT / 'exactcut/web/app.js').read_bytes()).hexdigest()[:20]
@@ -1213,6 +1213,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.normalize_path()
+        subtitle_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/preview-subtitles/([^/]+)', self.path)
+        if subtitle_route:
+            from .preview_subtitles_http import handle
+            return handle(self, *subtitle_route.groups(), 'GET')
         mosaic_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/mosaics/(.*)', self.path)
         if mosaic_route:
             from .mosaic_http import handle
@@ -1243,7 +1247,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.respond(503, {'error': '任务队列暂时不可用，请稍后重试'})
         if self.path == '/api/me':
             from .cutting import enabled as cutting_enabled
-            return self.respond(200, {**self.user, 'features': {**feature_flags(), 'cutting': cutting_enabled()}})
+            from .preview_subtitles import available as subtitles_enabled
+            return self.respond(200, {**self.user, 'features': {**feature_flags(), 'cutting': cutting_enabled(), 'preview_subtitles': subtitles_enabled()}})
         if self.path == '/api/users':
             if not self.is_admin(): return
             return self.respond(200, {'users': accounts.users(self.server.auth_db)})
@@ -1267,6 +1272,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.script('mosaic.js')
         if self.path == '/editor-source.js':
             return self.script('editor-source.js')
+        if self.path == '/preview-subtitles.js':
+            return self.script('preview-subtitles.js')
         if self.path == '/cutting.js':
             return self.script('cutting.js')
         if self.path == '/app.js':
@@ -1480,6 +1487,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         self.normalize_path()
+        subtitle_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/preview-subtitles/([^/]+)', self.path)
+        if subtitle_route:
+            from .preview_subtitles_http import handle
+            return handle(self, *subtitle_route.groups(), 'POST')
         mosaic_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/mosaics/(.*)', self.path)
         if mosaic_route:
             from .mosaic_http import handle
@@ -1970,6 +1981,11 @@ def main():
     diag.event('service.started', base_path=base_path, port=server.server_port, worker_enabled=worker_enabled,
                concurrency=limits, features=feature_flags())
     accounts.initialize(server.auth_db, password)
+    # One background dispatcher per data root; it, not page polling, advances the queue.
+    from .preview_subtitle_queue import Dispatcher
+    server.subtitle_dispatcher = Dispatcher()
+    if not server.subtitle_dispatcher.start():
+        diag.event('preview_subtitles.dispatcher_owned_elsewhere', level='warning')
     for path in workflow.BATCHES.glob('*/draft.json'):
         if not (path.parent / 'access.json').exists():
             workflow.write_json_atomic(path.parent / 'access.json', {'owner':'admin'})
