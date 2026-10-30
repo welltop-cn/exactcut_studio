@@ -212,9 +212,12 @@ def verify(root, version, engine):
 
 def active_records(root):
     state = root / 'data/.web-state'
-    records = [*(state / 'jobs').glob('*.json'), *(state / 'batches').glob('*/runtime.json'),
-               *(state / 'batches').glob('*/preview-subtitles/*/report.json')]
+    records = [*(state / 'jobs').glob('*.json'), *(state / 'batches').glob('*/runtime.json')]
     active = [str(path.relative_to(root)) for path in records if read(path).get('status') in ACTIVE]
+    # Maintenance pauses queued subtitles. Only a running report (or an occupied
+    # durable claim below) must drain before code can switch.
+    reports = (state / 'batches').glob('*/preview-subtitles/*/report.json')
+    active.extend(str(path.relative_to(root)) for path in reports if read(path).get('status') == 'running')
     subtitle_queue = state / 'queue.json'
     if subtitle_queue.exists():
         try:

@@ -37,7 +37,11 @@ def test_pending_preview_tasks_survive_a_code_switch(ops,tmp_path):
     initialize(ops,tmp_path);release(ops,tmp_path,'candidate')
     data={'schema_version':1,'sequence':1,'active':None,'pending':[descriptor(1)]}
     path=tmp_path/'data/.web-state/queue.json';write_json_atomic(path,data)
+    # Real admission always also writes a queued report; it must not wedge drain.
+    report=tmp_path/'data/.web-state/batches'/('a'*32)/'preview-subtitles'/descriptor(1)['task_id']/'report.json'
+    write_json_atomic(report,{'status':'queued','id':descriptor(1)['task_id']})
     before=path.read_bytes()
+    assert ops.active_records(tmp_path)==[]
     ops.transition(tmp_path,'candidate',engine=Engine(),timeout=0)
     assert path.read_bytes()==before
 
