@@ -198,7 +198,13 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 
 用户追加授权复制项目 `0d6fdddb468348ad92e0cbd8f5de1db5`，供本人测试多个素材生成中文字幕。已在同一 8821 隔离数据根登记，入口 `http://subtitle-preview.localhost:8821/home/#0d6fdddb468348ad92e0cbd8f5de1db5`，名称「中文字幕多素材测试 · 101682（线上副本）」。复制 4 条当前版本原片及轻量预览，共 744300069 字节，8 个视频 SHA-256 均与线上版本记录一致；配置原件和来源清单保存在该 worktree `source/.dev-state/preview-subtitles/imports/0d6fdddb468348ad92e0cbd8f5de1db5/`。本地媒体路径已重映射，使用独立 registry 和既有 subtitle_demo 账号；未复制生产账号或激活制作/上传任务。已验证项目 HTTP 200、全部视频 Range 请求 206、4 条字幕均 idle；未提交字幕任务、未调用 Gemini，留给用户测试。8821 无需重启，其他服务未动。
 
-随后按用户要求修复识别失败并验收两条素材并发：8821 在确认队列为空后重启加载修复，最终 PID 61192（操作前重新核验），数据、账号和入口保留。默认两条素材同时识别、其余 FIFO 排队；使用哈希验证过的轻量预览、不放大、4fps，超预算自动拆段，失败段一次校验重试、成功段持久缓存。最终四条 completed，99/113/103/110 句；第三、第四条真实并发整组108.314秒，队列已空。56项相关测试和浏览器单轨/缓存/跳转通过，8个原片/预览哈希不变。48点人工抽帧中有1处短句结束偏晚，另有1处翻译漏时间限定，准确性仍有明确未解决项；不能据生成成功声称逐句逐帧准确。详见 preview-subtitles worktree 的 `docs/verification/preview-subtitles-four-materials-2026-10-30.md`。未上线。
+随后按用户要求修复识别失败并验收两条素材并发：8821 在确认队列为空后重启加载修复，最终 PID 61192（操作前重新核验），数据、账号和入口保留。默认两条素材同时识别、其余 FIFO 排队；使用哈希验证过的轻量预览、不放大、4fps，超预算自动拆段，失败段一次校验重试、成功段持久缓存。最终四条 completed，99/113/103/110 句；第三、第四条真实并发整组108.314秒，队列已空。56项相关测试和浏览器单轨/缓存/跳转通过，8个原片/预览哈希不变。48点人工抽帧中有1处短句结束偏晚，另有1处翻译漏时间限定，准确性仍有明确未解决项；不能据生成成功声称逐句逐帧准确。详见 preview-subtitles worktree 的 `docs/verification/preview-subtitles-four-materials-2026-10-30.md`。未上线。用户随后确认小幅时间偏差可以接受，第一版按辅助预览标准验收。
+
+## 2026-10-30 发布候选本地联测（8822）
+
+独立工作树 `release-20261030` / `release/review-20261030` 合并当前 main 校验定位、`fix/editor-busy-retry` 和中文字幕，并补充字幕发布排空门禁及静态资源打包修复。入口 `http://release-review.localhost:8822/home/#0d6fdddb468348ad92e0cbd8f5de1db5`，数据/账号位于该工作树 `source/.dev-state/release-review/`，创建启动脚本和测试证据在 `/Users/matao/.config/superpowers/release-prep/exactcut-20261030-1802/`。PID68828为历史快照，操作前重新核验。
+
+用户要求多测本地dev：四素材独立副本移除交付状态供编辑测试，原片/预览文件均为副本，8821和线上状态不变。真实Chromium+HTTP/FFmpeg完成四次计算锁重试恢复、四次抽帧锁重试恢复、快速多次seek、八轮关闭重开及两轮受控visibility恢复，无页面JS异常；四条字幕缓存正常。风险识别、跟踪、正式worker、下载和外部发布/写入关闭，未调用付费风险扫描。1891项完整回归通过/1跳过，打包声明后续修正另有10项相关回归通过；详见 `docs/verification/reviewed-integration-2026-10-30.md`。保留该独立实例供复查；不重启8793/8800/8801/8810/8820/8821。
 
 ## 2026-10-30 素材校验红色高亮验收（8793 保留运行）
 
