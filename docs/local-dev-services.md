@@ -183,3 +183,29 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 2026-10-26 原片未保存剧号：确认无活动任务、无 ffmpeg 后，将 8793 从 PID 23012 重启为 PID 3926（操作前须再核验）。沿用 development、material_fetch=1，发布、AI、外部写入为 0，正片下载命令仍是 `python3.12 -m exactcut.dev_fetch`。列表和单集地址使用输入框里的剧号，不必先点保存。未重跑用户成片。
 
 2026-10-26 水印参考图：确认无活动任务、无子进程后，将 8793 从 PID 3926 重启为 PID 85020（操作前须再核验）。沿用 development、material_fetch=1，发布、AI、外部写入为 0。参考图改为渐进 JPEG。未重跑用户成片。8794–8801 未动。
+
+## 2026-10-30 Gemini 双语字幕实验（8810 保留运行）
+
+- 入口 http://localhost:8810/ （监听127.0.0.1:8810），owner：preview-subtitle-demo / 主程GPT；用户要求留给观看。PID 41347 为本次快照，操作前重新确认。
+- cwd `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/preview-subtitle-demo/source`，分支 `experiment/preview-subtitle-demo`。启动：指定Python `-m exactcut.subtitle_demo --ai-env /Users/matao/code/exact-cut-fbbm-handoff/source/.env --port 8810`；使用 `config/development-cutting.json` 集中配置。
+- 私有数据/缓存/日志：上述cwd的 `.dev-state/subtitle-demo/`，项目配置副本为其 `project/`，独立限流状态在其 `runtime/`。`server.log`/`server.pid` 记录运行信息。
+- 用户授权只读下载指定batch 91f0aaa0aae54aceb28093ea8206b7d2 当前版本成片及项目配置；当前version c7a295a6b8f54689a1f9f1a775218011，完整60.1秒视频SHA f2d7b2ce954b87313d661087bd879e43f45f195ce62a0e7db1e885a7ea84d683。未复制全局生产凭据/账号或激活生产任务。
+- Gemini实际整片识别38.762秒/21条；5次seek、字幕间隙及播放同步验证，7项解析检查通过。完整抽查记录在该worktree的 `docs/verification/preview-subtitle-demo-2026-10-30.md`。8793/8800/8801未变更。
+
+## 2026-10-30 中文字幕预览集成（8821）
+
+独立 worktree `preview-subtitles` / `feat/preview-subtitles`，入口 `http://subtitle-preview.localhost:8821/home/#91f0aaa0aae54aceb28093ea8206b7d2`。用户授权指定素材和配置复制件；独立账号及 registry，正式 worker/发布/外部写入关闭。启动器为 worktree 的 `source/.dev-state/preview-subtitles/start.py`，数据同目录 `data`。核验旧 PID 57727 的 cwd 且无活动任务后正常重启为 PID 32645（历史快照）；仅加载本地未提交功能。真实识别38.375秒/21句，原生成下载SHA一致；队列及UI等46项相关测试通过。保留8821供用户观看；8793/8800/8801/8810/8820未动。详细记录位于该 worktree `docs/verification/preview-subtitles-integration-2026-10-30.md`。
+
+用户追加授权复制项目 `0d6fdddb468348ad92e0cbd8f5de1db5`，供本人测试多个素材生成中文字幕。已在同一 8821 隔离数据根登记，入口 `http://subtitle-preview.localhost:8821/home/#0d6fdddb468348ad92e0cbd8f5de1db5`，名称「中文字幕多素材测试 · 101682（线上副本）」。复制 4 条当前版本原片及轻量预览，共 744300069 字节，8 个视频 SHA-256 均与线上版本记录一致；配置原件和来源清单保存在该 worktree `source/.dev-state/preview-subtitles/imports/0d6fdddb468348ad92e0cbd8f5de1db5/`。本地媒体路径已重映射，使用独立 registry 和既有 subtitle_demo 账号；未复制生产账号或激活制作/上传任务。已验证项目 HTTP 200、全部视频 Range 请求 206、4 条字幕均 idle；未提交字幕任务、未调用 Gemini，留给用户测试。8821 无需重启，其他服务未动。
+
+随后按用户要求修复识别失败并验收两条素材并发：8821 在确认队列为空后重启加载修复，最终 PID 61192（操作前重新核验），数据、账号和入口保留。默认两条素材同时识别、其余 FIFO 排队；使用哈希验证过的轻量预览、不放大、4fps，超预算自动拆段，失败段一次校验重试、成功段持久缓存。最终四条 completed，99/113/103/110 句；第三、第四条真实并发整组108.314秒，队列已空。56项相关测试和浏览器单轨/缓存/跳转通过，8个原片/预览哈希不变。48点人工抽帧中有1处短句结束偏晚，另有1处翻译漏时间限定，准确性仍有明确未解决项；不能据生成成功声称逐句逐帧准确。详见 preview-subtitles worktree 的 `docs/verification/preview-subtitles-four-materials-2026-10-30.md`。未上线。
+
+## 2026-10-30 素材校验红色高亮验收（8793 保留运行）
+
+用户要求启动并打开本地 dev。核验 8793 原 PID 85020 的 cwd、无活动任务及子进程后，沿用原开发数据、title-images / dev-fetch 配置重启，当前 PID 62449（后续操作须重查），release `development-material-validation-aebc64a`。补充 `/opt/homebrew/bin` 至启动 PATH，以便本地 ffmpeg/ffprobe 可执行。healthz 为 development/ok、worker_alive=true；其他端口未动。
+
+测试项目 `42ee83307dad4932add4d05db69b7251`，入口 `http://localhost:8793/home/#42ee83307dad4932add4d05db69b7251`。独立合成剧号 999981、EP4 105 秒测试图，六条素材编号 1/2/3/4/5/8；第六条故意留空集号、开始04:00:000晚于结束01:42:016。将素材8集号改为4、开始分钟改为00即可通过后端校验，已有原片帧索引。项目已纳管并分配独立本地账号 validation_1030；私有登录信息与日志在 `source/.dev-state/material-validation-20261030/`，不提交凭据。
+
+真实 HTTP/Playwright 验证登录、六条素材、正确卡片/字段高亮、保存后聚焦、点击顶部提示定位、逐项纠正清除红色提示及刷新后保留初始错误。发现纳管保存期间输入框禁用导致过早聚焦失败，已改为操作恢复编辑状态后再聚焦；旧版/纳管两种回归及相关测试共18项通过。测试项目最终仍保留两处初始错误，未启动制作。已按用户要求用系统浏览器打开入口，服务保留供验收。
+
+用户要求扩大测试后，最终完整回归为1770 passed、1 skipped（既有 mosaic-only 比较条件），无失败；专项77项通过。补充修复特殊字符集号、空帧字段误判时间先后，以及复制纳管项目时持久化临时校验投影的问题，提交 `db4c684`。确认无活动任务/子进程后，8793 从已核验 PID 62449 重启为 PID 25659（操作前仍须重新核验），沿用原配置；healthz=ok/development、worker_alive=true，release `development-material-validation-db4c684`。重启前后测试项目 media-state.json SHA-256 一致；HTTP复核仍为6条素材、素材8的两处初始错误。用户编辑数据未重置，其他服务未动。

@@ -1,0 +1,1117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ExactCut · 每素材预览中文字幕 UI 交互提案</title>
+  <style>
+    :root {
+      --ink: #152c39;
+      --muted: #657a87;
+      --line: #dce5e8;
+      --brand: #087f77;
+      --brand-hover: #066963;
+      --paper: #fff;
+      --bg: #f3f6f6;
+      --warm: #fff4dc;
+      --red: #ad443a;
+      --good-bg: #e2f3ea;
+      --good-text: #087750;
+      --running-bg: #fff1d6;
+      --running-text: #91600c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+    }
+    button, input, textarea, select { font: inherit; outline-offset: 4px; }
+    button {
+      cursor: pointer;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      padding: 10px 16px;
+      background: var(--brand);
+      color: white;
+      font-weight: 600;
+      transition: filter 0.15s, background-color 0.15s;
+    }
+    button:hover { filter: brightness(0.96); }
+    button:disabled { cursor: not-allowed; opacity: 0.45; }
+    .secondary {
+      background: white;
+      border-color: var(--line);
+      color: var(--ink);
+    }
+    .secondary:hover:not(:disabled) {
+      background: #f8fbfb;
+      border-color: #b8cbd0;
+    }
+    .quiet {
+      background: transparent;
+      border-color: transparent;
+      color: var(--muted);
+      padding: 6px 10px;
+    }
+    .quiet:hover {
+      background: rgba(0, 0, 0, 0.05);
+      color: var(--ink);
+    }
+    a { color: var(--brand); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* Top Prototype Notice Banner */
+    .mock-banner {
+      background: #102c37;
+      color: #b2d5d8;
+      font-size: 12px;
+      padding: 8px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 10px;
+      border-bottom: 1px solid #1f4250;
+    }
+    .mock-banner strong { color: #5eead4; }
+    .mock-controls { display: inline-flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .mock-controls button {
+      padding: 4px 10px;
+      font-size: 11px;
+      border-radius: 5px;
+      background: rgba(255, 255, 255, 0.1);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+      color: #e0f2f1;
+    }
+    .mock-controls button:hover { background: rgba(255, 255, 255, 0.2); }
+
+    /* System Header */
+    header {
+      height: 64px;
+      background: #0d232c;
+      border-bottom: 1px solid #1a3c48;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 28px;
+    }
+    header strong { font-size: 18px; letter-spacing: 1.2px; color: #fff; }
+    header .header-group { display: inline-flex; align-items: center; gap: 10px; }
+    header .header-connection { font-size: 12px; color: #7ad1c6; }
+    header .header-btn {
+      color: #e0ecee;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      border-radius: 6px;
+      padding: 6px 12px;
+      font-size: 12px;
+    }
+    .account-pill { font-size: 12px; color: #c4dee3; }
+
+    /* Shell Layout */
+    .shell {
+      display: grid;
+      grid-template-columns: 240px minmax(0, 1fr);
+      min-height: calc(100vh - 100px);
+    }
+    aside {
+      background: #fff;
+      border-right: 1px solid var(--line);
+      padding: 20px 14px;
+      display: flex;
+      flex-direction: column;
+    }
+    aside > button { width: 100%; margin-bottom: 20px; }
+    .eyebrow {
+      font-size: 11px;
+      color: var(--muted);
+      font-weight: 700;
+      letter-spacing: 1px;
+      margin-bottom: 10px;
+    }
+    .tabs {
+      display: flex;
+      gap: 6px;
+      border-bottom: 2px solid #e1e9eb;
+      margin-bottom: 16px;
+    }
+    .tab {
+      padding: 8px 14px;
+      border-radius: 6px 6px 0 0;
+      background: none;
+      color: var(--muted);
+      border: 1px solid transparent;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -2px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .tab.active {
+      border-color: #e1e9eb;
+      border-bottom-color: var(--brand);
+      color: var(--brand);
+      background: #fff;
+    }
+
+    /* Batch list items */
+    .batch-item {
+      padding: 12px;
+      border: 1px solid transparent;
+      border-radius: 8px;
+      cursor: pointer;
+      margin-bottom: 6px;
+      transition: background 0.15s;
+    }
+    .batch-item:hover { background: #f5f8f8; }
+    .batch-item.selected {
+      background: #e9f4f2;
+      border-color: #bbdcd5;
+    }
+    .batch-item strong { display: block; font-size: 13px; margin-bottom: 4px; color: var(--ink); }
+    .batch-item small { display: block; font-size: 11px; color: var(--muted); line-height: 1.4; }
+    .badge {
+      display: inline-block;
+      border-radius: 30px;
+      padding: 3px 10px;
+      background: #edf2f4;
+      font-size: 11px;
+      font-weight: 600;
+      margin-top: 6px;
+    }
+    .badge.good { background: var(--good-bg); color: var(--good-text); }
+    .badge.running { background: var(--running-bg); color: var(--running-text); }
+
+    /* Main Area */
+    main {
+      padding: 28px 36px;
+      max-width: 1400px;
+      width: 100%;
+    }
+    .topline {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 14px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+    h1 { font-size: 24px; letter-spacing: -0.5px; margin: 0 0 6px; }
+    h2 { font-size: 18px; margin: 0 0 6px; }
+    .hint { font-size: 12px; color: var(--muted); line-height: 1.6; margin: 0; }
+
+    /* Status banner */
+    .status-banner {
+      background: #edf7f4;
+      border: 1px solid #b7dfd4;
+      border-radius: 8px;
+      padding: 8px 16px;
+      margin: 10px 0 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 13px;
+      color: #184a40;
+    }
+
+    /* Cards grid */
+    .assets {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(380px, 440px));
+      gap: 28px;
+      margin-top: 16px;
+    }
+    .asset {
+      display: flex;
+      flex-direction: column;
+      border: 1px solid var(--line);
+      background: white;
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 3px 16px rgba(18, 51, 60, 0.05);
+      transition: box-shadow 0.2s, border-color 0.2s;
+    }
+    .asset:hover {
+      box-shadow: 0 8px 26px rgba(18, 51, 60, 0.09);
+      border-color: #b4cdd4;
+    }
+
+    /* Video Player Container */
+    .videoarea {
+      width: 100%;
+      height: 400px;
+      background: #08151c;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+    .videoarea video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #08151c;
+    }
+
+    /* ========================================================
+       NEW SUBTITLE FEATURE STYLES (Clean, Faithful, Non-Intrusive)
+       ======================================================== */
+
+    /* 2. Subtitle Control Row Below Video */
+    .subtitle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 14px;
+      background: #f7fafa;
+      border-bottom: 1px solid #e7eff1;
+      border-top: 1px solid #e7eff1;
+      font-size: 12px;
+      flex-wrap: wrap;
+    }
+    .subtitle-toggle-wrap {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    /* Native-style iOS/Material compact switch */
+    .switch {
+      position: relative;
+      display: inline-block;
+      width: 36px;
+      height: 20px;
+      flex-shrink: 0;
+    }
+    .switch input {
+      opacity: 0;
+      width: 0;
+      height: 0;
+      position: absolute;
+    }
+    .slider {
+      position: absolute;
+      cursor: pointer;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background-color: #cfd9dc;
+      transition: 0.2s;
+      border-radius: 20px;
+    }
+    .slider:before {
+      position: absolute;
+      content: "";
+      height: 14px;
+      width: 14px;
+      left: 3px;
+      bottom: 3px;
+      background-color: white;
+      transition: 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      border-radius: 50%;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.25);
+    }
+    .switch input:checked + .slider {
+      background-color: var(--brand);
+    }
+    .switch input:focus-visible + .slider {
+      box-shadow: 0 0 0 2px var(--brand);
+    }
+    .switch input:checked + .slider:before {
+      transform: translateX(16px);
+    }
+    .switch input:disabled + .slider {
+      opacity: 0.6;
+      cursor: wait;
+    }
+    .subtitle-label {
+      font-weight: 600;
+      color: var(--ink);
+      font-size: 13px;
+    }
+
+    /* Status Text */
+    .subtitle-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      flex: 1;
+      min-width: 0;
+    }
+    .subtitle-status.loading {
+      color: var(--running-text);
+      font-weight: 500;
+    }
+    .subtitle-status.ready {
+      color: var(--good-text);
+      font-weight: 500;
+    }
+    /* Spinner */
+    .spinner {
+      width: 13px;
+      height: 13px;
+      border: 2px solid #e1b452;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    .dot-ready {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #087750;
+      display: inline-block;
+    }
+
+    /* Action button */
+    .subtitle-btn {
+      padding: 5px 11px;
+      font-size: 12px;
+      font-weight: 500;
+      border-radius: 6px;
+      white-space: nowrap;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    /* Asset Card Body */
+    .assetbody {
+      padding: 16px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .assetbody .row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+    .assetbody .row h3 {
+      font-size: 16px;
+      margin: 0;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .filename {
+      font-size: 12px;
+      color: var(--muted);
+      margin: 2px 0 4px;
+      word-break: break-all;
+      line-height: 1.5;
+    }
+    .assetdetail { font-size: 12px; color: #2c4b54; margin: 0; }
+    .hook-emphasis {
+      font-size: 12px;
+      color: #3b5b63;
+      background: #f0f6f7;
+      border-left: 3px solid var(--brand);
+      padding: 6px 10px;
+      border-radius: 0 4px 4px 0;
+      line-height: 1.5;
+      margin: 4px 0;
+    }
+    .approve {
+      margin: 8px 0;
+      font-size: 13px;
+      font-weight: 600;
+      background: #edf7f4;
+      border: 1px solid #b8dfd5;
+      border-radius: 8px;
+      padding: 10px 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #114840;
+    }
+    .approve input {
+      width: 16px;
+      height: 16px;
+      margin: 0;
+      cursor: pointer;
+    }
+    .asset button[data-publish] {
+      margin-top: 2px;
+      padding: 11px 16px;
+      font-size: 14px;
+      font-weight: 700;
+      border-radius: 8px;
+      width: 100%;
+    }
+    .asset details {
+      margin-top: 6px;
+      border-top: 1px solid #edf1f3;
+      padding-top: 8px;
+    }
+    .asset details summary {
+      font-size: 12px;
+      color: var(--muted);
+      cursor: pointer;
+      user-select: none;
+    }
+
+    /* ========================================================
+       SUBTITLE TIMELINE DIALOG (Native exact-cut dialog style)
+       ======================================================== */
+    dialog#timelineDialog {
+      border: 0;
+      border-radius: 14px;
+      padding: 0;
+      max-width: 620px;
+      width: 92vw;
+      box-shadow: 0 20px 80px rgba(0, 0, 0, 0.35);
+      background: #fff;
+      color: var(--ink);
+      overflow: hidden;
+    }
+    dialog#timelineDialog::backdrop {
+      background: rgba(16, 44, 55, 0.65);
+      backdrop-filter: blur(2px);
+    }
+    .dialog-header {
+      padding: 18px 24px;
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #fafcfc;
+    }
+    .dialog-header h2 {
+      font-size: 17px;
+      margin: 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .dialog-header .dialog-sub {
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: normal;
+      margin-top: 2px;
+    }
+    .dialog-controls-bar {
+      padding: 8px 24px;
+      background: #f1f7f7;
+      border-bottom: 1px solid #dbe6e8;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 12px;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .dialog-controls-bar label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: #174542;
+      cursor: pointer;
+      margin: 0;
+      font-weight: 500;
+    }
+    .dialog-cues-list {
+      max-height: 52vh;
+      overflow-y: auto;
+      padding: 12px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .cue-card {
+      padding: 10px 14px;
+      border: 1px solid #e1e9eb;
+      border-radius: 8px;
+      background: #fff;
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.15s ease;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .cue-card:hover {
+      background: #f7faf9;
+      border-color: #a4ceca;
+      transform: translateX(2px);
+    }
+    .cue-card.active {
+      background: #eef8f5;
+      border-color: var(--brand);
+      box-shadow: 0 0 0 1px var(--brand);
+    }
+    .cue-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+    }
+    .cue-time {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--brand);
+      font-weight: 600;
+      background: #e9f4f2;
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
+    .cue-indicator {
+      font-size: 11px;
+      color: var(--brand);
+      font-weight: 600;
+      display: none;
+    }
+    .cue-card.active .cue-indicator {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+    .cue-en {
+      font-size: 12px;
+      color: #5f7580;
+      line-height: 1.4;
+    }
+    .cue-zh {
+      font-size: 14px;
+      color: var(--ink);
+      font-weight: 600;
+      line-height: 1.45;
+    }
+    .dialog-footer {
+      padding: 14px 24px;
+      border-top: 1px solid var(--line);
+      background: #fafcfc;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    /* Floating Toast */
+    #toast {
+      position: fixed;
+      right: 24px;
+      bottom: 24px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      background: #113c37;
+      color: white;
+      font-size: 13px;
+      z-index: 999;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25);
+      transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+    #toast.hidden {
+      opacity: 0;
+      transform: translateY(8px);
+    }
+
+    @media (max-width: 800px) {
+      .shell { grid-template-columns: 1fr; }
+      aside { display: none; }
+      main { padding: 18px; }
+      .assets { grid-template-columns: 1fr; }
+      .videoarea { height: 340px; }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Mock Announcement & Quick Test Toolbar -->
+  <aside class="mock-banner" aria-label="原型控制条">
+    <div>
+      <strong>🎨 ExactCut 交互设计稿</strong>
+      <span> · 素材预览中文字幕 · 仅原型设计演示（不消耗 API）</span>
+    </div>
+    <div class="mock-controls">
+      <span>演示控制：</span>
+      <button type="button" id="btnDemoReset">重置未生成</button>
+      <button type="button" id="btnDemoSimulate">模拟3秒识别</button>
+      <button type="button" id="btnDemoReady">直接就绪</button>
+      <button type="button" id="btnDemoSeekKey">跳转到关键帧(00:33)</button>
+    </div>
+  </aside>
+
+  <!-- Top System Header (faithful to ExactCut) -->
+  <header>
+    <div><strong>素材工作台</strong></div>
+    <div class="header-group">
+      <span class="header-connection">● 已连接 · 状态自动同步</span>
+      <button class="header-btn" type="button">📊 反馈汇总</button>
+      <span class="account-pill">xumingfei (制作人)</span>
+      <button class="header-btn" type="button">退出登录</button>
+    </div>
+  </header>
+
+  <div class="shell">
+    <!-- Left Navigation (faithful to ExactCut) -->
+    <aside>
+      <button type="button">＋ 新建项目</button>
+      <div class="eyebrow">制作批次</div>
+      <nav class="tabs">
+        <button class="tab active" type="button">当前项目 (132)</button>
+        <button class="tab" type="button">已归档 (21)</button>
+      </nav>
+      <div class="batch-list">
+        <div class="batch-item selected">
+          <strong>未命名项目</strong>
+          <small>producer06 · 1 条素材</small>
+          <small>2026/10/30</small>
+          <span class="badge">待确认</span>
+        </div>
+        <div class="batch-item">
+          <strong>101680 · 未命名项目</strong>
+          <small>producer06 · 6 条素材</small>
+          <span class="badge good">待预览</span>
+        </div>
+        <div class="batch-item">
+          <strong>101685 · My Halloween Date</strong>
+          <small>producer03 · 1 条素材</small>
+          <span class="badge good">待预览</span>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Main Content Workspace -->
+    <main>
+      <div class="topline">
+        <div>
+          <div class="eyebrow">PRODUCER06 / 2026-10-30</div>
+          <h1>未命名项目</h1>
+        </div>
+        <div>
+          <span class="badge good">成片就绪</span>
+        </div>
+      </div>
+
+      <div class="status-banner">
+        <span>成片格式与时长质检通过，已生成轻量预览与正式成片。可在下方试听、确认或下载。</span>
+      </div>
+
+      <nav class="tabs">
+        <button class="tab" type="button">标准化内容</button>
+        <button class="tab" type="button">执行进度</button>
+        <button class="tab active" type="button">成片预览</button>
+      </nav>
+
+      <div class="row" style="margin-bottom: 12px;">
+        <div>
+          <h2>逐条预览，确认后再上传</h2>
+          <p class="hint">格式与时长检查通过的成片可在这里播放；反馈会保存，不会自动修改或重制视频。</p>
+        </div>
+        <span class="badge">1 条素材</span>
+      </div>
+
+      <!-- Preview Assets Grid -->
+      <div class="assets">
+        <article class="asset" data-asset="0">
+
+          <!-- 1. Video Player Container with Subtitle Ribbon -->
+          <div class="videoarea">
+            <video id="previewVideo" controls playsinline preload="metadata" src="http://localhost:8810/video.mp4">
+              <!-- TextTrack will be injected dynamically for native fullscreen VTTCue support -->
+            </video>
+
+
+          </div>
+
+          <!-- 2. NEW Subtitle Toolbar Row (Clean, single-line, fits seamlessly into card) -->
+          <div class="subtitle-row">
+            <label class="subtitle-toggle-wrap" for="subToggle" title="开启后自动通过 Gemini 识别对白并同步展示中文字幕">
+              <span class="switch">
+                <input type="checkbox" id="subToggle">
+                <span class="slider"></span>
+              </span>
+              <span class="subtitle-label" id="subToggleLabel">生成中文字幕</span>
+            </label>
+
+            <div class="subtitle-status" id="subStatus">
+              <span>未生成 · 点击开启识别</span>
+            </div>
+
+            <button type="button" class="secondary subtitle-btn" id="btnOpenTimeline" disabled title="查看完整对白时间轴与翻译">
+              📑 查看字幕时间轴
+            </button>
+          </div>
+
+          <!-- 3. Existing Asset Body Information -->
+          <div class="assetbody">
+            <div class="row">
+              <h3>R91f0aaa0</h3>
+              <span class="badge good">FBBM 已就绪</span>
+            </div>
+
+            <p class="filename">20261028_typezxraw_张一凡_agent_1_#101672#.mp4</p>
+
+            <p class="hint">
+              轻量预览 · 上传使用正式成片 · <a href="http://localhost:8810/video.mp4" download="R91f0aaa0_master.mp4">下载正式成片</a>
+            </p>
+
+            <p class="hint assetdetail">60.1 秒 · Facebook 视频 ID：2141213776786427</p>
+
+            <div class="hook-emphasis">
+              <strong>AI 重点：</strong>my boyfriend · his older brother。"男友"建立错误认知，"他的哥哥"揭开救命恩人的真实身份，形成强烈关系反转。
+            </div>
+
+            <details>
+              <summary>▶ 各阶段耗时</summary>
+              <div style="padding: 8px 0; font-size: 12px; color: var(--muted); line-height: 1.6;">
+                <div>剪辑拼接：12.4 秒</div>
+                <div>抽样画面：3.1 秒</div>
+                <div>Hook 排版与合成：4.6 秒</div>
+                <div>成片质检：2.8 秒</div>
+                <div>Gemini 字幕识别：38.8 秒（后台异步）</div>
+              </div>
+            </details>
+
+            <label class="approve">
+              <input type="checkbox" checked disabled> 我已预览，确认这条素材可以上传
+            </label>
+
+            <button data-publish disabled>已入库</button>
+
+            <details>
+              <summary>预览有问题？记录反馈</summary>
+              <div style="padding-top: 10px;">
+                <textarea style="width: 100%; min-height: 60px; padding: 8px; border: 1px solid var(--line); border-radius: 6px;" placeholder="描述问题，建议附上视频时间点…"></textarea>
+                <button type="button" class="secondary" style="margin-top: 8px; padding: 6px 12px; font-size: 12px;">保存反馈</button>
+              </div>
+            </details>
+          </div>
+        </article>
+      </div>
+    </main>
+  </div>
+
+  <!-- Subtitle Timeline Dialog Modal (Native exact-cut dialog) -->
+  <dialog id="timelineDialog" aria-labelledby="dialogTitle">
+    <div class="dialog-header">
+      <div>
+        <h2 id="dialogTitle">📑 双语字幕时间轴</h2>
+        <div class="dialog-sub">素材 R91f0aaa0 · 60.1 秒 · 共 <span id="cueCountLabel">21</span> 条对白 · 异步识别完成</div>
+      </div>
+      <button type="button" class="quiet" id="btnCloseDialog" aria-label="关闭弹窗" style="font-size: 18px; padding: 4px 8px;">✕</button>
+    </div>
+
+    <div class="dialog-controls-bar">
+      <span>💡 点击任意句子可跳转视频播放；系统会自动高亮当前句</span>
+      <label>
+        <input type="checkbox" id="chkAutoClose" checked>
+        <span>点击句子后自动关闭弹窗（便于观看视频）</span>
+      </label>
+    </div>
+
+    <div class="dialog-cues-list" id="cuesList" role="list">
+      <!-- Injected by JavaScript -->
+    </div>
+
+    <div class="dialog-footer">
+      <div>模型：gemini-3.8-flash · 缓存已保存于本项目</div>
+      <button type="button" class="secondary" id="btnFooterClose" style="padding: 7px 14px; font-size: 12px;">关闭并继续观看</button>
+    </div>
+  </dialog>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="hidden" role="status" aria-live="polite"></div>
+
+  <!-- Interactive Logic -->
+  <script>
+    // Embedded Verbatim Cues Data from 8810 Experiment Snapshot
+    const SUBTITLE_DATA = [
+      { start_ms: 250, end_ms: 1750, original_text: "Why did you choose Jona?", translation_zh: "你为什么选择乔纳？" },
+      { start_ms: 5000, end_ms: 6750, original_text: "When I was eight, Jona saved my life.", translation_zh: "我八岁那年，是乔纳救了我的命。" },
+      { start_ms: 14250, end_ms: 16500, original_text: "My stepsister pushed me into the water on purpose.", translation_zh: "我继妹故意把我推下水。" },
+      { start_ms: 18250, end_ms: 19000, original_text: "I almost drowned.", translation_zh: "我差点淹死了。" },
+      { start_ms: 19000, end_ms: 20000, original_text: "Jona saved my life.", translation_zh: "乔纳救了我的命。" },
+      { start_ms: 20000, end_ms: 21250, original_text: "Wake up!", translation_zh: "醒醒！" },
+      { start_ms: 21250, end_ms: 22250, original_text: "To repay him,", translation_zh: "为了报答他，" },
+      { start_ms: 22250, end_ms: 24000, original_text: "I agreed to be his girlfriend.", translation_zh: "我答应做他的女朋友。" },
+      { start_ms: 26500, end_ms: 27500, original_text: "Jona saved you?", translation_zh: "乔纳救了你？" },
+      { start_ms: 28000, end_ms: 28750, original_text: "As far as I know,", translation_zh: "据我所知，" },
+      { start_ms: 28750, end_ms: 29750, original_text: "he can't swim.", translation_zh: "他不会游泳。" },
+      { start_ms: 30250, end_ms: 31750, original_text: "And he's been deathly afraid of", translation_zh: "而且他从小" },
+      { start_ms: 31750, end_ms: 32750, original_text: "water since he was a child.", translation_zh: "就极度怕水。" },
+      { start_ms: 33750, end_ms: 34750, original_text: "What did you say?", translation_zh: "你说什么？" },
+      { start_ms: 35250, end_ms: 36250, original_text: "Jona can't swim?", translation_zh: "乔纳不会游泳？" },
+      { start_ms: 36250, end_ms: 37750, original_text: "But when I opened my eyes and woke up,", translation_zh: "可我睁开眼醒来的时候，" },
+      { start_ms: 37750, end_ms: 39500, original_text: "the person I saw was clearly Jona!", translation_zh: "我看到的人分明就是乔纳！" },
+      { start_ms: 40000, end_ms: 42250, original_text: "A man who can't swim, and has been", translation_zh: "一个不会游泳，并且" },
+      { start_ms: 42250, end_ms: 44000, original_text: "terrified of water since childhood—", translation_zh: "从小就怕水的人——" },
+      { start_ms: 44500, end_ms: 45500, original_text: "how could he possibly have", translation_zh: "怎么可能" },
+      { start_ms: 45500, end_ms: 46750, original_text: "pulled you out of deep water?", translation_zh: "把你从深水里拉上来？" }
+    ];
+
+    // UI Elements
+    const video = document.getElementById('previewVideo');
+    const subToggle = document.getElementById('subToggle');
+    const subToggleLabel = document.getElementById('subToggleLabel');
+    const subStatus = document.getElementById('subStatus');
+    const btnOpenTimeline = document.getElementById('btnOpenTimeline');
+    const timelineDialog = document.getElementById('timelineDialog');
+    const btnCloseDialog = document.getElementById('btnCloseDialog');
+    const btnFooterClose = document.getElementById('btnFooterClose');
+    const chkAutoClose = document.getElementById('chkAutoClose');
+    const cuesList = document.getElementById('cuesList');
+    const toastEl = document.getElementById('toast');
+
+    // State Variables
+    let appState = 'unloaded'; // 'unloaded' | 'loading' | 'ready' | 'hidden'
+    let currentCueIndex = -1;
+    let loadingTimer = null;
+    let toastTimer = null;
+    let nativeTrack = null;
+
+    // Time Format Helper (mm:ss.s)
+    function formatTime(ms) {
+      const totalSec = ms / 1000;
+      const m = Math.floor(totalSec / 60);
+      const s = (totalSec % 60).toFixed(1);
+      return `${String(m).padStart(2, '0')}:${s.padStart(4, '0')}`;
+    }
+
+    // Toast Helper
+    function showToast(msg) {
+      toastEl.textContent = msg;
+      toastEl.classList.remove('hidden');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toastEl.classList.add('hidden'), 3500);
+    }
+
+    // Render Timeline Cues in Dialog
+    function renderCuesList() {
+      cuesList.innerHTML = '';
+      SUBTITLE_DATA.forEach((cue, index) => {
+        const item = document.createElement('div');
+        item.className = 'cue-card';
+        item.dataset.index = index;
+        item.setAttribute('role', 'listitem');
+        item.innerHTML = `
+          <div class="cue-top">
+            <span class="cue-time">${formatTime(cue.start_ms)} → ${formatTime(cue.end_ms)}</span>
+            <span class="cue-indicator">▶ 当前对白</span>
+          </div>
+          <div class="cue-en">${cue.original_text}</div>
+          <div class="cue-zh">${cue.translation_zh}</div>
+        `;
+
+        item.onclick = () => {
+          // Jump video to start time of cue
+          video.currentTime = cue.start_ms / 1000;
+          video.play().catch(() => {});
+          syncSubtitles();
+          showToast(`已跳转至 ${formatTime(cue.start_ms)} · "${cue.translation_zh}"`);
+
+          // If auto-close is checked, close dialog to let user watch immediately
+          if (chkAutoClose.checked) {
+            closeTimelineDialog();
+          }
+        };
+
+        cuesList.appendChild(item);
+      });
+    }
+
+    // Use one native subtitle track for inline and fullscreen playback
+    function setupNativeTrack() {
+      if (!window.VTTCue) return;
+      try {
+        if (!nativeTrack) {
+          nativeTrack = video.addTextTrack('subtitles', '中文字幕 (ExactCut)', 'zh');
+          SUBTITLE_DATA.forEach(cue => {
+            const vttCue = new VTTCue(cue.start_ms / 1000, cue.end_ms / 1000, cue.translation_zh);
+            vttCue.line = 2; // Position top for fullscreen
+            nativeTrack.addCue(vttCue);
+          });
+        }
+        nativeTrack.mode = (appState === 'ready') ? 'showing' : 'disabled';
+      } catch (err) {
+        console.warn('Native track initialization note:', err);
+      }
+    }
+
+    // Synchronize Subtitles with Video Playback
+    function syncSubtitles() {
+      if (appState !== 'ready') {
+        return;
+      }
+
+      const currentTimeMs = Math.round(video.currentTime * 1000);
+      const cueIndex = SUBTITLE_DATA.findIndex(c => currentTimeMs >= c.start_ms && currentTimeMs < c.end_ms);
+
+      if (cueIndex !== currentCueIndex) {
+        currentCueIndex = cueIndex;
+        // Highlight active cue in open dialog
+        if (timelineDialog.open) {
+          const cards = cuesList.querySelectorAll('.cue-card');
+          cards.forEach((card, idx) => {
+            const isActive = idx === cueIndex;
+            card.classList.toggle('active', isActive);
+            if (isActive) {
+              card.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+          });
+        }
+      }
+    }
+
+    // Update UI According to App State
+    function setAppState(newState, autoOpenDialog = false) {
+      appState = newState;
+      clearTimeout(loadingTimer);
+
+      if (newState === 'unloaded') {
+        subToggle.checked = false;
+        subToggle.disabled = false;
+        subToggleLabel.textContent = '生成中文字幕';
+        subStatus.className = 'subtitle-status';
+        subStatus.innerHTML = `<span>未生成 · 点击开启调用 Gemini</span>`;
+        btnOpenTimeline.disabled = true;
+        if (nativeTrack) nativeTrack.mode = 'disabled';
+      }
+      else if (newState === 'loading') {
+        subToggle.checked = true;
+        subToggle.disabled = true; // prevent double clicking during simulation
+        subToggleLabel.textContent = '中文字幕';
+        subStatus.className = 'subtitle-status loading';
+        subStatus.innerHTML = `<span class="spinner"></span><span>Gemini 识别中 · 视频可照常播放…</span>`;
+        btnOpenTimeline.disabled = true;
+
+        // Simulate background Gemini asynchronous recognition (3 seconds)
+        loadingTimer = setTimeout(() => {
+          setAppState('ready', true); // auto open dialog upon first completion
+        }, 2800);
+      }
+      else if (newState === 'ready') {
+        subToggle.checked = true;
+        subToggle.disabled = false;
+        subToggleLabel.textContent = '中文字幕';
+        subStatus.className = 'subtitle-status ready';
+        subStatus.innerHTML = `<span class="dot-ready"></span><span>已就绪 (共 21 句 · 已缓存)</span>`;
+        btnOpenTimeline.disabled = false;
+        setupNativeTrack();
+        syncSubtitles();
+
+        if (autoOpenDialog) {
+          openTimelineDialog();
+          showToast('中文字幕已生成！已为您弹出双语时间轴');
+        }
+      }
+      else if (newState === 'hidden') {
+        subToggle.checked = false;
+        subToggle.disabled = false;
+        subToggleLabel.textContent = '中文字幕';
+        subStatus.className = 'subtitle-status';
+        subStatus.innerHTML = `<span>字幕已隐藏 (缓存保留，开启不重复扣费)</span>`;
+        btnOpenTimeline.disabled = false;
+        if (nativeTrack) nativeTrack.mode = 'disabled';
+      }
+    }
+
+    // Dialog Open / Close Handling with Focus Restoration & Keyboard Escape
+    let lastActiveElement = null;
+
+    function openTimelineDialog() {
+      lastActiveElement = document.activeElement;
+      renderCuesList();
+      timelineDialog.showModal();
+      syncSubtitles();
+      btnCloseDialog.focus();
+    }
+
+    function closeTimelineDialog() {
+      timelineDialog.close();
+      if (lastActiveElement && typeof lastActiveElement.focus === 'function') {
+        lastActiveElement.focus();
+      } else {
+        btnOpenTimeline.focus();
+      }
+    }
+
+    // Event Bindings
+    subToggle.addEventListener('change', (e) => {
+      if (e.target.checked) {
+        if (appState === 'hidden') {
+          // Cached re-enable: instantaneous without calling API again
+          setAppState('ready', false);
+          showToast('中文字幕已开启（已直接复用本地缓存）');
+        } else {
+          // First time generation
+          setAppState('loading');
+        }
+      } else {
+        // Turning toggle off hides subtitle on video, keeps cache intact
+        setAppState('hidden');
+        showToast('中文字幕已隐藏');
+      }
+    });
+
+    btnOpenTimeline.addEventListener('click', () => {
+      openTimelineDialog();
+    });
+
+    btnCloseDialog.addEventListener('click', closeTimelineDialog);
+    btnFooterClose.addEventListener('click', closeTimelineDialog);
+
+    // Escape Key & Backdrop Click handling
+    timelineDialog.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeTimelineDialog();
+      }
+    });
+
+    timelineDialog.addEventListener('click', (e) => {
+      // If clicked on backdrop outside dialog content
+      const rect = timelineDialog.getBoundingClientRect();
+      const inDialog = (
+        rect.top <= e.clientY && e.clientY <= rect.top + rect.height &&
+        rect.left <= e.clientX && e.clientX <= rect.left + rect.width
+      );
+      if (!inDialog) {
+        closeTimelineDialog();
+      }
+    });
+
+    // Video Playback Events
+    video.addEventListener('timeupdate', syncSubtitles);
+    video.addEventListener('seeked', syncSubtitles);
+    video.addEventListener('seeking', syncSubtitles);
+    video.addEventListener('play', syncSubtitles);
+
+    // Demo Prototype Buttons
+    document.getElementById('btnDemoReset').onclick = () => {
+      setAppState('unloaded');
+      showToast('已重置为初始「未生成」状态');
+    };
+
+    document.getElementById('btnDemoSimulate').onclick = () => {
+      setAppState('loading');
+    };
+
+    document.getElementById('btnDemoReady').onclick = () => {
+      setAppState('ready', false);
+      showToast('已直接设为「识别已就绪」状态');
+    };
+
+    document.getElementById('btnDemoSeekKey').onclick = () => {
+      if (appState !== 'ready') setAppState('ready', false);
+      video.currentTime = 33.75;
+      video.play().catch(() => {});
+      showToast('已跳转到 00:33 对白 "你说什么？"');
+    };
+
+    // Initialize in clean unloaded state
+    setAppState('unloaded');
+  </script>
+</body>
+</html>
