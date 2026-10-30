@@ -1,4 +1,6 @@
 import gzip
+import fnmatch
+import tomllib
 import re
 import subprocess
 from pathlib import Path
@@ -28,6 +30,17 @@ def test_versioned_scripts_compressed_and_private(app):
     assert stale_headers['Cache-Control'] == 'no-store'
     _, denied_headers, _ = request(app, 'GET', '/home/app.js', headers={**headers, 'Accept-Encoding': 'gzip;q=0'})
     assert 'Content-Encoding' not in denied_headers
+
+
+def test_every_served_script_is_declared_as_package_data(app):
+    headers = login(app)
+    _, _, html = request(app, 'GET', '/home/', headers=headers)
+    names = re.findall(rb'src="([^"?]+\.js)\?v=', html)
+    config = tomllib.loads((Path(__file__).resolve().parents[1] / 'pyproject.toml').read_text())
+    patterns = config['tool']['setuptools']['package-data']['exactcut']
+    missing = [name.decode() for name in names
+               if not any(fnmatch.fnmatch('web/' + name.decode(), pattern) for pattern in patterns)]
+    assert not missing, f'Browser modules missing from installed package: {missing}'
 
 
 def test_startup_parallel_identity_preserves_workspace_dependency():
