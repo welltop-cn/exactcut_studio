@@ -94,6 +94,24 @@ def test_compute_busy_open_another_submit_restore_and_freeze(ready,managed):
         dispatcher.stop();app.shutdown();app.server_close()
 
 
+def test_submission_receipt_is_persisted_and_validated(ready):
+    bid,rid,sha,source=ready;app=serve()
+    try:
+        code,session=call(app,'POST',f'/api/batches/{bid}/mosaics/open',{'request_id':rid,'source_sha256':sha})
+        assert code==200
+        endpoint=f"/api/batches/{bid}/mosaics/{session['id']}/render"
+        body={'targets':[],'ranges':[[1,3]],'reset_at':'','submission_id':'a'*32}
+        assert call(app,'POST',endpoint,{**body,'submission_id':'invalid'})[0]==400
+        code,job=call(app,'POST',endpoint,body);assert code==202
+        assert job['submission_id']==body['submission_id']
+        assert call(app,'GET',endpoint)[1]['job']['submission_id']==body['submission_id']
+        assert queue.load()['tasks'][0]['job']['submission_id']==body['submission_id']
+        code,replayed=call(app,'POST',endpoint,{**body,'submission_id':'b'*32})
+        assert code==202 and replayed['id']==job['id']
+        assert file_sha256(source)==sha
+    finally:app.shutdown();app.server_close()
+
+
 def test_three_users_rotate_without_starvation(tmp_path,monkeypatch):
     monkeypatch.setattr(workflow,'BATCHES',tmp_path/'batches')
     for actor in ['a','b','c']:

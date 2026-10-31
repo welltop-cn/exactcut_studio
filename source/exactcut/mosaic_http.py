@@ -55,7 +55,7 @@ def handle(handler,bid,suffix,method):
             if method=='POST' and action=='clip-preview':
                 return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at',''),effect=data.get('effect'),preview=True))
             if method=='POST' and action=='render':
-                return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at',''),data.get('ranges'),data.get('effect'),actor=handler.user['username']))
+                return handler.respond(202,mosaic_render.start(bid,sid,data.get('targets'),data.get('reset_at',''),data.get('ranges'),data.get('effect'),actor=handler.user['username'],submission_id=data.get('submission_id')))
             if method=='POST' and action=='replace':
                 from . import mosaic_replace
                 return handler.respond(202,mosaic_replace.start(bid,sid,data.get('job_id'),data.get('reset_at','')))

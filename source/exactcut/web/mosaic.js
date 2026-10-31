@@ -10,8 +10,8 @@
   let stopPending=false,previewBusy=false,previewClose=false,previewJob=null,previewEndpoint=null,previewReset="";
   let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
   let sourceManager=null,sourceBinding=null,beforeBinding=null;
-  const pendingJob=()=>['queued','running','cancelling'].includes(batchJob?.status);
-  const awaitingDecision=()=>batchJob?.status==='completed'&&!batchJob?.discarded_at&&batchJob?.replacement?.status!=='completed';
+  const pendingJob=(job=batchJob)=>['queued','running','cancelling'].includes(job?.status);
+  const awaitingDecision=(job=batchJob)=>job?.status==='completed'&&!job?.discarded_at&&job?.replacement?.status!=='completed';
   const editLocked=()=>scanLoading||previewBusy||batchLoading||pendingJob()||awaitingDecision()||stopPending||mutationBusy;
   const defaultEffect={style:'pixel',strength:'medium',expansion:'small'};
   let effect={...defaultEffect},savedEffect={...defaultEffect},clipEffects={},savedClipEffects={};
@@ -600,7 +600,8 @@
     if(view&&!view.hasAttribute('data-scan-event'))viewTarget(Number(view.dataset.targetView));
   };
   const deleteRanges=()=>deletions.map(t=>[t.start,t.end]).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
-  const sameBatch=()=>!!batchJob&&JSON.stringify({...defaultEffect,...batchJob.effect})===JSON.stringify(effect)&&targetSignature(batchJob.targets,batchJob.effect)===targetSignature(adoptedTargets())&&JSON.stringify(batchJob.ranges||[])===JSON.stringify(mergedRanges(deleteRanges()));
+  const samePlan=(job,plan)=>!!job&&JSON.stringify({...defaultEffect,...job.effect})===JSON.stringify({...defaultEffect,...plan.effect})&&targetSignature(job.targets||[],job.effect)===targetSignature(plan.targets||[],plan.effect)&&JSON.stringify(job.ranges||[])===JSON.stringify(mergedRanges(plan.ranges||[]));
+  const sameBatch=()=>samePlan(batchJob,{effect,targets:adoptedTargets(),ranges:deleteRanges()});
   function mergedRanges(input){const out=[];for(const [a,b] of input){if(out.length&&a<=out.at(-1)[1])out.at(-1)[1]=Math.max(b,out.at(-1)[1]);else out.push([a,b]);}return out;}
   const targetFields=['start','end','seed_frame','x','y','w','h'];
   const renderTarget=t=>({...Object.fromEntries(targetFields.map(k=>[k,t[k]])),...(t.motion==='fixed'?{motion:'fixed'}:{})});
@@ -635,7 +636,7 @@
     $('mosaicDiscard').disabled=mutationBusy||scanReport?.status==='running';
     $('mosaicClose').disabled=mutationBusy;
     $('mosaicBatchStart').textContent=running?'正在生成视频…':'生成处理后视频';
-    $('mosaicBatchHint').textContent=batchError||`删除 ${deletions.length} 段 · 打码 ${segments} 段`;
+    $('mosaicBatchHint').textContent=[`删除 ${deletions.length} 段 · 打码 ${segments} 段`,batchError].filter(Boolean).join('\n');
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
     $('mosaicBatchClose').hidden=!showOutput;
@@ -684,12 +685,14 @@
     savedManualClips=structuredClone(manualClips);savedAiEvents=[];savedClipEdits={};
     savedEffect={...effect};savedClipEffects=structuredClone(clipEffects);
   }
-  async function batchRequest(start=false){
+  async function batchRequest(start=false,previousJob=null){
     if(!context)return;
     const version=epoch,request=++batchToken,endpoint=base(),valid=()=>active(version)&&request===batchToken;
+    const sourceSha=context.session.source_sha256;
+    const submitted=start?structuredClone({targets:adoptedTargets(),ranges:deleteRanges(),effect,reset_at:context.session.reset_at||'',submission_id:regionId()}):null;
     batchLoading=true;batchError='';paintBatch();
     try{
-      const result=await api(endpoint+'/render',start?{targets:adoptedTargets(),ranges:deleteRanges(),effect,reset_at:context.session.reset_at||''}:undefined);
+      const result=await api(endpoint+'/render',submitted||undefined);
       if(!valid())return;batchJob=start?result:result.job||null;
       if(awaitingDecision())resultMode=true;
       paintBatch();
@@ -704,15 +707,30 @@
     }catch(e){
       if(valid()){
         batchError=e.message;
-        // A lost POST response may already have committed. Reconcile through GET.
-        if(start){
+        const unknown=e.outcomeUnknown===true||e instanceof TypeError||e.name==='AbortError'||(e.status>=500&&e.status!==503);
+        if(start&&!unknown){
+          resultMode=false;status('提交失败：'+e.message,true);return;
+        }
+        // A lost response can precede admission. Never resubmit automatically or
+        // mistake an older terminal report for acknowledgement of this attempt.
+        if(start&&unknown){
+          batchError='尚未确认是否提交成功，正在恢复查询…';paintBatch();
           while(valid()){
             await new Promise(r=>setTimeout(r,1200));if(!valid())return;
             try{
               const restored=await api(endpoint+'/render');if(!valid())return;
-              batchJob=restored.job||null;
-              if(batchJob?.queued_task)restoreParameters(batchJob);
-              batchLoading=false;batchRequest();return;
+              const candidate=restored.job||null;
+              const frozen=pendingJob(candidate)||awaitingDecision(candidate);
+              const accepted=candidate?.queued_task&&candidate.submission_id===submitted.submission_id&&candidate.id!==previousJob?.id&&candidate.source_sha256===sourceSha&&(candidate.reset_at||'')===submitted.reset_at&&samePlan(candidate,submitted);
+              if(!frozen&&!accepted){
+                batchError='尚未确认是否提交成功，正在恢复查询…';paintBatch();continue;
+              }
+              batchJob=candidate;
+              if(frozen)restoreParameters(candidate);
+              batchError=accepted?(candidate.error||''):'提交回执未确认，已恢复素材现有任务。';
+              resultMode=awaitingDecision();
+              if(pendingJob()){batchLoading=false;batchRequest();return;}
+              return;
             }catch{batchError='连接暂时异常，正在恢复查询…';paintBatch();}
           }
         }
@@ -744,8 +762,9 @@
     if($('mosaicBatchStart').disabled)return;
     const saved=targets[editing],c=selectedBox();
     if(saved&&saved.adopted!==false){try{const r=range();if(!c||['x','y','w','h'].some(k=>c[k]!==saved[k])||r.start!==saved.start||r.end!==saved.end)throw Error('请先保存当前区域调整，再生成完整视频。');}catch(e){status(e.message,true);return;}}
+    const previousJob=batchJob;
     batchJob=null;resultBefore=false;$('mosaicBatchVideo').pause();$('mosaicBatchVideo').removeAttribute('src');$('mosaicBatchVideo').load();
-    showResult(true);batchRequest(true);
+    showResult(true);batchRequest(true,previousJob);
   };
   $('mosaicBatchView').onclick=()=>{showResult(true);paintBatch();};
   $('mosaicBatchClose').onclick=()=>{if(!mutationBusy)showResult(false);};
