@@ -42,10 +42,15 @@ def page():
         browser.close()
 
 
-def test_one_track_cached_toggle_dialog_seek_and_native_fullscreen(page):
+def test_one_track_completion_waits_for_manual_dialog_and_preserves_native_fullscreen(page):
     page.locator('[data-subtitle-toggle]').check()
     page.wait_for_function("calls.some(c=>c.body!==undefined)")
+    page.locator('#assets video').focus()
     page.evaluate('finish()')
+    page.wait_for_function("document.querySelector('[data-subtitle-timeline]').disabled===false")
+    assert not page.locator('#subtitleTimeline').is_visible()
+    assert page.evaluate("document.activeElement===document.querySelector('#assets video')")
+    page.locator('[data-subtitle-timeline]').click()
     page.locator('#subtitleTimeline').wait_for(state='visible')
     assert page.evaluate("document.querySelector('video').textTracks.length")==1
     assert page.evaluate("document.querySelector('video').textTracks[0].mode")=='showing'
@@ -60,6 +65,7 @@ def test_one_track_cached_toggle_dialog_seek_and_native_fullscreen(page):
     assert page.evaluate("calls.filter(c=>c.body!==undefined).length")==1
     assert page.evaluate("document.querySelector('video').textTracks.length")==1
     assert page.evaluate("document.querySelector('video').currentTime")==2
+    assert not page.locator('#subtitleTimeline').is_visible()
     # Fullscreen relies on the very same browser-owned showing track, no HTML overlay.
     page.locator('#assets video').evaluate('(v)=>v.requestFullscreen()')
     assert page.evaluate('document.fullscreenElement.tagName')=='VIDEO'
@@ -97,7 +103,8 @@ def test_dispose_rejects_late_project_response_and_reuses_native_track(page):
 
 def test_new_sha_invalidates_old_track_and_preview_reload_preserves_one_track(page):
     page.locator('[data-subtitle-toggle]').check();page.wait_for_function("calls.some(c=>c.body!==undefined)")
-    page.evaluate('finish()');page.locator('#subtitleTimeline').wait_for(state='visible');page.locator('#subtitleClose').click()
+    page.evaluate('finish()');page.wait_for_function("document.querySelector('[data-subtitle-timeline]').disabled===false")
+    assert not page.locator('#subtitleTimeline').is_visible()
     page.evaluate("const v=document.querySelector('video');v.dispatchEvent(new Event('emptied'));v.dispatchEvent(new Event('loadedmetadata'));PreviewSubtitles.mount()")
     assert page.evaluate("document.querySelector('video').textTracks.length")==1
     assert page.evaluate("document.querySelector('video').textTracks[0].cues.length")==2
@@ -107,7 +114,7 @@ def test_new_sha_invalidates_old_track_and_preview_reload_preserves_one_track(pa
     assert page.evaluate("(()=>{const t=document.querySelector('video').textTracks[0];t.mode='hidden';const n=t.cues.length;t.mode='disabled';return n})()")==0
 
 
-def test_queued_position_then_completion_opens_the_same_native_track(page):
+def test_queued_completion_enables_manual_timeline_and_the_same_native_track(page):
     page.evaluate('''() => {
       window.phase=0;
       window.api=async (url,body)=>{
@@ -126,10 +133,13 @@ def test_queued_position_then_completion_opens_the_same_native_track(page):
     assert page.locator('[data-subtitle-timeline]').is_disabled()
     # Nothing to display while queued, so no browser track exists yet.
     assert page.evaluate("document.querySelector('video').textTracks.length")==0
-    page.locator('#subtitleTimeline').wait_for(state='visible')
+    page.wait_for_function("document.querySelector('[data-subtitle-timeline]').disabled===false")
+    assert not page.locator('#subtitleTimeline').is_visible()
     assert page.locator('[data-subtitle-timeline]').is_enabled()
     assert page.evaluate("document.querySelector('video').textTracks[0].cues.length")==1
     assert page.evaluate("document.querySelector('video').textTracks[0].mode")=='showing'
+    page.locator('[data-subtitle-timeline]').click()
+    assert page.locator('#subtitleTimeline').is_visible()
 
 
 def test_queued_task_keeps_running_when_switched_off_without_stealing_focus(page):
