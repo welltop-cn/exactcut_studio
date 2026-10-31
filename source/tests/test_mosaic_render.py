@@ -227,6 +227,68 @@ def test_stop_interrupts_owned_process_and_retains_session(ready,monkeypatch):
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.parametrize('managed',[False,True])
+def test_confirmation_rechecks_discard_committed_before_asset_gate(ready,monkeypatch,managed):
+    from contextlib import contextmanager
+    from exactcut import mosaic_replace,cutting_access,workflow,material_versions
+    from exactcut.util import read_json
+    bid,rid,sha,source=ready
+    if managed:material_versions.enroll(workflow.folder(bid))
+    sid=sessions.open_session(bid,rid,sha)['id']
+    job=render.start(bid,sid,[],'',[[1,3]])
+    assert wait_job(bid,sid,job['id'])['status']=='completed'
+    original=cutting_access.gate;switched=False;launched=[]
+    @contextmanager
+    def discard_before_gate(*args,**kwargs):
+        nonlocal switched
+        if not switched:
+            switched=True
+            discarded=render.discard_result(bid,sid,job['id'],'')
+            assert discarded['discarded_at']
+        with original(*args,**kwargs):yield
+    monkeypatch.setattr(cutting_access,'gate',discard_before_gate)
+    monkeypatch.setattr(mosaic_replace.threading.Thread,'start',lambda thread:launched.append(thread))
+    with pytest.raises(cutting.CutError,match='放弃'):
+        mosaic_replace.start(bid,sid,job['id'],'')
+    assert launched==[]
+    saved=read_json(sessions.session_path(bid,sid)/f"render-{job['id']}.json")
+    assert saved['discarded_at'] and saved.get('replacement',{}).get('status')!='running'
+    assert file_sha256(workflow.preview_file(bid,rid)[0])==sha
+
+
+@pytest.mark.parametrize('change',['status','job_source','replacement_running','replacement_completed','current_source'])
+def test_confirmation_revalidates_report_and_version_after_gate(ready,monkeypatch,change):
+    from contextlib import contextmanager
+    from exactcut import mosaic_replace,cutting_access,workflow
+    from exactcut.util import read_json
+    bid,rid,sha,source=ready;sid=sessions.open_session(bid,rid,sha)['id']
+    job=render.start(bid,sid,[],'',[[1,3]])
+    assert wait_job(bid,sid,job['id'])['status']=='completed'
+    path=sessions.session_path(bid,sid)/f"render-{job['id']}.json"
+    original=cutting_access.gate;switched=False;launched=[]
+    @contextmanager
+    def change_before_gate(*args,**kwargs):
+        nonlocal switched
+        if not switched:
+            switched=True
+            with original(*args,**kwargs):
+                saved=read_json(path)
+                if change=='status':saved['status']='cancelled'
+                elif change=='job_source':saved['source_sha256']='f'*64
+                elif change.startswith('replacement_'):saved['replacement']={'status':change.removeprefix('replacement_')}
+                else:
+                    records=read_json(source.parent.parent/'results.json')
+                    records['requests'][rid]['output_sha256']='f'*64
+                    write_json_atomic(source.parent.parent/'results.json',records)
+                write_json_atomic(path,saved)
+        with original(*args,**kwargs):yield
+    monkeypatch.setattr(cutting_access,'gate',change_before_gate)
+    monkeypatch.setattr(mosaic_replace.threading.Thread,'start',lambda thread:launched.append(thread))
+    with pytest.raises(cutting.CutError):mosaic_replace.start(bid,sid,job['id'],'')
+    assert launched==[] and file_sha256(source)==sha
+    with original(workflow.folder(bid),rid,allow_job=job['id']):pass
+
+
 def test_target_effect_contract_is_validated_and_preserved():
     meta={'width':100,'height':100,'frame_count':30,'fps_num':30,'fps_den':1}
     target={'start':0,'end':10,'seed_frame':0,'x':0,'y':0,'w':30,'h':30,'effect':{'style':'soft_blur'}}
