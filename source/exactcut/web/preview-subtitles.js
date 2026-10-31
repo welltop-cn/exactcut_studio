@@ -12,7 +12,7 @@
   const endpoint = panel => `/api/batches/${panel.binding.batch_id}/preview-subtitles/${encodeURIComponent(panel.binding.request_id)}`;
   const getPath = panel => `${endpoint(panel)}?source_sha256=${panel.binding.source_sha256}&version_id=${panel.binding.version_id||''}`;
   function entryFor(key) {
-    if(!entries.has(key))entries.set(key,{enabled:false,report:{status:'idle',cues:[]},autoOpen:false});
+    if(!entries.has(key))entries.set(key,{enabled:false,report:{status:'idle',cues:[]}});
     return entries.get(key);
   }
   function clearTrack(video) {
@@ -103,18 +103,13 @@
     if(!active(panel))return false;
     const value=response.binding;
     if(!value||keyOf(value)!==panel.key){
-      panel.entry.autoOpen=false;panel.entry.report={status:'failed',cues:[],error:'成片版本已变化，请刷新后重试'};paint(panel);return false;
+      panel.entry.report={status:'failed',cues:[],error:'成片版本已变化，请刷新后重试'};paint(panel);return false;
     }
     panel.entry.report=response.report;paint(panel);
-    if(response.report.status==='completed'){
-      const shouldOpen=panel.entry.autoOpen&&panel.entry.enabled&&!document.hidden&&!document.querySelector('dialog[open]');
-      panel.entry.autoOpen=false;if(shouldOpen)openTimeline(panel);
-    }
     return true;
   }
   function failed(panel,error) {
     if(!active(panel))return;
-    panel.entry.autoOpen=false;
     panel.entry.report={status:'failed',cues:[],error:error.message||'字幕识别失败，请点击重试'};paint(panel);
   }
   const isPending = status => status==='running'||status==='queued';
@@ -138,14 +133,13 @@
       // GET first reconnects to a prior tab/task/cache without charging again.
       if(!apply(panel,await api(getPath(panel))))return;
       if(panel.entry.report.status==='idle'||(retry&&panel.entry.report.status==='failed')){
-        panel.entry.autoOpen=panel.entry.enabled&&!panel.suppressed;
         if(!apply(panel,await api(endpoint(panel),{source_sha256:panel.binding.source_sha256,version_id:panel.binding.version_id})))return;
       }
       watch(panel);
     }catch(error){failed(panel,error);}finally{panel.pending=false;}
   }
   function remove(panel) {
-    panel.disposed=true;panel.entry.autoOpen=false;clearTimeout(panel.timer);panel.listeners.abort();
+    panel.disposed=true;clearTimeout(panel.timer);panel.listeners.abort();
     clearTrack(panel.video);if(dialogPanel===panel)closeTimeline();panel.row.remove();panels.delete(panel.video);
   }
   function dispose(){for(const panel of Array.from(panels.values()))remove(panel);}
@@ -159,19 +153,19 @@
       const row=document.createElement('div');row.className='subtitle-row';
       row.innerHTML='<label class="subtitle-toggle-wrap"><span class="subtitle-switch"><input type="checkbox" data-subtitle-toggle aria-label="生成中文字幕"><span></span></span><span data-subtitle-label>生成中文字幕</span></label><span class="subtitle-status" role="status"></span><button type="button" class="secondary" data-subtitle-timeline disabled>📑 查看字幕时间轴</button><button type="button" class="secondary" data-subtitle-retry hidden>重试识别</button><small>中文字幕仅供预览，不影响下载或上传的成片。</small>';
       card.querySelector('.videoarea').after(row);
-      const panel={video,row,key,binding:value,entry,toggle:row.querySelector('[data-subtitle-toggle]'),label:row.querySelector('[data-subtitle-label]'),status:row.querySelector('.subtitle-status'),timeline:row.querySelector('[data-subtitle-timeline]'),retry:row.querySelector('[data-subtitle-retry]'),listeners:new AbortController(),pending:false,suppressed:false,disposed:false};
+      const panel={video,row,key,binding:value,entry,toggle:row.querySelector('[data-subtitle-toggle]'),label:row.querySelector('[data-subtitle-label]'),status:row.querySelector('.subtitle-status'),timeline:row.querySelector('[data-subtitle-timeline]'),retry:row.querySelector('[data-subtitle-retry]'),listeners:new AbortController(),pending:false,disposed:false};
       panels.set(video,panel);
       panel.toggle.onchange=()=>{
         entry.enabled=panel.toggle.checked;
-        if(entry.enabled)turnOn(panel);else{entry.autoOpen=false;panel.suppressed=true;paint(panel);}
+        if(entry.enabled)turnOn(panel);else paint(panel);
       };
       panel.timeline.onclick=()=>openTimeline(panel);
-      panel.retry.onclick=()=>{panel.suppressed=false;turnOn(panel,true);};
+      panel.retry.onclick=()=>turnOn(panel,true);
       for(const event of ['timeupdate','seeking','seeked','ended'])video.addEventListener(event,()=>sync(panel),{signal:panel.listeners.signal});
       video.addEventListener('loadedmetadata',()=>{if(active(panel)){nativeTrack(panel);sync(panel);}},{signal:panel.listeners.signal});
       paint(panel);
       if(isPending(entry.report.status)){
-        entry.autoOpen=false;api(getPath(panel)).then(response=>{if(apply(panel,response))watch(panel);},error=>failed(panel,error));
+        api(getPath(panel)).then(response=>{if(apply(panel,response))watch(panel);},error=>failed(panel,error));
       }
     }
     // Keep completed/hidden state for normal project revisits without unbounded growth.
