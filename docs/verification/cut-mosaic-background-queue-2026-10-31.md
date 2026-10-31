@@ -2,7 +2,7 @@
 
 日期：2026-10-31。分支：`feat/cut-mosaic-background-queue`。基线：`5b0e4081b7c894f1f5b03213e100dd5de5347852`。
 
-状态：D1 实现与本地验证完成，等待父会话独立 review；本记录不代表用户最终验收，也不授权上线。设计契约见 [剪切打码后台队列设计](../superpowers/specs/剪切打码后台队列设计.md)。没有部署、合并 main 或调用外部发布接口。
+状态：父会话首轮 review 发现“放弃/确认交错”和“拒绝提交恢复旧参数”两个问题，已补正式回归并修复，1943 passed / 1 skipped / 10既有fork警告，等待父会话复审；详见[父 review 修复记录](cut-mosaic-background-queue-parent-review-2026-10-31.md)。本记录保留首轮实现与验收证据，不代表用户最终验收，也不授权上线。设计契约见 [剪切打码后台队列设计](../superpowers/specs/剪切打码后台队列设计.md)。没有部署、合并 main 或调用外部发布接口。
 
 ## 实现边界与文件分工
 
@@ -37,7 +37,7 @@
 
 固定解释器：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。全部测试使用独立临时数据；真实 FFmpeg 源为合成帧号条纹 / 音频脉冲或纯色视频，没有使用生产数据或生产凭据。
 
-最终完整回归：**1921 passed / 1 skipped / 10 warnings，0 失败，475.11 秒**。10 个警告均为既有 multiprocessing 在多线程测试进程中调用 fork 的 DeprecationWarning（delivery observer 4、managed scheduler verification 3、material versions 3），没有隐藏失败。完整回归之后又执行了同 actor 跨项目场景加强后的 queue core：8 passed。
+首轮完整回归：**1921 passed / 1 skipped / 10 warnings，0 失败，475.11 秒**。10 个警告均为既有 multiprocessing 在多线程测试进程中调用 fork 的 DeprecationWarning（delivery observer 4、managed scheduler verification 3、material versions 3），没有隐藏失败。完整回归之后又执行了同 actor 跨项目场景加强后的 queue core：8 passed。
 
 ```sh
 cd source

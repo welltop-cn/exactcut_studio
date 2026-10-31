@@ -1,0 +1,15 @@
+{
+  "environment": "test",
+  "url": "http://127.0.0.1:63919",
+  "batch_id": "21dbe9a6b4584982b09a105f9b261bd9",
+  "case": "real_http_response_aborted_after_persisted_admission",
+  "post_count": 1,
+  "task_count": 1,
+  "task_id": "a8339b5cf815498c8346d9d2f10b9e18",
+  "submission_id": "a513ce242a4977c7a1baee92cb434a29",
+  "status": "completed",
+  "frames": 84,
+  "awaiting_confirmation": true,
+  "source_sha256_unchanged": "6b2efa0f7bb4dc39e696394246f687c0afd5d3eb444c628e140b3668f9d635e3",
+  "javascript_errors": []
+}
