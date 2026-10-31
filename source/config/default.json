@@ -69,6 +69,9 @@
     "image_size": "1K",
     "key_color": [0, 255, 0]
   },
+  "mosaic_queue": {
+    "max_active_tasks": 1
+  },
   "preview_subtitles": {
     "enabled": false,
     "model": "gemini-3.8-flash",

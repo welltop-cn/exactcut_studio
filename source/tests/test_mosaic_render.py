@@ -11,6 +11,16 @@ from exactcut.util import file_sha256, write_json_atomic
 import time
 
 
+@pytest.fixture(autouse=True)
+def final_queue(fixture):
+    from exactcut import mosaic_queue, accounts, workflow
+    accounts.initialize(workflow.BATCHES.parent/'accounts.sqlite3','synthetic-password-queue')
+    dispatcher=mosaic_queue.Dispatcher(poll_seconds=.01)
+    dispatcher.start()
+    yield dispatcher
+    dispatcher.stop(timeout=None)
+
+
 def make_track(directory,target,meta,empty=()):
     (directory/'masks').mkdir(parents=True,exist_ok=True)
     frames=[]
@@ -60,7 +70,7 @@ def test_full_video_keeps_frames_rate_size_audio_and_original(tmp_path):
 def wait_job(bid,sid,jid):
     for _ in range(400):
         job=render.state(bid,sid,jid)
-        if job['status']!='running':return job
+        if job['status'] not in {'queued','running','cancelling'}:return job
         time.sleep(.025)
     pytest.fail('render did not finish')
 
@@ -118,15 +128,13 @@ def test_mixed_deletion_and_mosaic_and_discard_retains_discovery(ready,monkeypat
         assert numbers[:7]==list(range(5,12)) and numbers[7]==16
         scan={'status':'completed','identity':mosaic_scan.identity(session,cutting_scan.settings()),'source_sha256':sha,'reset_at':'','events':[]}
         write_json_atomic(sessions.session_path(bid,sid)/'scan.json',scan)
-        code,reset=call(app,'POST',base+'/discard',{'reset_at':''});assert code==200
-        assert reset['reset_at']
-        assert call(app,'GET',base+'/render')[1]=={'job':None}
-        assert call(app,'GET',base+'/render/'+job['id']+'/video')[0]==409
-        assert call(app,'GET',base+'/scan')[1]['report']['status']=='completed'
-        assert call(app,'POST',base+'/render',{'targets':[target],'reset_at':''})[0]==409
         assert call(app,'POST',base+'/discard',{'reset_at':''})[0]==409
+        code,discarded=call(app,'POST',base+'/discard-result',{'job_id':job['id'],'reset_at':''});assert code==200
+        assert discarded['discarded_at']
+        assert call(app,'GET',base+'/render')[1]['job']['discarded_at']
+        assert call(app,'GET',base+'/scan')[1]['report']['status']=='completed'
         assert file_sha256(source)==sha
-        code,job2=call(app,'POST',base+'/render',{'targets':[],'ranges':[[5,10]],'reset_at':reset['reset_at']});assert code==202
+        code,job2=call(app,'POST',base+'/render',{'targets':[],'ranges':[[5,10]],'reset_at':''});assert code==202
         done2=wait_job(bid,sid,job2['id']);assert done2['status']=='completed',done2
         assert done2['result']['metadata']['frame_count']==session['metadata']['frame_count']-5
     finally:app.shutdown();app.server_close()
@@ -177,13 +185,14 @@ def test_discard_running_job_fences_result_and_does_not_change_project(ready,mon
     job=render.start(bid,sid,[target],'')
     try:
         assert entered.wait(2)
-        reset=sessions.discard(bid,sid,'')
-        assert reset['reset_at']
-        assert render.latest(bid,sid)=={'job':None}
+        with pytest.raises(cutting.CutError):sessions.discard(bid,sid,'')
+        cancelled=render.stop(bid,sid,job['id'],'')
+        assert cancelled['status']=='cancelling'
+        assert render.latest(bid,sid)['job']['id']==job['id']
     finally:finish.set()
     path=sessions.session_path(bid,sid)/f"render-{job['id']}.json"
     for _ in range(100):
-        if read_json(path)['status']!='running':break
+        if read_json(path)['status'] not in {'running','cancelling'}:break
         time.sleep(.025)
     assert read_json(path)['status']=='cancelled'
     from exactcut import mosaic_replace
@@ -254,6 +263,7 @@ def test_polling_own_running_replacement_does_not_revalidate_old_source(ready,mo
 def test_clip_preview_combines_regions_and_does_not_replace_full_result(ready,monkeypatch):
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
     full=render.start(bid,sid,[],'',[[0,2]]);assert wait_job(bid,sid,full['id'])['status']=='completed'
+    render.discard_result(bid,sid,full['id'],'')
     monkeypatch.setattr(tracking,'enabled',lambda:True)
     monkeypatch.setattr(tracking,'settings',lambda:{'enabled':True})
     monkeypatch.setattr(tracking,'run_tracker',lambda source,directory,meta,target,cfg:make_track(directory,target,meta)['result'])
@@ -351,6 +361,7 @@ def test_fixed_render_and_preview_without_sam(ready,monkeypatch):
         finished=wait_job(bid,sid,job['id']);assert finished['status']=='completed',finished
         assert finished['result']['metadata']['frame_count']==(10 if preview else session['metadata']['frame_count'])
         assert finished['result']['skipped_frames']==0
+        if not preview:render.discard_result(bid,sid,job['id'],'')
     assert file_sha256(source)==sha
 
 
@@ -382,16 +393,15 @@ def test_discard_interrupts_composing_process_and_releases_compute(ready,monkeyp
     monkeypatch.setattr(render,'process_video',slow)
     job=render.start(bid,sid,[],'',[[1,3]])
     assert entered.wait(3)
-    reset=sessions.discard(bid,sid,'')
-    assert reset['reset_at']
+    with pytest.raises(cutting.CutError):sessions.discard(bid,sid,'')
+    render.stop(bid,sid,job['id'],'')
     path=sessions.session_path(bid,sid)/f"render-{job['id']}.json"
     deadline=time.monotonic()+5
-    while read_json(path)['status']=='running' and time.monotonic()<deadline:time.sleep(.025)
+    while read_json(path)['status'] in {'running','cancelling'} and time.monotonic()<deadline:time.sleep(.025)
     saved=read_json(path)
     assert saved['status']=='cancelled',saved
     assert 'result' not in saved
-    assert render.latest(bid,sid)=={'job':None}
-    assert file_sha256(source)==sha
+    assert render.latest(bid,sid)['job']['status']=='cancelled'
     with cutting.lock_file(cutting.lock_root()/'compute.lock'):pass
 
 

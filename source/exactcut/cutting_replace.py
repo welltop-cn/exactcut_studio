@@ -152,7 +152,7 @@ def commit(batch, session, job, master, preview, pair):
     # fences edits/archival/current promotion without holding a lock on I/O.
     if m.managed(batch):
         with m.locked(batch):
-            cutting_access.require_editable(batch, rid, source_sha=session['source_sha256'])
+            cutting_access.require_editable(batch, rid, source_sha=session['source_sha256'],allow_job=job['id'] if job.get('queued_task') else None)
             state = m._read(batch); asset = state['assets'][rid]
             old_id = asset['current_version']; old = state['versions'][old_id]
             vid = uuid.uuid4().hex
@@ -165,7 +165,7 @@ def commit(batch, session, job, master, preview, pair):
             state['versions'][vid] = version; asset['current_version'] = vid
             state['revision'] += 1; m._write(batch, state)
     else:
-        cutting_access.require_editable(batch, rid, source_sha=session['source_sha256'])
+        cutting_access.require_editable(batch, rid, source_sha=session['source_sha256'],allow_job=job['id'] if job.get('queued_task') else None)
         with result_store.locked(batch / 'production', rid) as file:
             previous = read_json(file) if file.exists() else result_store.read(batch / 'production')['requests'][rid]
             if previous.get('output_sha256') != session['source_sha256']:

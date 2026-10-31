@@ -31,11 +31,11 @@ def get_session(bid,sid):
 def open_session(bid,rid,sha):
     with diagnostics.span('editor.open', private_error=True, editor='mosaics'):
         if not isinstance(rid,str) or not isinstance(sha,str) or not re.fullmatch('[0-9a-f]{64}',sha):raise CutError('成片版本参数无效')
-        with cutting_access.gate(workflow.folder(bid),rid):
-            cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha)
+        with cutting_access.gate(workflow.folder(bid),rid,readonly=True):
+            cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha,readonly=True)
             sid=json_sha256([bid,rid,sha])[:32];path=session_path(bid,sid)
             if (path/'session.json').is_file():return get_session(bid,sid)
-            with lock_file(lock_root()/'compute.lock', resource='compute'):
+            with lock_file(lock_root()/'mosaic-prepare.lock', resource='compute'):
                 source,_=workflow.preview_file(bid,rid)
                 if source.stat().st_size>cutting.settings().get('max_source_bytes',512*1024**2):raise CutError('本机支持 512 MB 以内的成片')
                 storage.require_space(source.parent,source.stat().st_size*3)
@@ -48,7 +48,7 @@ def open_session(bid,rid,sha):
                         copied_sha=file_sha256(temporary)
                     if copied_sha!=sha:raise CutError('原成片内容已变化，请重新打开',409)
                     meta=cutting.probe_source(temporary)
-                    cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha)
+                    cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha,readonly=True)
                     temporary.replace(path/'source.mp4')
                     write_json_atomic(path/'session.json',{'schema_version':1,'id':sid,'batch_id':bid,'request_id':rid,
                         'source_sha256':sha,'source_filename':source.name,'metadata':meta,'created_at':now_iso(),'reset_at':''})

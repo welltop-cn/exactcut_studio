@@ -10,6 +10,11 @@ from . import cutting_access, workflow, storage
 from .media import bounded_ffmpeg
 from . import mosaic_effects as effects, processing_cancel
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
+from . import mosaic_queue as queue
+import uuid
+import time
+from contextlib import nullcontext
+from .runtime import mutation_lock, maintenance_file
 
 
 def validate_targets(meta,targets):
@@ -85,8 +90,8 @@ def encode_mask(mask_video,meta,tracks,size,rate,effect,progress):
     width,height=size
     progress('正在合并全部区域遮罩…')
     with (mask_video.with_suffix('.log')).open('wb') as log:
-        process=subprocess.Popen(bounded_ffmpeg(['ffmpeg','-y','-v','error','-f','rawvideo','-pix_fmt','gray','-s',f'{width}x{height}','-r',rate,'-i','pipe:0','-an','-c:v','ffv1',str(mask_video)]),stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
-        timer=threading.Timer(600,process.kill);timer.start()
+        process=processing_cancel.spawn(bounded_ffmpeg(['ffmpeg','-y','-v','error','-f','rawvideo','-pix_fmt','gray','-s',f'{width}x{height}','-r',rate,'-i','pipe:0','-an','-c:v','ffv1',str(mask_video)]),stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
+        timer=threading.Timer(600,lambda:processing_cancel.terminate(process));timer.start()
         try:
             black=bytes(width*height)
             for frame in range(meta['frame_count']):
@@ -97,14 +102,14 @@ def encode_mask(mask_video,meta,tracks,size,rate,effect,progress):
             process.stdin.close()
             if process.wait(timeout=60):raise cutting.CutError('遮罩视频生成失败，未生成成片')
         except Exception:
-            process.kill();process.wait()
+            processing_cancel.terminate(process);process.wait()
             raise
         finally:timer.cancel()
 
 def recover(path):
     if not path.is_file():return None
     job=read_json(path)
-    if job['status']=='running':
+    if job['status']=='running' and not job.get('queued_task'):
         try:lease=cutting.lock_file(path.with_suffix('.worker.lock'))
         except cutting.CutError:return job
         lease.close();job.update(status='failed',error='上次完整视频生成已中断，请重新生成')
@@ -136,7 +141,7 @@ def state(bid,sid,jid):
         # Recovery leaves running only while the replacement owns the edit gate.
         # Its commit can change the source between two version reads.
         if job.get('replacement',{}).get('status')=='running':return job
-        if not mosaic_replace.is_current(bid,session,job):mosaic_locate.current(bid,sid,job)
+        if not job.get('queued_task') and not mosaic_replace.is_current(bid,session,job):mosaic_locate.current(bid,sid,job)
         return tracking_progress(path.parent,job)
 
 
@@ -157,7 +162,89 @@ def video_file(bid,sid,jid):
     return output
 
 
-def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False):
+def current(bid,sid,job):
+    if not job.get('queued_task'):return mosaic_locate.current(bid,sid,job)
+    session=sessions.read_session(bid,sid);cutting.require_reset(session,job['reset_at'])
+    if session['source_sha256']!=job['source_sha256']:raise cutting.CutError('原片版本已变化',409)
+    cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=job['source_sha256'],allow_job=job['id'])
+    return session
+
+
+def submit(bid,sid,targets,reset_at,ranges,effect,actor):
+    session=sessions.read_session(bid,sid);batch=workflow.folder(bid)
+    # The asset gate serializes admission, including retries of a frozen task.
+    from . import material_versions
+    with mutation_lock(), cutting_access.gate(batch,session['request_id'],readonly=True), (material_versions.locked(batch) if material_versions.managed(batch) else nullcontext()):
+        if maintenance_file().exists():raise cutting.CutError('系统正在维护，请稍后重试',503)
+        session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
+        effect=effects.validate(effect)
+        if ranges is not None and not isinstance(ranges,list):raise cutting.CutError('删除范围格式无效')
+        ranges=cutting.normalize_ranges(ranges,session['metadata']['frame_count']) if ranges else []
+        targets=validate_targets(session['metadata'],targets) if targets!=[] else []
+        if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
+        if any(t.get('motion')!='fixed' for t in targets) and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
+        fingerprint=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'effect':effect})
+        existing=queue.blocked(bid,session['request_id'])
+        if existing:
+            job=queue.report(existing)
+            if existing['session_id']==sid and job.get('fingerprint')==fingerprint:return job
+            raise cutting.CutError('该素材已提交处理，请完成或取消后再编辑',409)
+        cutting_access.require_editable(batch,session['request_id'],source_sha=session['source_sha256'])
+        jid=uuid.uuid4().hex
+        job={'schema_version':1,'id':jid,'queued_task':True,'status':'queued','stage':'queued',
+             'source_sha256':session['source_sha256'],'reset_at':reset_at,'targets':targets,'ranges':ranges,
+             'effect':effect,'config':tracking.settings(),'fingerprint':fingerprint,'actor':actor,
+             'created_at':now_iso(),'progress':'等待后台处理','completed_regions':0,'total_regions':len(targets)}
+        queue.enqueue(bid,sid,session['request_id'],actor,job)
+        return job
+
+
+def execute(item,stop_event):
+    from . import accounts
+    bid,sid=item['batch_id'],item['session_id'];path=queue.job_path(item);leases=[]
+    try:
+        leases.append(cutting.lock_file(path.with_suffix('.worker.lock')))
+        # Cancellation remains responsive while other compute users hold the lease.
+        while True:
+            job=read_json(path)
+            if job.get('cancel_requested'):
+                with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+                    job=read_json(path);job.update(status='cancelled',progress='已停止生成，参数已保留');write_json_atomic(path,job)
+                return
+            if job['status'] in {'completed','failed','cancelled'}:return
+            if stop_event.is_set():return 'deferred'
+            try:
+                leases.append(cutting.lock_file(cutting.lock_root()/'compute.lock',resource='compute'));break
+            except cutting.CutError:time.sleep(.1)
+        user=accounts.get(workflow.BATCHES.parent/'accounts.sqlite3',item['actor'])
+        if not user or not user.get('enabled') or not accounts.allowed(workflow.folder(bid),user):raise cutting.CutError('发起账号已停用或无权访问项目',403)
+        with cutting_access.gate(workflow.folder(bid),item['request_id'],allow_job=item['id']):
+            current(bid,sid,job)
+            leases.append(cutting.lock_file(cutting.lock_root()/f'{bid}.lock',shared=True))
+            with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+                job=read_json(path)
+                if not job.get('cancel_requested'):job.update(status='running',stage='tracking',progress='正在准备处理视频')
+                write_json_atomic(path,job)
+        with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases):
+            _work(bid,sid,path,job,job['config'],[])
+    finally:
+        for lease in reversed(leases):lease.close()
+
+
+def discard_result(bid,sid,jid,reset_at):
+    if not isinstance(jid,str) or not re.fullmatch('[0-9a-f]{32}',jid):raise cutting.CutError('生成任务不存在',404)
+    session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
+    with cutting_access.gate(workflow.folder(bid),session['request_id'],allow_job=jid):
+        path=sessions.session_path(bid,sid)/f'render-{jid}.json'
+        with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+            job=read_json(path)
+            if job['status']!='completed' or job.get('replacement',{}).get('status')=='completed':raise cutting.CutError('当前任务不能放弃结果',409)
+            job['discarded_at']=now_iso();write_json_atomic(path,job)
+            return job
+
+
+def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False,actor='admin'):
+    if not preview:return submit(bid,sid,targets,reset_at,ranges,effect,actor)
     effect=effects.validate(effect)
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
@@ -202,9 +289,13 @@ def stop(bid,sid,jid,reset_at):
     with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
         job=recover(path)
         if not job:raise cutting.CutError('生成任务不存在',404)
-        mosaic_locate.current(bid,sid,job)
-        if job['status']=='running':
-            job.update(cancel_requested=True,progress='正在停止生成…')
+        if job.get('queued_task'):current(bid,sid,job)
+        else:mosaic_locate.current(bid,sid,job)
+        if job['status']=='queued':
+            job.update(status='cancelled',cancel_requested=True,progress='已取消排队，参数已保留')
+            write_json_atomic(path,job)
+        elif job['status'] in {'running','cancelling'}:
+            job.update(cancel_requested=True,**({'status':'cancelling'} if job.get('queued_task') else {}),progress='正在停止生成…')
             write_json_atomic(path,job)
         return job
 
@@ -259,7 +350,7 @@ def prepare_track(bid,sid,session,target,cfg,directory,*,on_tracking=None):
 
 
 def _work(bid,sid,path,job,cfg,leases):
-    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False)):
+    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases or None):
         _work_cancelable(bid,sid,path,job,cfg,leases)
 
 
@@ -271,12 +362,12 @@ def _work_cancelable(bid,sid,path,job,cfg,leases):
             if saved.get('cancel_requested'):raise processing_cancel.Cancelled()
             saved.update(fields);write_json_atomic(path,saved)
     try:
-        session=mosaic_locate.current(bid,sid,job);source=path.parent/'source.mp4';directory=path.parent/f"render-{job['id']}"
+        session=current(bid,sid,job);source=path.parent/'source.mp4';directory=path.parent/f"render-{job['id']}"
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败')
         storage.require_space(source.parent,source.stat().st_size*3+2*1024**3)
         directory.mkdir(exist_ok=True);tracks=[];warnings=[];skipped=set()
         for index,target in enumerate(job['targets']):
-            mosaic_locate.current(bid,sid,job)
+            current(bid,sid,job)
             update(progress=f"正在准备第 {index+1} / {len(job['targets'])} 个打码区域",completed_regions=index,tracking_inference='')
             try:
                 track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}',on_tracking=lambda name:update(tracking_inference=name))
@@ -291,13 +382,13 @@ def _work_cancelable(bid,sid,path,job,cfg,leases):
                 warnings.append({'region':index+1,'frame':target['start'],'reason':'跟踪未完成，已跳过该区域'})
             tracks.append(track)
         update(stage='composing',completed_regions=len(tracks))
-        mosaic_locate.current(bid,sid,job)
+        current(bid,sid,job)
         if job.get('preview'):
             result=process_preview(source,directory/'mosaic.mp4',session['metadata'],tracks,lambda text:update(progress=text),job.get('effect'))
         else:
             result=process_video(source,directory/'mosaic.mp4',session['metadata'],tracks,job.get('ranges',[]),lambda text:update(progress=text),effect=job.get('effect'))
-        with cutting_access.gate(workflow.folder(bid),session['request_id']):
-            mosaic_locate.current(bid,sid,job)
+        with cutting_access.gate(workflow.folder(bid),session['request_id'],allow_job=job['id'] if job.get('queued_task') else None):
+            current(bid,sid,job)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
             result.update(skipped_frames=len(skipped),warnings=warnings,region_count=len(tracks),notice='请预览检查遮挡效果；无告警不代表没有漏遮。')
             update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='处理后视频已生成，可预览和下载')

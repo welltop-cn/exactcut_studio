@@ -1992,17 +1992,36 @@ def main():
     accounts.initialize(server.auth_db, password)
     # One background dispatcher per data root; it, not page polling, advances the queue.
     from .preview_subtitle_queue import Dispatcher
+    from .mosaic_queue import Dispatcher as MosaicDispatcher
+    import signal
     server.subtitle_dispatcher = Dispatcher()
-    if not server.subtitle_dispatcher.start():
-        diag.event('preview_subtitles.dispatcher_owned_elsewhere', level='warning')
-    for path in workflow.BATCHES.glob('*/draft.json'):
-        if not (path.parent / 'access.json').exists():
-            workflow.write_json_atomic(path.parent / 'access.json', {'owner':'admin'})
-    if worker_enabled:
-        recover_jobs(enqueue=True, scheduler=True)
-        server.worker_thread = threading.Thread(target=worker, daemon=True)
-        server.worker_thread.start()
-    server.serve_forever()
+    server.mosaic_dispatcher=MosaicDispatcher()
+    previous_signals={}
+    try:
+        if not server.subtitle_dispatcher.start():
+            diag.event('preview_subtitles.dispatcher_owned_elsewhere', level='warning')
+        server.mosaic_dispatcher.start()
+        for path in workflow.BATCHES.glob('*/draft.json'):
+            if not (path.parent / 'access.json').exists():
+                workflow.write_json_atomic(path.parent / 'access.json', {'owner':'admin'})
+        if worker_enabled:
+            recover_jobs(enqueue=True, scheduler=True)
+            server.worker_thread = threading.Thread(target=worker, daemon=True)
+            server.worker_thread.start()
+        def shutdown_signal(signum,frame):
+            threading.Thread(target=server.shutdown,daemon=True).start()
+        for sig in (signal.SIGTERM,signal.SIGINT):
+            previous_signals[sig]=signal.getsignal(sig)
+            signal.signal(sig,shutdown_signal)
+        server.serve_forever()
+    finally:
+        try:
+            server.mosaic_dispatcher.stop(timeout=None)
+        finally:
+            try:server.subtitle_dispatcher.stop(timeout=None)
+            finally:
+                server.server_close()
+                for sig,handler in previous_signals.items():signal.signal(sig,handler)
 
 
 if __name__ == '__main__':

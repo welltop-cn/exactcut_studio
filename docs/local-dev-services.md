@@ -219,3 +219,13 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 真实 HTTP/Playwright 验证登录、六条素材、正确卡片/字段高亮、保存后聚焦、点击顶部提示定位、逐项纠正清除红色提示及刷新后保留初始错误。发现纳管保存期间输入框禁用导致过早聚焦失败，已改为操作恢复编辑状态后再聚焦；旧版/纳管两种回归及相关测试共18项通过。测试项目最终仍保留两处初始错误，未启动制作。已按用户要求用系统浏览器打开入口，服务保留供验收。
 
 用户要求扩大测试后，最终完整回归为1770 passed、1 skipped（既有 mosaic-only 比较条件），无失败；专项77项通过。补充修复特殊字符集号、空帧字段误判时间先后，以及复制纳管项目时持久化临时校验投影的问题，提交 `db4c684`。确认无活动任务/子进程后，8793 从已核验 PID 62449 重启为 PID 25659（操作前仍须重新核验），沿用原配置；healthz=ok/development、worker_alive=true，release `development-material-validation-db4c684`。重启前后测试项目 media-state.json SHA-256 一致；HTTP复核仍为6条素材、素材8的两处初始错误。用户编辑数据未重置，其他服务未动。
+
+## 2026-10-31 剪切打码后台队列（18883 临时实例已停止）
+
+D1 独立工作树 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue`，分支 `feat/cut-mosaic-background-queue`。使用指定 Python 3.12、独立合成视频/账号/配置，正式 worker、Gemini、外部写入与发布全部关闭；没有操作共享 8793/8801/8810/8821/8822。
+
+- 实际浏览器入口 `http://127.0.0.1:18883/home/#44856f4afe564766b8cc8ea8d5350a71`，启动器 `source/.dev-state/d1-mosaic-verified/start.py`，数据同目录 `data/`；历史 PID 15106。核验无 active/pending 后正常停止，端口已无监听，数据和私有登录信息保留。
+- `source/.dev-state/d1-mosaic-restart/` 为另一组独立合成数据；`restart_acceptance.py` 只管理自己 Popen 的服务。验证 queued 正常停服重启与 running/composing kill-9 重启，同 ID 继续处理且原片不变；结束后 wait 自有服务退出，再次核验18883无监听。
+- 真实 HTTP+Chromium+FFmpeg 验证关闭整个浏览器后完成、重新登录待确认、放弃保留参数、确认后以新 84 帧版本编辑；JS 错误为0。完整回归1921 passed / 1 skipped / 10既有fork警告，0失败。SAM跟踪推理使用明确mock遮罩，未声称真实SAM模型已验收。
+
+代码待父会话独立 review，未上线。公开截图、媒体哈希与逐项矩阵见[验证记录](verification/cut-mosaic-background-queue-2026-10-31.md)。操作任何历史 PID/入口前仍须重新核验。

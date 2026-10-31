@@ -1,0 +1,20 @@
+{
+  "url": "http://127.0.0.1:18883/home",
+  "cases": [
+    {
+      "case": "queued_graceful_restart",
+      "id": "6aced4d3f5884786a52e1edc47582af0",
+      "status": "completed",
+      "frames": 84
+    },
+    {
+      "case": "running_kill9_and_recover_same_job",
+      "id": "77ef793f56e64157a88aff106819fa0c",
+      "status_before_kill": "running",
+      "stage_before_kill": "composing",
+      "recoveries": 1,
+      "frames": 90,
+      "original_sha256": "6b2efa0f7bb4dc39e696394246f687c0afd5d3eb444c628e140b3668f9d635e3"
+    }
+  ]
+}

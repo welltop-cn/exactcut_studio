@@ -594,7 +594,8 @@ def delete_batch(batch_id, confirmation):
     if confirmation != batch_id:
         raise ValueError('请确认永久删除此项目，删除后不可恢复')
     from .cutting import batch_lease
-    with batch_control.LOCK, batch_lease(batch_id, exclusive=True):
+    from .cutting_access import gate
+    with batch_control.LOCK, gate(path), batch_lease(batch_id, exclusive=True):
         if not batch_control.read(path).get('archived'):
             raise ValueError('请先归档项目，再永久删除')
         jobs_dir = ROOT / '.web-state/jobs'

@@ -6,7 +6,7 @@ from .util import read_json
 
 
 @contextmanager
-def gate(path, request_id=None):
+def gate(path, request_id=None, *, allow_job=None, readonly=False):
     """Cross-process gate. Whole-batch writers exclude per-asset operations."""
     from .cutting import lock_file
     if request_id is not None and (not isinstance(request_id, str) or not request_id):
@@ -25,6 +25,7 @@ def gate(path, request_id=None):
                 asset = lock_file(directory / (path.name + '-' + key + '.lock'))
             except CutError as exc:
                 raise CutError('该素材正在执行其他操作，请稍后重试', 429) from exc
+        if not readonly:require_unfrozen(path,request_id,allow_job=allow_job)
         yield
     finally:
         if asset: asset.close()
@@ -43,9 +44,17 @@ def delivery_locked(entry):
     return not (entry.get('status') == 'publish_failed' and intent.get('status') == 'preparation_failed')
 
 
-def require_editable(path, request_id, *, source_sha=None):
+def require_unfrozen(path,request_id=None,*,allow_job=None):
+    from . import mosaic_queue
+    from .cutting import CutError
+    if mosaic_queue.blocked(path.name,request_id,allow_job):
+        raise CutError('素材已提交剪切打码，请取消任务或确认/放弃结果后再编辑',409)
+
+
+def require_editable(path, request_id, *, source_sha=None, allow_job=None, readonly=False):
     from . import workflow as w, material_versions as m, batch_control
     from .cutting import CutError
+    if not readonly:require_unfrozen(path,request_id,allow_job=allow_job)
     batch_control.ensure_editable(path, execution=True)
     record = w.result_records(path).get(request_id, {})
     if record.get('status') in {'fbbm_ready', 'fbbm_queued', 'upload_queued', 'uploading', 'unverified'} or record.get('publication') or record.get('fbbm'):
@@ -81,7 +90,7 @@ def require_editable(path, request_id, *, source_sha=None):
 
 def can_edit(path, request_id):
     try:
-        require_editable(path, request_id)
+        require_editable(path, request_id, readonly=True)
         return True
     except (ValueError, OSError, KeyError):
         return False

@@ -10,7 +10,9 @@
   let stopPending=false,previewBusy=false,previewClose=false,previewJob=null,previewEndpoint=null,previewReset="";
   let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
   let sourceManager=null,sourceBinding=null,beforeBinding=null;
-  const editLocked=()=>scanLoading||previewBusy||batchLoading||batchJob?.status==='running'||stopPending||mutationBusy;
+  const pendingJob=()=>['queued','running','cancelling'].includes(batchJob?.status);
+  const awaitingDecision=()=>batchJob?.status==='completed'&&!batchJob?.discarded_at&&batchJob?.replacement?.status!=='completed';
+  const editLocked=()=>scanLoading||previewBusy||batchLoading||pendingJob()||awaitingDecision()||stopPending||mutationBusy;
   const defaultEffect={style:'pixel',strength:'medium',expansion:'small'};
   let effect={...defaultEffect},savedEffect={...defaultEffect},clipEffects={},savedClipEffects={};
   let removedClip=null,removeTimer;
@@ -398,7 +400,15 @@
       if(version!==epoch||!dialog.open)return;context={batch,asset,session};
       for(const id of ['mosaicSource', 'mosaicBatchVideo', 'mosaicTrackVideo']){Object.assign($(id).dataset,{previewBatch:batch,previewRequest:asset.request_id,previewSession:session.id});}
       $('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);$('mosaicSeek').max=meta().frame_count-1;
-      loadDraft();
+      batchLoading=true;
+      const restored=await api(base()+'/render');
+      if(!active(version))return;
+      batchJob=restored.job||null;batchLoading=false;
+      savedRaw=localStorage.getItem(draftKey());legacyRaw=localStorage.getItem(key());oldDraftRaw=localStorage.getItem(oldDraftKey());
+      if(batchJob?.queued_task&&(pendingJob()||awaitingDecision()||(savedRaw===null&&legacyRaw===null&&oldDraftRaw===null))){
+        restoreParameters(batchJob);
+      }else loadDraft();
+      resultMode=awaitingDecision();
       $('mosaicWorkspace').hidden=false;
       if(session.capabilities?.oss_playback){
         sourceManager=EditorSource.create({endpoint:base()+'/source-url',local:base()+'/source',enabled:true});
@@ -406,7 +416,7 @@
         sourceBinding.open();
       }else{video.src=appUrl(base()+'/source');video.load();}
       status(session.capabilities?.region_recognition?'正在加载视频首帧，准备完成后自动识别…':'本机未启用 Gemini 识别，可先手动框选目标。');
-      autoScanPending=true;paint();loadFrame();restoreBatch();
+      autoScanPending=!batchJob;paint();loadFrame();restoreBatch();
     }catch(e){if(version===epoch)status(e.message,true);}
   }
   function mount(){
@@ -604,18 +614,20 @@
       for(const el of dialog.querySelectorAll(mutationSelector)){el.dataset.generationLock=String(el.disabled);el.disabled=true;}
       drawing=false;pointer=null;
     }
-    $('mosaicStop').hidden=batchJob?.status!=='running'||context.session.capabilities?.render_stop!==true;$('mosaicStop').disabled=stopPending||!!batchJob?.cancel_requested;
-    $('mosaicStop').textContent=stopPending||batchJob?.cancel_requested?'正在停止…':'停止生成';
-    $('mosaicDiscard').hidden=locked;
-    $('mosaicProcessingHint').textContent='生成中暂不可编辑；停止生成后可修改。关闭后后台继续处理。';
+    $('mosaicStop').hidden=!pendingJob()||context.session.capabilities?.render_stop!==true;$('mosaicStop').disabled=stopPending||!!batchJob?.cancel_requested;
+    $('mosaicStop').textContent=stopPending||batchJob?.cancel_requested?'正在停止…':batchJob?.status==='queued'?'取消排队':'停止生成';
+    $('mosaicDiscard').textContent=awaitingDecision()?'放弃结果':'放弃本次处理';
+    $('mosaicBatchClose').textContent=awaitingDecision()?'查看原片与参数':'返回调整';
+    $('mosaicDiscard').hidden=locked&&!awaitingDecision();
+    $('mosaicProcessingHint').textContent=batchJob?.status==='queued'?'任务已提交，关闭后继续排队。其他素材可继续编辑和提交。':'处理期间暂不可编辑；停止后可修改。关闭后后台继续处理。';
     const adopted=adoptedTargets(),segments=new Set(adopted.map(t=>`${t.start}:${t.end}`)).size;
-    const running=batchLoading||batchJob?.status==='running'||mutationBusy;
-    const generating=batchJob?.status==='running'||(batchLoading&&!batchJob);
+    const running=batchLoading||pendingJob()||mutationBusy;
+    const generating=pendingJob()||(batchLoading&&!batchJob);
     const showOutput=resultMode&&batchJob?.status==='completed';
     if(showOutput&&!$('mosaicWorkspace').hidden)pausePlayback();
     $('mosaicWorkspace').hidden=showOutput;$('mosaicBatchDialog').hidden=!showOutput;
     $('mosaicProcessing').hidden=!generating;
-    $('mosaicProcessingText').textContent=stopPending||batchJob?.cancel_requested?'正在停止生成…':batchJob?.progress||'正在准备处理视频…';
+    $('mosaicProcessingText').textContent=batchError||(stopPending||batchJob?.cancel_requested?'正在停止生成…':batchJob?.progress||'正在准备处理视频…');
     $('mosaicStatus').hidden=generating||showOutput;
     dialog.classList.toggle('processing-result',showOutput);
     const clip=currentClip();
@@ -627,8 +639,8 @@
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
     $('mosaicBatchClose').hidden=!showOutput;
-    $('mosaicBatchStart').hidden=generating||(resultMode&&batchJob?.status==='completed');
-    $('mosaicBatchView').hidden=generating||resultMode||batchJob?.status==='cancelled'||(!batchJob&&!batchError);
+    $('mosaicBatchStart').hidden=generating||awaitingDecision();
+    $('mosaicBatchView').hidden=generating||resultMode||!!batchJob?.discarded_at||batchJob?.status==='cancelled'||(!batchJob&&!batchError);
     $('mosaicBatchDownload').hidden=!resultMode; $('mosaicReplace').hidden=!resultMode;
     if(!resultMode){beforeBinding?.dispose();beforeBinding=null;return;}
     const done=batchJob?.status==='completed';
@@ -639,7 +651,7 @@
     $('mosaicBatchDownload').hidden=!done;$('mosaicBatchVideo').hidden=!done;
     $('mosaicBatchVersion').textContent=batchJob&&!sameBatch()?'处理方案已变化。此结果对应生成时的选择；要应用新选择，请重新生成。':'';
     if(done){
-      $('mosaicBatchStatus').textContent=batchError||'完整视频已生成，可预览或下载。';
+      $('mosaicBatchStatus').textContent=batchError||'处理完成，请预览；确认替换或放弃结果后可继续编辑。';
       const outputUrl=appUrl(base()+'/render/'+batchJob.id+'/video?v='+encodeURIComponent(batchJob.completed_at||''));
       if(resultBefore&&sourceManager){
         if(!beforeBinding){
@@ -655,30 +667,69 @@
       $('mosaicBatchDownload').href=outputUrl;$('mosaicBatchDownload').download=context.asset.title+'_处理后.mp4';
     }else $('mosaicBatchStatus').textContent=batchError||batchJob?.error||batchJob?.progress||'正在提交全部已打码区域…';
   }
+  function restoreParameters(job){
+    effect={...defaultEffect,...job.effect};clipEffects={};aiEvents=[];clipEdits={};manualClips=[];
+    targets=(job.targets||[]).map((t,i)=>{
+      const eventId='manual-recovered-region-'+i;
+      manualClips.push({id:eventId,start:t.start,end:t.end,status:'needs_review',candidates:[]});
+      clipEffects[eventId]={...effect,...t.effect};
+      return {...t,eventId,uid:regionId(),adopted:true,label:'打码区域',reason:''};
+    });
+    deletions=(job.ranges||[]).map(([start,end],i)=>{
+      const eventId='manual-recovered-delete-'+i;
+      manualClips.push({id:eventId,start,end,status:'needs_review',candidates:[]});
+      return {start,end,eventId};
+    });
+    savedTargets=structuredClone(targets);savedDeletions=structuredClone(deletions);
+    savedManualClips=structuredClone(manualClips);savedAiEvents=[];savedClipEdits={};
+    savedEffect={...effect};savedClipEffects=structuredClone(clipEffects);
+  }
   async function batchRequest(start=false){
     if(!context)return;
     const version=epoch,request=++batchToken,endpoint=base(),valid=()=>active(version)&&request===batchToken;
     batchLoading=true;batchError='';paintBatch();
     try{
       const result=await api(endpoint+'/render',start?{targets:adoptedTargets(),ranges:deleteRanges(),effect,reset_at:context.session.reset_at||''}:undefined);
-      if(!valid())return;batchJob=start?result:result.job||null;paintBatch();
-      while(valid()&&batchJob?.status==='running'){
+      if(!valid())return;batchJob=start?result:result.job||null;
+      if(awaitingDecision())resultMode=true;
+      paintBatch();
+      while(valid()&&pendingJob()){
         await new Promise(r=>setTimeout(r,1200));if(!valid())return;
-        const job=await api(endpoint+'/render/'+batchJob.id);if(!valid())return;batchJob=job;paintBatch();
+        try{
+          const job=await api(endpoint+'/render/'+batchJob.id);if(!valid())return;batchJob=job;batchError='';
+          if(awaitingDecision())resultMode=true;
+        }catch(e){if(!valid())return;batchError='连接暂时异常，正在恢复查询…';}
+        paintBatch();
       }
-    }catch(e){if(valid())batchError=e.message;}
+    }catch(e){
+      if(valid()){
+        batchError=e.message;
+        // A lost POST response may already have committed. Reconcile through GET.
+        if(start){
+          while(valid()){
+            await new Promise(r=>setTimeout(r,1200));if(!valid())return;
+            try{
+              const restored=await api(endpoint+'/render');if(!valid())return;
+              batchJob=restored.job||null;
+              if(batchJob?.queued_task)restoreParameters(batchJob);
+              batchLoading=false;batchRequest();return;
+            }catch{batchError='连接暂时异常，正在恢复查询…';paintBatch();}
+          }
+        }
+      }
+    }
     finally{if(valid()){batchLoading=false;paint();if(batchJob?.status==='cancelled')status('已停止生成，当前选择已保留，可以继续编辑。');}}
   }
   function restoreBatch(){batchRequest();}
   $('mosaicStop').onclick=async()=>{
-    if(stopPending||batchJob?.status!=='running')return;
+    if(stopPending||!pendingJob())return;
     const version=epoch,endpoint=base(),jid=batchJob.id;stopPending=true;paintBatch();
     try{
       const job=await api(endpoint+'/stop',{job_id:jid,reset_at:context.session.reset_at||''});
       if(!active(version)||batchJob?.id!==jid)return;
       // Resume polling the acknowledged job; do not unlock until the worker exits.
       batchToken++;batchJob=job;
-      while(active(version)&&batchJob?.id===jid&&batchJob.status==='running'){
+      while(active(version)&&batchJob?.id===jid&&pendingJob()){
         paintBatch();await new Promise(r=>setTimeout(r,500));
         if(!active(version))return;
         const next=await api(endpoint+'/render/'+jid);
@@ -709,7 +760,14 @@
   $('mosaicDiscard').onclick=async()=>{
     if(mutationBusy||!window.confirm('放弃本次处理？当前项目成片不会改变。'))return;
     const version=epoch;mutationBusy=true;paintBatch();
-    try{await api(base()+'/discard',{reset_at:context.session.reset_at||''});if(!active(version))return;clearDraft();dialog.close();}
+    try{
+      if(awaitingDecision()){
+        const job=await api(base()+'/discard-result',{job_id:batchJob.id,reset_at:context.session.reset_at||''});
+        if(!active(version))return;batchJob=job;save();resultMode=false;paint();
+      }else{
+        await api(base()+'/discard',{reset_at:context.session.reset_at||''});if(!active(version))return;clearDraft();dialog.close();
+      }
+    }
     catch(e){if(active(version))status(e.message,true);}
     finally{mutationBusy=false;if(active(version))paintBatch();}
   };

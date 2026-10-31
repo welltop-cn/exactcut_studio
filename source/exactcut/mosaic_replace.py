@@ -24,7 +24,7 @@ def recover(bid,sid,job):
     if job.get('replacement',{}).get('status')!='running':return job
     session=sessions.read_session(bid,sid)
     try:
-        with cutting_access.gate(workflow.folder(bid),session['request_id']):
+        with cutting_access.gate(workflow.folder(bid),session['request_id'],allow_job=job['id']):
             result={'status':'completed'} if is_current(bid,session,job) else {'status':'failed','error':'替换已中断，请重试；当前成片保留。'}
             job['replacement']=result
             write_json_atomic(sessions.session_path(bid,sid)/f"render-{job['id']}.json",job)
@@ -36,13 +36,14 @@ def start(bid,sid,jid,reset_at):
     from . import mosaic_render
     session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
     job=mosaic_render.state(bid,sid,jid)
+    if job.get('discarded_at'):raise cutting.CutError('结果已放弃',409)
     if job.get('preview'):raise cutting.CutError('片段预览不能替换完整成片')
     if job['status']!='completed':raise cutting.CutError('请先生成处理后的视频')
     if is_current(bid,session,job):return update(bid,sid,jid,{'status':'completed'})
-    batch=workflow.folder(bid);guard=cutting_access.gate(batch,session['request_id']);guard.__enter__();lease=None
+    batch=workflow.folder(bid);guard=cutting_access.gate(batch,session['request_id'],allow_job=jid);guard.__enter__();lease=None
     try:
         cutting.require_reset(sessions.read_session(bid,sid),reset_at)
-        cutting_access.require_editable(batch,session['request_id'],source_sha=session['source_sha256'])
+        cutting_access.require_editable(batch,session['request_id'],source_sha=session['source_sha256'],allow_job=jid)
         lease=cutting.lock_file(cutting.lock_root()/f'{bid}.lock',shared=True)
         result=update(bid,sid,jid,{'status':'running','started_at':now_iso()})
         threading.Thread(target=run,args=(bid,sid,session,job,guard,lease),daemon=True).start()

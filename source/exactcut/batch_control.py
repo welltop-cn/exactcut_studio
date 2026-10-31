@@ -218,7 +218,8 @@ def resident_identity(job, process=None):
 
 def change(path, action):
     diag.event('batch.control_requested', batch_id=path.name, action=action)
-    with LOCK:
+    from .cutting_access import gate
+    with LOCK, gate(path):
         control = read(path)
         state = read_json(path / 'runtime.json')
         if action == 'pause':
