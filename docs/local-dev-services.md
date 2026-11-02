@@ -229,3 +229,15 @@ D1 独立工作树 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background
 - 真实 HTTP+Chromium+FFmpeg 验证关闭整个浏览器后完成、重新登录待确认、放弃保留参数、确认后以新 84 帧版本编辑；JS 错误为0。完整回归1921 passed / 1 skipped / 10既有fork警告，0失败。SAM跟踪推理使用明确mock遮罩，未声称真实SAM模型已验收。
 
 代码待父会话独立 review，未上线。公开截图、媒体哈希与逐项矩阵见[验证记录](verification/cut-mosaic-background-queue-2026-10-31.md)。操作任何历史 PID/入口前仍须重新核验。
+
+## 2026-10-31 四素材真实项目队列试用（18883 保留运行）
+
+用户明确要求现在开启本地dev并保留试用，优先使用此前已下载的真实项目。独立工作树仍为 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue`，加载父 review 已通过的代码 `bfeab190d039aaef69278bd8afd76745146efb8e`；没有修改实现代码。
+
+- 用户入口：`http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5`，名称「剪切打码后台队列测试 · 101682 · 四条真实素材（独立可编辑副本）」；账号 `mosaic_trial`，密码在私有0600 `source/.dev-state/cut-mosaic-user-trial-20261031/credentials.json`，不提交Git。
+- 当前 PID `71555`（后续操作前重新核验），指定Python3.12，cwd为本工作树source；启动器同私有目录 `start.py`，数据同目录 `data/`，日志 `server.log`。用户正在试用，不自动停止、重启或重新运行prepare覆盖数据。
+- 只从已有 release-review 本地副本复制四原片、四预览、必要结尾图片和4份身份匹配的完成字幕缓存；独立inode，无hardlink。源配置及原片不变，没有继承账号、任务或交付关联；来源清单在私有 `provenance.json`。
+- health=ok/development，release=development-mosaic-queue-user-bfeab19；正式worker/外部写入/发布/获取/扫描/SAM均关闭，队列默认1。手动固定打码、剪切及后续用户确认可用，字幕99/113/103/110句缓存可读，不生成新付费识别。
+- 已验证独立登录、4素材可编辑、8路视频Range206、4编辑器真实画面与首帧打开；JS错误0。交接前mosaic任务0、字幕pending/active0、制作jobs0、deliveries/outbox0，无预提交任务或草稿。保留原始可编辑状态供用户自行试用；其他服务未动。
+
+详细[试用准备与验证记录](verification/cut-mosaic-real-project-user-trial-2026-10-31.md)。真实视频、截图、数据、账号和密码均保留在私有忽略目录，不随Git分发。
