@@ -4,6 +4,7 @@ import re
 from datetime import date, datetime
 from pathlib import Path
 from zipfile import ZipFile
+from pydantic import ValidationError as ModelValidationError
 from openpyxl import load_workbook
 from .catalog import load_catalog
 from .compiler import parse_segment_cell, parse_standard_segment, production_date, STANDARD_TEMPLATE_TITLE, compile_workbook
@@ -583,6 +584,38 @@ def clip_field_issues(row):
     return issues
 
 
+def model_validation_issues(exc):
+    """Project model failures into editor copy; never stringify the exception dump."""
+    issues = []
+    for error in exc.errors(include_url=False, include_input=False):
+        location = error['loc']
+        field = str(location[-1]) if location else ''
+        section = 'ending' if location and location[0] == 'ending' else ''
+        custom = str((error.get('ctx') or {}).get('error', ''))
+        code = 'model_validation'
+        message = custom if re.search(r'[\u4e00-\u9fff]', custom) else '请检查填写内容后重新保存'
+        if section == 'ending':
+            if custom == '请上传结尾图片':
+                field, code = 'image', 'ending_image_required'
+                message = '请上传结尾图片，或将结尾画面改为“不添加”'
+            elif field == 'duration_ms':
+                code, message = 'ending_duration', '结尾停留时长请填写 1～15 秒'
+            elif field == 'guide':
+                code, message = 'ending_guide', '结尾引导文案最多 200 字，请缩短文案'
+            elif field == 'mode':
+                code, message = 'ending_mode', '请选择有效的结尾画面'
+        elif field == 'font_size':
+            message = '字幕字号请填写 32～96 的整数'
+        elif field == 'seq':
+            message = '素材编号请填写大于 0 的整数'
+        elif custom == 'request_id must be unique':
+            message = '素材需求编号重复，请检查重复的素材'
+        elif custom == 'output_filename must be unique':
+            message = '素材编号重复，请为每条素材填写不同的编号'
+        issues.append(dict(message=message, section=section, fields=[field] if field else [], code=code))
+    return issues
+
+
 def validate_draft(draft, source='', *, validation_issues=None):
     errors, requests = [], []
     brand, brand_errors = parse_brand(draft)
@@ -608,7 +641,8 @@ def validate_draft(draft, source='', *, validation_issues=None):
         label = ('成片' if row.get('composition') else '素材') + ' ' + str(row.get('seq', i))
         def report(message, **location):
             clip_index = location.get('clip_index')
-            text = label + (f' · 片段 {clip_index + 1}' if clip_index is not None else '') + '：' + message
+            section_label = {'ending': '结尾画面'}.get(location.get('section'))
+            text = label + (f' · 片段 {clip_index + 1}' if clip_index is not None else f' · {section_label}' if section_label else '') + '：' + message
             errors.append(text)
             if validation_issues is not None:
                 validation_issues.append(dict(row_index=i - 1, message=message, text=text, **location))
@@ -665,6 +699,9 @@ def validate_draft(draft, source='', *, validation_issues=None):
                                        ending=row.get('ending') or (row.get('composition') or {}).get('ending') or None,
                                        brand_overlay=brand,
                                        **{k: str(row.get(k, '')) for k in ('title_cn', 'hook_text', 'structure', 'notes')}))
+        except ModelValidationError as exc:
+            for issue in model_validation_issues(exc):
+                report(**issue)
         except (ValueError, TypeError, RuntimeError) as exc:
             report(str(exc), clip_index=getattr(exc, 'clip_index', None), fields=getattr(exc, 'fields', []))
     if errors:
@@ -675,6 +712,8 @@ def validate_draft(draft, source='', *, validation_issues=None):
                                  material_type=draft.get('material_type') or 'typezxraw', source_workbook=source,
                                  brand_overlay=brand, requests=requests)
         return manifest, []
+    except ModelValidationError as exc:
+        return None, [issue['message'] for issue in model_validation_issues(exc)]
     except ValueError as exc:
         return None, [str(exc)]
 

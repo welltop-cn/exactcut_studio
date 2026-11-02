@@ -73,3 +73,50 @@ def test_real_browser_invalid_save_correction_and_reload(source, managed):
         assert page.locator('#confirmButton').is_enabled()
         assert not errors, errors
         browser.close()
+
+
+@pytest.mark.parametrize('managed', [False, True])
+@pytest.mark.parametrize('correction', ['none', 'upload'])
+def test_real_browser_ending_error_upload_or_cancel_clears_message(source, managed, correction):
+    import io
+    from PIL import Image
+    playwright = pytest.importorskip('playwright.sync_api')
+    server, item, _, _ = source
+    draft = deepcopy(item['draft'])
+    draft.update(drama_id='101573', author='test')
+    draft['rows'][0].update(seq=2, hook_options={'mode': 'none'},
+        clips=[{'episode': '1', 'start_m': '00', 'start_s': '00', 'start_ms': '000',
+                'end_m': '00', 'end_s': '01', 'end_ms': '000'}],
+        ending={'mode': 'image', 'image': '', 'duration_ms': 3000})
+    w.save_draft(item['id'], {'revision': item['revision'], 'draft': draft})
+    if managed:
+        material_versions.enroll(w.folder(item['id']))
+    base = f'http://127.0.0.1:{server.server_address[1]}/home/'
+    with playwright.sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        assert context.request.post(base + 'api/login', data={'username': 'admin', 'password': server.password},
+            headers={'X-Exactcut-Request': '1'}).ok
+        page = context.new_page()
+        page.goto(base + '#' + item['id'])
+        page.wait_for_selector('[data-ending-file][aria-invalid=true]')
+        assert '素材 2 · 结尾画面：请上传结尾图片' in page.locator('#validation').inner_text()
+        assert 'pydantic' not in page.locator('#validation').inner_text()
+        page.locator('#saveButton').click()
+        page.wait_for_function('document.activeElement?.dataset.endingFile === "1"', timeout=5000)
+        if correction == 'none':
+            page.locator('[data-ending-field="mode"]').select_option('none')
+        else:
+            content = io.BytesIO()
+            Image.new('RGB', (16, 16), '#087f77').save(content, format='PNG')
+            page.locator('[data-ending-file]').set_input_files({'name': 'ending.png', 'mimeType': 'image/png', 'buffer': content.getvalue()})
+            page.wait_for_function('current.draft.rows[0].ending.image && !controls.endingUploads.size', timeout=5000)
+        assert page.locator('#validation').is_hidden()
+        assert page.locator('#requests [aria-invalid=true]').count() == 0
+        page.locator('#saveButton').click()
+        page.wait_for_function('!dirty && current.errors.length===0', timeout=5000)
+        page.reload()
+        page.wait_for_selector('#requests .request')
+        assert page.locator('#requests .validation-error').count() == 0
+        assert page.locator('[data-ending-field="mode"]').input_value() == ('none' if correction == 'none' else 'image')
+        browser.close()

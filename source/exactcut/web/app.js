@@ -185,7 +185,7 @@ const endingImages=new Map();
 function endingOf(row){return {mode:'none',image:'',guide:'',duration_ms:3000,...(row.ending||row.composition?.ending||{})}}
 function setEnding(row,ending){if(row.composition)row.composition.ending=ending;else row.ending=ending}
 function endingSettings(row,i){const e=endingOf(row),active=e.mode!=='none';const image=e.image?`<img class="ending-preview" loading="lazy" decoding="async" fetchpriority="low" alt="结尾图片预览" src="${esc(endingImages.get(`${current.id}:${e.image}`)||appUrl(`/api/batches/${current.id}/ending-thumbnail/${encodeURIComponent(row.request_id)}?v=${encodeURIComponent(e.image)}`))}">`:'<p class="hint">请上传 PNG、JPEG 或 WebP 图片，最大 4 MB。</p>';return `<section class="material-section ending-settings" data-ending-settings="${i}"><div class="material-section-head"><span class="material-step">03</span><div><h3>结尾画面</h3><p>可选 · 在剧情结束后追加静态画面</p></div></div><div class="material-section-body"><div class="ending-main-fields"><div><label for="ending-mode-${i}">结尾画面</label><select id="ending-mode-${i}" data-row="${i}" data-ending-field="mode">${Object.entries({none:'不添加',last_frame:'素材最后一帧',image:'上传海报或图片'}).map(([k,v])=>`<option value="${k}" ${e.mode===k?'selected':''}>${v}</option>`).join('')}</select></div>${active?`<div><label for="ending-duration-${i}">停留时长（秒）</label><input id="ending-duration-${i}" type="number" min="1" max="15" step="0.1" data-row="${i}" data-ending-field="duration_ms" value="${e.duration_ms==null?'':e.duration_ms/1000}"></div>`:''}</div>${active?`${e.mode==='image'?`<label for="ending-file-${i}">结尾图片</label><input id="ending-file-${i}" type="file" accept="image/png,image/jpeg,image/webp" data-row="${i}" data-ending-file="1">${image}`:'<p class="hint">将剪辑后剧情的最后一帧定格。</p>'}<label for="ending-guide-${i}">引导文案（选填）</label><textarea id="ending-guide-${i}" maxlength="200" data-row="${i}" data-ending-field="guide" placeholder="图片已有文字时可留空，支持换行">${esc(e.guide)}</textarea><p class="hint">在剧情结束后追加，片尾静音。图片完整显示，比例不同时补黑边；文案为下方白字黑描边。制作后可在成片预览中查看效果。</p>`:''}</div></section>`}
-function applyEnding(input){const i=Number(input.dataset.row),row=current.draft.rows[i],e=endingOf(row),key=input.dataset.endingField;e[key]=key==='duration_ms'?(input.value===''?null:Math.round(Number(input.value)*1000)):input.value;setEnding(row,e);changed();if(key==='mode'){document.querySelector(`[data-ending-settings="${i}"]`).outerHTML=endingSettings(row,i);controls()}refreshClipTiming(i)}
+function applyEnding(input){const i=Number(input.dataset.row),row=current.draft.rows[i],e=endingOf(row),key=input.dataset.endingField;e[key]=key==='duration_ms'?(input.value===''?null:Math.round(Number(input.value)*1000)):input.value;setEnding(row,e);changed();if(key==='mode'){document.querySelector(`[data-ending-settings="${i}"]`).outerHTML=endingSettings(row,i);renderValidation();controls()}refreshClipTiming(i)}
 function withEndingTiming(t,row){const e=endingOf(row),ms=e.mode==='none'?0:Number(e.duration_ms)||0,delta=ms-(t.ending_duration_ms||0);return {...t,ending_duration_ms:ms,known_duration_ms:t.known_duration_ms+delta,planned_duration_ms:t.planned_duration_ms==null?null:t.planned_duration_ms+delta}}
 async function uploadEnding(input){
  const file=input.files[0];if(!file)return;
@@ -280,6 +280,13 @@ function activeValidationIssues(){
   if(!validationTargets.has(issue)){const row=current.draft.rows[issue.row_index];validationTargets.set(issue,{row,clip:row?.clips?.[issue.clip_index]})}
   const {row,clip}=validationTargets.get(issue),rowIndex=current.draft.rows.indexOf(row),clipIndex=clip?row?.clips?.indexOf(clip):issue.clip_index;
   if(rowIndex<0||clipIndex<0)return [];
+  if(issue.section==='ending'){
+   const ending=endingOf(row);
+   if(issue.code==='ending_image_required'&&(ending.mode!=='image'||ending.image))return [];
+   if(issue.code==='ending_duration'&&Number.isInteger(ending.duration_ms)&&ending.duration_ms>=1000&&ending.duration_ms<=15000)return [];
+   if(issue.code==='ending_guide'&&typeof ending.guide==='string'&&ending.guide.length<=200)return [];
+   if(issue.code==='ending_mode'&&['none','last_frame','image'].includes(ending.mode))return [];
+  }
   if(clip&&issue.code){
    const fields=issue.fields||[],value=key=>String(clip[key]??'').trim();
    if(issue.code==='episode'){const ep=value('episode').replace(/^ep/i,'');if(/^\d+$/.test(ep)&&Number(ep)>=1&&Number(ep)<=500)return []}
@@ -293,13 +300,19 @@ function activeValidationIssues(){
     }
    }
   }
-  const label=(row.composition?'成片':'素材')+' '+row.seq,text=label+(clipIndex!=null?' · 片段 '+(clipIndex+1):'')+'：'+issue.message;
+  const section=issue.section==='ending'?' · 结尾画面':'';
+  const label=(row.composition?'成片':'素材')+' '+row.seq,text=label+(clipIndex!=null?' · 片段 '+(clipIndex+1):section)+'：'+issue.message;
   return [{...issue,row_index:rowIndex,clip_index:clipIndex,text}];
  });
 }
+function validationInputs(card,issue){
+ const fields=issue.fields||[];
+ if(issue.section==='ending')return Array.from(card.querySelectorAll('[data-ending-file],[data-ending-field]')).filter(input=>fields.includes(input.dataset.endingFile!==undefined?'image':input.dataset.endingField));
+ return Array.from(card.querySelectorAll('[data-clip-part]')).filter(input=>Number(input.dataset.clip)===issue.clip_index&&fields.includes(input.dataset.clipPart));
+}
 function validationTarget(issue){
  const card=document.querySelectorAll('#requests .request')[issue.row_index];if(!card)return null;
- return (issue.fields||[]).map(field=>Array.from(card.querySelectorAll('[data-clip-part]')).find(input=>Number(input.dataset.clip)===issue.clip_index&&input.dataset.clipPart===field)).find(Boolean)||(issue.clip_index!=null?card.querySelectorAll('.clip-row')[issue.clip_index]:null)||card;
+ return validationInputs(card,issue)[0]||(issue.section==='ending'?card.querySelector('.ending-settings'):null)||(issue.clip_index!=null?card.querySelectorAll('.clip-row')[issue.clip_index]:null)||card;
 }
 function focusValidationIssue(index=0){
  const issue=activeValidationIssues()[index],target=issue&&validationTarget(issue);if(!target){$('validation').scrollIntoView({behavior:'smooth',block:'center'});return}
@@ -312,10 +325,10 @@ function paintValidationIssues(issues){
  root.querySelectorAll('[data-validation-message]').forEach(el=>el.remove());root.querySelectorAll('[data-validation-invalid]').forEach(el=>{el.removeAttribute('aria-invalid');el.removeAttribute('aria-describedby');delete el.dataset.validationInvalid});
  const groups=new Map();issues.forEach((issue,index)=>{
   const card=root.querySelectorAll('.request')[issue.row_index];if(!card)return;card.classList.add('validation-error');groups.set(card,(groups.get(card)||0)+1);
-  const target=validationTarget(issue),segment=target?.closest('.clip-row'),message=document.createElement('p');
+  const target=validationTarget(issue),segment=issue.section==='ending'?card.querySelector('.ending-settings .material-section-body'):target?.closest('.clip-row'),message=document.createElement('p');
   message.id='validation-field-'+index;message.dataset.validationMessage='';message.className='validation-field-message';message.textContent=(issue.clip_index!=null?'片段 '+(issue.clip_index+1)+'：':'')+issue.message;
   (segment||card.querySelector('.requesthead')||card).append(message);segment?.classList.add('validation-clip-error');
-  for(const input of card.querySelectorAll('[data-clip-part]'))if(Number(input.dataset.clip)===issue.clip_index&&(issue.fields||[]).includes(input.dataset.clipPart)){input.setAttribute('aria-invalid','true');input.dataset.validationInvalid='';input.setAttribute('aria-describedby',((input.getAttribute('aria-describedby')||'')+' '+message.id).trim())}
+  for(const input of validationInputs(card,issue)){input.setAttribute('aria-invalid','true');input.dataset.validationInvalid='';input.setAttribute('aria-describedby',((input.getAttribute('aria-describedby')||'')+' '+message.id).trim())}
  });
  groups.forEach((count,card)=>{const badge=document.createElement('span');badge.dataset.validationMessage='';badge.className='validation-card-summary';badge.textContent=count+' 处需要修改';card.querySelector('.requesthead').append(badge)});
 }
@@ -324,7 +337,7 @@ function renderValidation(forceShow=false){
  const issues=pending?[]:activeValidationIssues();paintValidationIssues(issues);
  const located=new Set((current?.validation_issues||[]).map(issue=>issue.text)),general=dirty?[]:(current?.errors||[]).filter(error=>!located.has(error));
  if((validationDismissed&&!forceShow)||pending||(!issues.length&&!general.length)){$('validation').hidden=true;return}
- $('validation').hidden=false;$('validation').innerHTML=`<div class="notice-head"><strong>以下内容需要修正后才能执行：</strong><button type="button" class="close-notice" data-dismiss-validation="1" aria-label="关闭提示">✕</button></div><div class="validation-links">${issues.map((issue,index)=>`<button type="button" class="validation-link" data-validation-issue="${index}">${esc(issue.text)}</button>`).join('')}${general.map(error=>`<p>${esc(error)}</p>`).join('')}</div>`;
+ $('validation').hidden=false;$('validation').innerHTML=`<div class="notice-head"><strong>请检查以下内容，修改后再开始制作：</strong><button type="button" class="close-notice" data-dismiss-validation="1" aria-label="关闭提示">✕</button></div><div class="validation-links">${issues.map((issue,index)=>`<button type="button" class="validation-link" data-validation-issue="${index}">${esc(issue.text)}</button>`).join('')}${general.map(error=>`<p>${esc(error)}</p>`).join('')}</div>`;
 }
 function durationLabel(s){if(s==null)return '';return s<60?`${s} 秒`:`${Math.floor(s/60)} 分 ${s%60} 秒`}
 function errorHtml(info){return info?`<strong>${esc(info.title)}</strong><p>${esc(info.action)}</p><details><summary>技术详情</summary><p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(info.detail)}</p></details>`:''}
