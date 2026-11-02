@@ -1,0 +1,57 @@
+{
+  "status": "cpu_smoke_passed",
+  "device": "cpu",
+  "not_linux_server_capacity": true,
+  "actual_two_user_mask_overlap_seconds": 10.069380095,
+  "a_still_running": true,
+  "peak_owned_rss_sum_kib": 5496432,
+  "peak_owned_cpu_percent_sum": 757.3,
+  "memory_warning": "Sampled sum RSS includes shared mappings; not a physical memory measure.",
+  "windows": [
+    {
+      "actor": "beta",
+      "first": 1793610873394940370,
+      "last": 1793610883464320465,
+      "frames": 6
+    },
+    {
+      "actor": "gamma",
+      "first": 1793610873393943616,
+      "last": 1793610883681409644,
+      "frames": 6
+    }
+  ],
+  "schema_version": 1,
+  "machine": "Apple M2 Max / macOS, explicitly device=cpu; not Linux server capacity",
+  "model": "SAM 2.1 tiny",
+  "inference_size": 1024,
+  "cloud_requests": 0,
+  "models": [
+    {
+      "actor": "alpha",
+      "target_frames": 6,
+      "started_at_ns": 1793610870504092000,
+      "finished_at_ns": 1793610884291256000,
+      "success": true,
+      "nonempty_masks": 6
+    },
+    {
+      "actor": "beta",
+      "target_frames": 6,
+      "started_at_ns": 1793610870616062000,
+      "finished_at_ns": 1793610883941698000,
+      "success": true,
+      "nonempty_masks": 6
+    },
+    {
+      "actor": "gamma",
+      "target_frames": 6,
+      "started_at_ns": 1793610870617015000,
+      "finished_at_ns": 1793610884068882000,
+      "success": true,
+      "nonempty_masks": 6
+    }
+  ],
+  "raw_private_evidence": "source/.dev-state/interactive-real-20261102/0c059f6e/cpu-evidence.json",
+  "limits": "6 frames per model only. The two previews completed while A actual final media processing remained running; A was then cancelled only to clean up this bounded smoke. This does not establish maximum-size CPU/Linux throughput or memory."
+}

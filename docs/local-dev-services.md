@@ -1,5 +1,16 @@
 # 本地 dev 服务与专项测试交接
 
+## 2026-11-02：交互并发实证与用户只读围观
+
+- 实现工作树：`/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources`；`feat/cut-mosaic-interactive-resources`。用户18883仍运行原工作树，未修改、重启或自动操作其项目。
+- 新独立数据根：上述树的 `source/.dev-state/interactive-real-20261102/data`；原材料仅复制，没有硬链接用户素材。真实Gemini/SAM、2认证交互用户、A/B最终串行、取消重提与完整音视频输出已验收；7次Gemini共用该data root的6RPM/burst2持久桶，不重置限流。
+- 自动验收实例随脚本完成关闭。用户要求围观后，另开只读 viewer；只允许登录、读取和打开已准备会话，不提交模型/最终任务，不启动dispatcher。
+- Paseo可见工作区「剪切打码 · 只读围观」：`wks_7ae28b03ffe1bd96`，服务 `viewer`，管理端口59038；代理URL `http://viewer--feat-cut-mosaic-interactive-resources--intera--98f3aff8.localhost:6767`。另保留直连只读端口51837，避免旧围观链接失效。均绑定127.0.0.1，不是公网入口；远端设备不能把自己的localhost当作本机。
+- 只读启动脚本在私有 `source/.dev-state/interactive-real-20261102/viewer.py`，管理配置在该目录paseo.json。围观凭据只在私有测试区和给用户的会话中提供，不提交。
+- 完整证据：`docs/verification/cut-mosaic-interactive-real-2026-11-02.md` 及JSON；同步搬运修复后的三路300帧容量JSON单独记录。源码和证据待父实现review，不能据此更新用户18883。
+
+以下为此前盘点及约定：
+
 最后盘点：2026-10-13（Asia/Shanghai）。本记录区分已确认现状与后续约定，端口/PID/版本在操作前须重新检查。
 
 ## 已确定的使用方式

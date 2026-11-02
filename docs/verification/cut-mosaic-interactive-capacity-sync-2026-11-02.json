@@ -1,0 +1,72 @@
+{
+  "capacity_probe_only": true,
+  "not_application_admission_or_authenticated_workflow": true,
+  "machine": "Apple M2 Max, 12 physical/logical cores, 64GiB unified memory",
+  "source_metadata": {
+    "fps_num": 30,
+    "fps_den": 1,
+    "frame_count": 300,
+    "width": 1080,
+    "height": 1920,
+    "has_audio": false
+  },
+  "inference_size": 1024,
+  "per_worker_target_frames": 300,
+  "maximum_seconds": 600,
+  "checkpoint_sha256": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+  "worker_count": 3,
+  "actual_mask_generation_three_way_overlap_seconds": 308.264247937,
+  "os_free_percent_min": 25,
+  "sampled_peak_sum_process_rss_kib": 13030928,
+  "memory_metric_warning": "Process RSS is not device-wide MPS memory. MPS allocator samples are per process, sampled lower bounds; shared/unified physical accounting cannot be obtained by adding RSS and allocator values. This synthetic capacity probe does not certify a production long-video workload or other host loads.",
+  "source_sha256_unchanged": true,
+  "failure": null,
+  "elapsed_seconds": 323.12,
+  "schema_version": 1,
+  "mps_transfer_policy": "blocking_v1",
+  "workers": {
+    "final_role": {
+      "pid": 54998,
+      "started_at_ns": 1793609888058138000,
+      "finished_at_ns": 1793610207782475000,
+      "first_mask_at_ns": 1793609897402690923,
+      "last_mask_at_ns": 1793610207677397853,
+      "frames": 300,
+      "nonempty_masks": 300,
+      "rss_peak_bytes": 4465426432,
+      "sampled_peak_current_mps_bytes": 1280893440,
+      "sampled_peak_driver_mps_bytes": 10729553920,
+      "recommended_max_device_memory_bytes": 51539607552,
+      "result_elapsed_seconds": 319.63
+    },
+    "preview_alpha": {
+      "pid": 54999,
+      "started_at_ns": 1793609888036798000,
+      "finished_at_ns": 1793610205841278000,
+      "first_mask_at_ns": 1793609897240946938,
+      "last_mask_at_ns": 1793610205754839384,
+      "frames": 300,
+      "nonempty_masks": 300,
+      "rss_peak_bytes": 4481073152,
+      "sampled_peak_current_mps_bytes": 1280644096,
+      "sampled_peak_driver_mps_bytes": 10729570304,
+      "recommended_max_device_memory_bytes": 51539607552,
+      "result_elapsed_seconds": 317.7
+    },
+    "preview_beta": {
+      "pid": 55000,
+      "started_at_ns": 1793609888054813000,
+      "finished_at_ns": 1793610207926189000,
+      "first_mask_at_ns": 1793609897490591447,
+      "last_mask_at_ns": 1793610207819079778,
+      "frames": 300,
+      "nonempty_masks": 300,
+      "rss_peak_bytes": 4464328704,
+      "sampled_peak_current_mps_bytes": 1278862080,
+      "sampled_peak_driver_mps_bytes": 10729553920,
+      "recommended_max_device_memory_bytes": 51539607552,
+      "result_elapsed_seconds": 319.77
+    }
+  },
+  "raw_private_evidence": "source/.dev-state/interactive-capacity-sync-20261102/capacity-evidence.json"
+}

@@ -1,0 +1,69 @@
+{
+  "capacity_probe_only": true,
+  "not_application_admission_or_authenticated_workflow": true,
+  "machine": "Apple M2 Max, 12 physical/logical cores, 64GiB unified memory",
+  "source_metadata": {
+    "fps_num": 30,
+    "fps_den": 1,
+    "frame_count": 300,
+    "width": 1080,
+    "height": 1920,
+    "has_audio": false
+  },
+  "inference_size": 1024,
+  "per_worker_target_frames": 300,
+  "maximum_seconds": 600,
+  "checkpoint_sha256": "7402e0d864fa82708a20fbd15bc84245c2f26dff0eb43a4b5b93452deb34be69",
+  "worker_count": 3,
+  "actual_mask_generation_three_way_overlap_seconds": 245.812966255,
+  "os_free_percent_min": 22,
+  "sampled_peak_sum_process_rss_kib": 11708624,
+  "memory_metric_warning": "Process RSS is not device-wide MPS memory. MPS allocator samples are per process, sampled lower bounds; shared/unified physical accounting cannot be obtained by adding RSS and allocator values. This synthetic capacity probe does not certify a production long-video workload or other host loads.",
+  "source_sha256_unchanged": true,
+  "failure": null,
+  "elapsed_seconds": 298.3,
+  "workers": {
+    "final_role": {
+      "pid": 72670,
+      "started_at_ns": 1793592666552144000,
+      "finished_at_ns": 1793592962745590000,
+      "first_mask_at_ns": 1793592690403937753,
+      "last_mask_at_ns": 1793592962657867032,
+      "frames": 300,
+      "nonempty_masks": 300,
+      "rss_peak_bytes": 4008525824,
+      "sampled_peak_current_mps_bytes": 1282405888,
+      "sampled_peak_driver_mps_bytes": 10729553920,
+      "recommended_max_device_memory_bytes": 51539607552,
+      "result_elapsed_seconds": 296.0
+    },
+    "preview_alpha": {
+      "pid": 72671,
+      "started_at_ns": 1793592666545480000,
+      "finished_at_ns": 1793592936342920000,
+      "first_mask_at_ns": 1793592680662336241,
+      "last_mask_at_ns": 1793592936216904008,
+      "frames": 300,
+      "nonempty_masks": 300,
+      "rss_peak_bytes": 4005216256,
+      "sampled_peak_current_mps_bytes": 1281593088,
+      "sampled_peak_driver_mps_bytes": 10729553920,
+      "recommended_max_device_memory_bytes": 51539607552,
+      "result_elapsed_seconds": 269.56
+    },
+    "preview_beta": {
+      "pid": 72672,
+      "started_at_ns": 1793592666545180000,
+      "finished_at_ns": 1793592958024775000,
+      "first_mask_at_ns": 1793592684846780862,
+      "last_mask_at_ns": 1793592957931152627,
+      "frames": 300,
+      "nonempty_masks": 300,
+      "rss_peak_bytes": 4294819840,
+      "sampled_peak_current_mps_bytes": 1282525440,
+      "sampled_peak_driver_mps_bytes": 10800365568,
+      "recommended_max_device_memory_bytes": 51539607552,
+      "result_elapsed_seconds": 291.27
+    }
+  }
+}
