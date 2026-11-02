@@ -56,7 +56,7 @@
     panel.status.textContent=report.status==='running'?`${report.progress||'正在识别'}${entry.enabled?'':' · 已关闭，完成后不弹窗'}`:
       report.status==='queued'?`${queuedText(report)}${entry.enabled?'':' · 已关闭，完成后不弹窗'}`:
       done?(report.cues.length?(entry.enabled?`已就绪 · 共 ${report.cues.length} 句 · 已缓存`:'字幕已隐藏 · 缓存保留'): '未识别到可见对白字幕'):
-      report.status==='failed'?(report.error||'字幕识别失败，请点击重试'):'未生成 · 点击开启识别';
+      report.status==='failed'?EditorBusy.message(report.error,'字幕识别失败，请点击重试'):'未生成 · 点击开启识别';
     nativeTrack(panel);sync(panel);
   }
   function sync(panel) {
@@ -110,7 +110,7 @@
   }
   function failed(panel,error) {
     if(!active(panel))return;
-    panel.entry.report={status:'failed',cues:[],error:error.message||'字幕识别失败，请点击重试'};paint(panel);
+    panel.entry.report={status:'failed',cues:[],error:EditorBusy.message(error.message,'字幕识别失败，请点击重试')};paint(panel);
   }
   const isPending = status => status==='running'||status==='queued';
   function watch(panel) {

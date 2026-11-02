@@ -1,10 +1,17 @@
 /* Opt-in retries only for explicit, pre-admission editor resource conflicts. */
 window.EditorBusy=(()=>{
   const cancelled=()=>new DOMException('已取消等待','AbortError');
+  function message(value,fallback='操作未完成，请稍后重试；如仍失败，请联系管理员'){
+    const text=String(value??'').trim();if(!text)return fallback;
+    const technical=/validation errors? for|input_(?:value|type)=|Traceback|\b(?:KeyError|TypeError|ValueError|RuntimeError|FileNotFoundError|ConnectionError|JSONDecodeError)\b|\[Errno \d+\]|https?:\/\/|\/(?:Users|home|srv|tmp|var|opt)\/|Command failed|returned non-zero exit status/i;
+    return /[\u4e00-\u9fff]/.test(text)&&!technical.test(text)?text:fallback;
+  }
   function error(response,body={}){
     if(!body||typeof body!=='object')body={};
     const info=body.error_info;
-    const result=Error(info?`${info.title}。${info.action}\n${info.detail}`:body.error||`请求失败 (${response.status})`);
+    const copy=info&&info.code&&info.code!=='unknown'?[info.title,info.action].filter(Boolean).join('。'):body.error;
+    const result=Error(message(copy));
+    result.detail=typeof info?.detail==='string'?info.detail:'';
     result.status=response.status;
     if(typeof body.code==='string')result.code=body.code;
     result.retryable=body.retryable===true;
@@ -44,5 +51,5 @@ window.EditorBusy=(()=>{
       }
     }
   }
-  return {run,error,frame};
+  return {run,error,frame,message};
 })();

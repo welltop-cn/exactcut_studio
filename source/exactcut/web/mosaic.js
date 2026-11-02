@@ -72,7 +72,7 @@
     $('mosaicStatus').textContent=[statusMessage,playbackError==='NotAllowedError'?'点击播放以继续':playbackError?'暂时无法播放，请重试':''].filter(Boolean).join('\n');
     $('mosaicStatus').classList.toggle('error',statusError||playbackError);
   }
-  function status(message,error=false){statusMessage=message;statusError=error;paintStatus();}
+  function status(message,error=false){statusMessage=error?EditorBusy.message(message,'视频处理未完成，请重试；原成片保留'):message;statusError=error;paintStatus();}
   const guard=fn=>(...args)=>{try{return fn(...args);}catch(e){status(e.message,true);}};
   function clock(frame){const {fps_num:n,fps_den:d}=meta(),s=Math.floor(frame*d/n);return [Math.floor(s/60),s%60,frame-Math.ceil(s*n/d)].map(v=>String(v).padStart(2,'0')).join(':');}
   function parse(value){const m=/^(\d+):([0-5]\d):(\d{2})$/.exec(value.trim());if(!m)throw Error('请填写 分:秒:帧，例如 00:01:05');const s=+m[1]*60+(+m[2]),f=+m[3],{fps_num:n,fps_den:d}=meta(),first=Math.ceil(s*n/d);if(f>=Math.ceil((s+1)*n/d)-first||first+f>=meta().frame_count)throw Error('时间超出原片范围');return first+f;}
@@ -212,7 +212,7 @@
 
     }
     if(scanLoading&&events.length)message='正在重新识别，已有片段已保留，完成后可继续编辑。';
-    $('mosaicScanStatus').textContent=message;$('mosaicScanStatus').title=message;$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
+    $('mosaicScanStatus').textContent=EditorBusy.message(message);$('mosaicScanStatus').title=EditorBusy.message(message);$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
     const targetRow=(t,i)=>`<div class="mosaic-event-card"><button data-target-view="${i}"><strong>${clock(t.start)}–${clock(t.end-1)} · ${esc(t.label)}</strong></button><div class="mosaic-card-actions"><div class="mosaic-card-checks"><button data-target-remove="${i}" aria-label="打码" role="checkbox" aria-checked="${t.adopted!==false}" aria-pressed="${t.adopted!==false}" ${t.adopted===false&&activeCount()>=8?'disabled':''}>打码</button></div><div class="mosaic-clip-tools"><button data-edit-target="${i}">编辑</button>${t.adopted!==false?effectButton(i):''}</div></div></div>`;
     const grouped=new Set();
     const html=events.map(e=>{
@@ -331,7 +331,7 @@
       if(!active(version)||request!==controller||request.signal.aborted||document.hidden||frame!==wanted||!video.paused){URL.revokeObjectURL(next);return;}
       if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=next;ready=frame;image.hidden=false;
       $('mosaicFrameHint').textContent=motion==='fixed'?'固定位置 · 所选时间内保持此位置':'准确帧 · 框仅对应当前参考帧，尚未跟踪';
-    }catch(e){if(active(version)&&request===controller&&e.name!=='AbortError'){$('mosaicFrameHint').textContent=e.message;$('mosaicFrameRetry').hidden=false;}}
+    }catch(e){if(active(version)&&request===controller&&e.name!=='AbortError'){$('mosaicFrameHint').textContent=EditorBusy.message(e.message,'画面读取失败，请点击重试');$('mosaicFrameRetry').hidden=false;}}
     finally{if(active(version)&&request===controller){frameLoading=false;paint();if(autoScanPending&&ready===wanted&&!image.hidden)scanVideo(false,true);}}
   }
   function seek(frame,keep=false){
@@ -653,7 +653,7 @@
         if($('mosaicBatchVideo').getAttribute('src')!==url)$('mosaicBatchVideo').src=url;
       }
       $('mosaicBatchDownload').href=outputUrl;$('mosaicBatchDownload').download=context.asset.title+'_处理后.mp4';
-    }else $('mosaicBatchStatus').textContent=batchError||batchJob?.error||batchJob?.progress||'正在提交全部已打码区域…';
+    }else $('mosaicBatchStatus').textContent=EditorBusy.message(batchError||batchJob?.error||batchJob?.progress||'正在提交全部已打码区域…');
   }
   async function batchRequest(start=false){
     if(!context)return;
@@ -727,7 +727,7 @@
       clearDraft();const updated=await api(`/api/batches/${batch}`);
       if(current?.id===batch){current=updated;renderRuntime();}
       showResult(false);dialog.close();toast('已替换项目成片。');
-    }catch(e){if(active(version)){batchError=e.message;$('mosaicBatchStatus').textContent=e.message;}}
+    }catch(e){if(active(version)){batchError=e.message;$('mosaicBatchStatus').textContent=EditorBusy.message(e.message,'视频处理未完成，请重试');}}
     finally{mutationBusy=false;if(active(version))paintBatch();}
   };
   function outputFrame(frame){return frame-(batchJob?.ranges||[]).reduce((n,[a,b])=>n+Math.max(0,Math.min(frame,b)-a),0);}
@@ -780,7 +780,7 @@
       $('mosaicTrackStatus').textContent='预览已生成';
       $('mosaicTrackVideo').src=appUrl(endpoint+'/render/'+previewJob.id+'/video?v='+encodeURIComponent(previewJob.completed_at||''));
       $('mosaicTrackVideo').hidden=false;
-    }catch(e){if(active(version)&&!previewClose)$('mosaicTrackStatus').textContent=e.message;}
+    }catch(e){if(active(version)&&!previewClose)$('mosaicTrackStatus').textContent=EditorBusy.message(e.message,'预览未完成，请重试');}
     finally{$('mosaicTrackDialog').classList.remove('is-loading');previewBusy=false;previewJob=null;if(context)paint();}
   };
   $('mosaicTrackVideo').addEventListener('loadedmetadata',()=>{if(clipBounds)$('mosaicTrackVideo').currentTime=clipBounds.start;});
@@ -806,7 +806,7 @@
       if(job.status!=='completed')throw Error(job.error||'跟踪未完成，请重试。');
       $('mosaicTrackStatus').textContent=`${clock(target.start)}–${clock(target.end-1)} · 预览已生成。`;
       $('mosaicTrackVideo').src=appUrl(endpoint+'/track/'+job.id+'/preview?v='+encodeURIComponent(job.completed_at||''));$('mosaicTrackVideo').hidden=false;
-    }catch(e){if(valid())$('mosaicTrackStatus').textContent=e.message;}
+    }catch(e){if(valid())$('mosaicTrackStatus').textContent=EditorBusy.message(e.message,'跟踪未完成，请重试');}
     finally{if(valid())$('mosaicTrackDialog').classList.remove('is-loading');}
   };
   $('mosaicClear').onclick=()=>{if(window.confirm('取消全部处理选择？区域调整会保留。')){deletions=[];targets.forEach(t=>t.adopted=false);if(save())paint();}};

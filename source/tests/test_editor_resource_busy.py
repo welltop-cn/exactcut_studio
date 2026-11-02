@@ -47,7 +47,7 @@ def test_adapter_response_preserves_contract_headers_and_trace(monkeypatch, adap
     handler.response_headers = {}
     monkeypatch.setattr(cutting, 'enabled', lambda: True)
     monkeypatch.setattr(adapter, 'maintenance_file', lambda: __import__('pathlib').Path('/nonexistent-test-maintenance'))
-    error = cutting.ResourceBusy('compute') if typed else cutting.CutError('asset busy', 429)
+    error = cutting.ResourceBusy('compute') if typed else cutting.CutError('素材正在处理，请稍后重试', 429)
     def fail(*args, **kwargs): raise error
     monkeypatch.setattr(cutting, 'batch_lease', fail)
     adapter.handle(handler, 'batch', 'open', 'POST')

@@ -21,6 +21,7 @@ def test_save_toast_stays_clear_of_editor_actions_on_desktop_and_mobile():
             for width in (1280, 390):
                 page = browser.new_page(viewport={'width': width, 'height': 720})
                 page.set_content(html)
+                page.add_script_tag(content=(web / 'editor-busy.js').read_text())
                 page.locator('#emptyWorkspace').evaluate('el => el.hidden = true')
                 page.locator('#workspace').evaluate('el => el.hidden = false')
                 page.locator('#requests').evaluate("el => el.innerHTML = '<div style=\"height:1200px\"></div>'")

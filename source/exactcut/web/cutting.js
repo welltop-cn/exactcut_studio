@@ -40,7 +40,7 @@
     $('cutStatus').textContent=[statusMessage,playbackError==='NotAllowedError'?'点击播放以继续':playbackError?'暂时无法播放，请重试':''].filter(Boolean).join('\n');
     $('cutStatus').classList.toggle('error',statusError||playbackError);
   }
-  function status(message,error=false){statusMessage=message;statusError=error;paintStatus();}
+  function status(message,error=false){statusMessage=error?EditorBusy.message(message,'剪切未完成，请重试；原成片保留'):message;statusError=error;paintStatus();}
   function pausePlayback(){sourceBinding?.pause();playAttempt++;video.pause();$('cutPlay').textContent='播放';}
   function playSource(){if(sourceBinding)sourceBinding.play();else playDirect();}
   function playDirect(){
@@ -55,7 +55,7 @@
   video.addEventListener('playing',()=>{
     if(context&&dialog.open&&!video.paused&&playbackError){playbackError=false;paintStatus();}
   });
-  function notify(message) { clearTimeout(toastTimer); $('cutToast').textContent = message; $('cutToast').hidden = false; toastTimer = setTimeout(() => $('cutToast').hidden = true, 4000); }
+  function notify(message) { clearTimeout(toastTimer); $('cutToast').textContent = EditorBusy.message(message); $('cutToast').hidden = false; toastTimer = setTimeout(() => $('cutToast').hidden = true, 4000); }
   function guarded(fn) { return (...args) => { try { fn(...args); } catch (e) { status(e.message, true); } }; }
   function merge(items) {
     const result = [];
@@ -207,7 +207,7 @@
         imageUrl = url; frameReady = target; image.hidden = false;
         $('cutFrameHint').textContent = '准确帧 · 可用两端的 ‹ › 逐帧微调';
       }
-    } catch(e) { if (active(version) && e.name !== 'AbortError') { $('cutFrameHint').textContent = e.message; $('cutFrameRetry').hidden = false; } }
+    } catch(e) { if (active(version) && e.name !== 'AbortError') { $('cutFrameHint').textContent = EditorBusy.message(e.message,'画面读取失败，请点击重试'); $('cutFrameRetry').hidden = false; } }
     finally { frameBusy = false; if (!document.hidden && context && dialog.open && frameReady !== wanted && !quick && !resultMode && video.paused && (version !== epoch || frameController?.signal.aborted)) loadFrame(); }
   }
   function seek(frame, fast = false) {
@@ -258,11 +258,11 @@
         scanReport=state.report;
         const events=scanReport?.status==='completed' ? scanReport.risk_events : [];
         if(scanReport?.status==='completed')ingestSuggestions(events);else paintRiskMarkers();
-        $('cutScanStatus').textContent=!state.enabled?'本机未启用识别，可手动选片段。':!scanReport?'暂无识别记录':scanReport.status==='running'?(scanReport.progress||'正在识别…'):scanReport.status==='failed'?scanReport.error:events.length?'勾选要删除的片段；AI 建议仅供参考。':'本次抽样未发现疑似内容，仍请检查视频。';
+        $('cutScanStatus').textContent=!state.enabled?'本机未启用识别，可手动选片段。':!scanReport?'暂无识别记录':scanReport.status==='running'?(scanReport.progress||'正在识别…'):scanReport.status==='failed'?EditorBusy.message(scanReport.error,'识别未完成，请重试'):events.length?'勾选要删除的片段；AI 建议仅供参考。':'本次抽样未发现疑似内容，仍请检查视频。';
         if (scanReport?.status!=='running') { $('cutScan').disabled=!state.enabled; return; }
         await new Promise(r=>setTimeout(r,1500)); if(!valid())return; state=await api(base+'/scan/standard');
       }
-    } catch(e) { if(valid()) { $('cutScanStatus').textContent=e.message; $('cutScan').disabled=false; } }
+    } catch(e) { if(valid()) { $('cutScanStatus').textContent=EditorBusy.message(e.message,'识别未完成，请重试'); $('cutScan').disabled=false; } }
     finally { if(valid()) { scanLoading=false;syncRiskBulk(); } }
   }
   async function open(batch, asset) {

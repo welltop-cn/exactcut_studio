@@ -183,13 +183,14 @@ assert.equal(current.revision,4,action);assert.equal(rendered,0,action);assert.e
 
 
 def test_existing_previews_remain_counted_while_one_candidate_is_rendering():
-    render = SOURCE[SOURCE.index('function renderRuntime()'):SOURCE.index('const previewRequests=')]
+    render = SOURCE[SOURCE.index('function runtimeMessage('):SOURCE.index('const previewRequests=')]
     execution = next(line for line in SOURCE.splitlines() if line.startswith('function executionAsset('))
     run("""
 const elements={},$=id=>elements[id]??={textContent:'',innerHTML:'',hidden:false};
 const document={querySelector:()=>$('reviewTab')};
 const renderSourcePrefetch=()=>{},renderRequestProgress=()=>{},renderAssets=()=>{},controls=()=>{},setErrorHtml=()=>{};
 const statusLabel=s=>s,badgeClass=()=>'',materialMessage=s=>s||'',esc=s=>s,observationText=()=>'',eventMarkup=()=>'',operationEvents=()=>[];
+const EditorBusy={message:(s,fallback='')=>s||fallback};
 let current={media_managed:true,filename:'网页填写',feedback_count:0,runtime:{status:'producing',download_complete:true,events:[]},assets:[
 {request_id:'r1',preview:'/preview/r1',status:'qc_passed',candidate:{status:'processing',stage:'base_cut'}},
 {request_id:'r2',preview:'/preview/r2',status:'qc_passed'}]};

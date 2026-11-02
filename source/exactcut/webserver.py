@@ -1089,8 +1089,8 @@ class Handler(BaseHTTPRequestHandler):
                        error_code=body.get('code') if isinstance(body, dict) else None,
                        resource=body.get('resource') if isinstance(body, dict) else None)
         if isinstance(body, dict) and body.get('error'):
-            from .error_guidance import guidance, redact
-            body = {**body, 'error': redact(body['error']),
+            from .error_guidance import guidance, public_message
+            body = {**body, 'error': public_message(body['error']),
                     'error_info': body.get('error_info') or guidance(body['error'])}
             if getattr(self, 'trace_id', None):
                 body['trace_id'] = self.trace_id
@@ -1949,11 +1949,12 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(429, {'error': str(exc), 'not_before': exc.not_before})
         except (ValueError, KeyError, TypeError, RuntimeError) as exc:
             diag.event('http.validation_failed', level='warning', error=exc)
-            from .error_guidance import guidance, redact
-            self.respond(400, {'error': redact(exc), 'error_info': guidance(str(exc))})
+            from .error_guidance import guidance, public_message
+            self.respond(400, {'error': public_message(exc), 'error_info': guidance(str(exc))})
         except Exception as exc:
             diag.event('http.handler_failed', level='error', error=exc)
-            self.respond(400, {'error': f'处理失败（{type(exc).__name__}），请检查文件格式或查看服务日志'})
+            from .error_guidance import guidance, public_message
+            self.respond(400, {'error': public_message(exc), 'error_info': guidance(str(exc))})
 
 
 def main():

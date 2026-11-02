@@ -158,13 +158,13 @@ def test_browser_shows_prefetch_progress_while_render_is_queued():
     script = r'''
 const vm=require('node:vm'),assert=require('node:assert/strict');
 const src=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
-const a=src.indexOf('function renderRuntime('),b=src.indexOf('\nfunction renderAssets(',a);
+const a=src.indexOf('function runtimeMessage('),b=src.indexOf('\nfunction renderAssets(',a);
 const elements=new Map(),el=id=>{if(!elements.has(id))elements.set(id,{style:{},querySelectorAll:()=>[]});return elements.get(id)};
 const ctx=vm.createContext({current:{filename:'网页填写',assets:[],feedback_count:0,runtime:{status:'queued',
  plan:{required:['EP1','EP2']},download_prefetch:true,download_files:1,download_bytes:1048576+2048,
  download_current_episode:'EP2',download_current_received:1048576,download_current_total:4194304}},
  $:el,document:{querySelector:el},renderSourcePrefetch:()=>{},renderAssets:()=>{},preparePreviewLoads:()=>{},controls:()=>{},
- statusLabel:s=>s,badgeClass:()=>'',esc:s=>String(s??''),setErrorHtml:()=>{},observationText:()=>''});
+ statusLabel:s=>s,badgeClass:()=>'',esc:s=>String(s??''),setErrorHtml:()=>{},observationText:()=>'',EditorBusy:{message:(s,fallback='')=>s||fallback}});
 vm.runInContext(src.slice(src.indexOf('function materialLabel('),src.indexOf('function productionProgress(')),ctx);
 vm.runInContext(src.slice(a,b),ctx);vm.runInContext('renderRuntime()',ctx);
 assert(el('stageOverview').innerHTML.includes('EP2（2/2）'));

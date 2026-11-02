@@ -66,7 +66,7 @@
       const result = await api('/api/help', { question, batch_id: key || null, conversation: c.id });
       c.messages.push(result);
     } catch (error) {
-      c.messages.push({ answer: '未能取得回答：' + error.message + '。请稍后重试。' });
+      c.messages.push({ answer: EditorBusy.message(error.message, '暂时无法取得回答，请稍后重试') });
     } finally {
       c.pending = false; if (!el('productionHelp').hidden && activeKey === key) draw();
     }

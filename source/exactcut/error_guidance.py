@@ -23,6 +23,25 @@ def redact(value, *, limit=4000):
     return re.sub(r'https?://[^\s<>\"\']+', safe_url, text)[:limit]
 
 
+def public_message(value, fallback='操作未完成，请稍后重试；如仍失败，请联系管理员'):
+    """Copy for the primary UI; diagnostic evidence stays in error_info.detail."""
+    from pydantic import ValidationError as ModelValidationError
+    if isinstance(value, ModelValidationError):
+        from .intake import model_validation_issues
+        return '；'.join(issue['message'] for issue in model_validation_issues(value))
+    if isinstance(value, KeyError):
+        return '提交内容不完整，请刷新页面后重试'
+    if isinstance(value, (FileNotFoundError, PermissionError, IsADirectoryError, NotADirectoryError)):
+        return '所需文件暂时无法读取，请刷新后重试'
+    text = str(value or '').strip()
+    if not text:
+        return ''
+    technical = r'validation errors? for|input_(?:value|type)=|Traceback|\b(?:KeyError|TypeError|ValueError|RuntimeError|FileNotFoundError|ConnectionError|JSONDecodeError)\b|\[Errno \d+\]|https?://|/(?:Users|home|srv|tmp|var|opt)/|Command failed|returned non-zero exit status'
+    if not re.search(r'[\u4e00-\u9fff]', text) or re.search(technical, text, re.I):
+        return fallback
+    return redact(text)
+
+
 def guidance(message, stage=None, *, continuation=False, fbbm_status=None):
     if not message:
         return None

@@ -36,6 +36,7 @@ def page():
             {start_ms:100,end_ms:900,original_text:'Hello',translation_zh:'你好'},
             {start_ms:2000,end_ms:3000,original_text:'Again',translation_zh:'再见'}]}};
         }''')
+        page.add_script_tag(content=(root/'editor-busy.js').read_text())
         page.add_script_tag(content=(root/'preview-subtitles.js').read_text())
         page.evaluate('PreviewSubtitles.mount()')
         yield page

@@ -63,13 +63,13 @@ def test_retry_after_budget_frame_limit_and_unknown_resource(page):
 
 
 def test_error_parser_retains_legacy_message_and_contract(page):
-    assert page.evaluate('''()=>{const e=EditorBusy.error(new Response('',{status:429,headers:{'Retry-After':'2'}}),{error:'legacy',code:'editor_resource_busy',retryable:true,resource:'scan',retry_after_ms:1000});return [e.message,e.status,e.code,e.retryable,e.resource,e.retryAfterMs]}''') == ['legacy',429,'editor_resource_busy',True,'scan',2000]
+    assert page.evaluate('''()=>{const e=EditorBusy.error(new Response('',{status:429,headers:{'Retry-After':'2'}}),{error:'请先保存当前修改',code:'editor_resource_busy',retryable:true,resource:'scan',retry_after_ms:1000});return [e.message,e.status,e.code,e.retryable,e.resource,e.retryAfterMs]}''') == ['请先保存当前修改',429,'editor_resource_busy',True,'scan',2000]
 
 
 def test_api_preserves_busy_fields_and_external_abort(page):
     app=(Path(__file__).parents[1]/'exactcut/web/app.js').read_text().split('function positionToast()')[0]
     page.add_script_tag(content=app)
-    assert page.evaluate('''async()=>{window.fetch=async()=>new Response(JSON.stringify({error:'busy',code:'editor_resource_busy',resource:'compute',retryable:true,retry_after_ms:1000}),{status:429,headers:{'Retry-After':'1'}});try{await api('https://fixture.test/api')}catch(e){return [e.message,e.status,e.code,e.retryable,e.retryAfterMs]}}''') == ['busy',429,'editor_resource_busy',True,1000]
+    assert page.evaluate('''async()=>{window.fetch=async()=>new Response(JSON.stringify({error:'处理资源暂忙',code:'editor_resource_busy',resource:'compute',retryable:true,retry_after_ms:1000}),{status:429,headers:{'Retry-After':'1'}});try{await api('https://fixture.test/api')}catch(e){return [e.message,e.status,e.code,e.retryable,e.retryAfterMs]}}''') == ['处理资源暂忙',429,'editor_resource_busy',True,1000]
     assert page.evaluate('''async()=>{const controller=new AbortController();window.fetch=async(url,{signal})=>new Promise((resolve,reject)=>signal.addEventListener('abort',()=>reject(new DOMException('cancel','AbortError'))));const pending=api('https://fixture.test/api',undefined,{signal:controller.signal});controller.abort();try{await pending}catch(e){return e.name}}''') == 'AbortError'
 
 
@@ -81,3 +81,32 @@ def test_api_body_abort_preserves_external_cancellation(page):
     app=(Path(__file__).parents[1]/'exactcut/web/app.js').read_text().split('function positionToast()')[0]
     page.add_script_tag(content=app)
     assert page.evaluate('''async()=>{const controller=new AbortController();window.fetch=async(url,{signal})=>new Response(new ReadableStream({start(stream){signal.addEventListener('abort',()=>stream.error(new DOMException('cancel','AbortError')))}}),{status:202});const pending=api('https://fixture.test/scan',{}, {signal:controller.signal});await Promise.resolve();controller.abort();try{await pending}catch(e){return [e.name,!!e.outcomeUnknown]}}''') == ['AbortError',False]
+
+
+def test_error_details_do_not_get_appended_to_toast_text(page):
+    result = page.evaluate('''()=>{
+      const detail="1 validation error for CutRequest\\ninput_value={secret:'fixture'}\\nhttps://errors.pydantic.dev/2/v/value_error";
+      const error=EditorBusy.error(new Response('',{status:400}),{error:'请上传结尾图片',error_info:{code:'unknown',title:'本次执行未完成',action:'查看技术详情',detail}});
+      return {message:error.message,detail:error.detail,status:error.status};
+    }''')
+    assert result['message'] == '请上传结尾图片'
+    assert result['status'] == 400
+    assert 'CutRequest' in result['detail']
+
+
+@pytest.mark.parametrize('raw', [
+    '1 validation error for CutRequest ending Value error, 请上传结尾图片 [input_value={}]',
+    '读取失败：[Errno 2] /srv/exactcut/private/source.mp4',
+    '字幕失败：ConnectionError GET https://internal.example/path',
+    'Failed to fetch',
+])
+def test_shared_message_guard_replaces_technical_or_english_errors(page, raw):
+    assert page.evaluate('(raw)=>EditorBusy.message(raw,"处理未完成，请重试")', raw) == '处理未完成，请重试'
+
+
+def test_known_error_guidance_keeps_retry_contract_but_not_raw_detail(page):
+    result = page.evaluate('''()=>{
+      const error=EditorBusy.error(new Response('',{status:429,headers:{'Retry-After':'2'}}),{error:'raw',code:'editor_resource_busy',retryable:true,resource:'scan',error_info:{code:'editor_resource_busy',title:'处理资源暂忙',action:'请稍候重试；当前选择会保留。',detail:'compute slot /srv/private'}});
+      return [error.message,error.code,error.resource,error.retryable,error.retryAfterMs];
+    }''')
+    assert result == ['处理资源暂忙。请稍候重试；当前选择会保留。', 'editor_resource_busy', 'scan', True, 2000]
