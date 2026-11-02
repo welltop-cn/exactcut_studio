@@ -6,6 +6,7 @@
 - 独立数据根`source/.dev-state/resource-scheduling-20261102/c3ef0f13/data`，同一根跨真实核心、补验及边界阶段保留；没有合并用户账号/草稿/媒体，也没有重置限流域。实际core浏览器入口曾为`resource-scheduling.localhost:62209/home/`，仅历史记录，当前不提供活链接。
 - 候选有效普通2/3/2/4总11、final1、字幕2+30、media5+final1及线程配置已比较。真实核心4次Gemini、7次六帧CPU SAM、普通FFmpeg3、完整A/B编码和独立Chromium恢复/播放；边界明确使用provider替身，不证明真实字幕/远端发布结果。
 - 所有本会话启动的临时dev已退出；最后服务PID59835已确认不存在，14个执行锁文件均可获取，交互pending/active均空。保留私有脚本、输入和全部证据，不靠重跑setup恢复旧实例。
+- 父review后的补丁源码`96c1aa5`另用同一配置和data root跑实际development main、ordinary worker0：冷cuts/mosaics准备与真实JPEG、维护等待、真实Hook缺片→补片重提均通过；普通入口仍503，新增付费请求0，服务退出码0。详见`review-worker0-dev.json`；不将旧abd089f模型混合实测标为新源码复测。
 - 18883、旧只读viewer及其他会话服务未更新或停止。新候选仍待父最终review，media5+1不能当作Linux生产容量核定。
 - 证据：[固定候选验收](verification/frontend-background-resource-scheduling-2026-11-02.md)及JSON；源码全量2049 passed/1 skipped/10既有警告。
 

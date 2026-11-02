@@ -1,12 +1,14 @@
 # 并发修复范围审查与失败映射（2026-11-02）
 
-新增功能范围、任务类型和队列抽象保持冻结。隔离分支`feat/frontend-background-resource-scheduling`，基线9b4b2bb；固定源码候选`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`。以下保留中途失败和原断言映射，不能将历史失败或中断当通过。18883未更新，父最终review仍是更新前提。
+新增功能范围、任务类型和队列抽象保持冻结。隔离分支`feat/frontend-background-resource-scheduling`，基线9b4b2bb；基础源码候选`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`，父review补丁`81d66ac`、`96c1aa5`，当前固定源码为96c1aa5。以下保留中途失败和原断言映射，不能将历史失败或中断当通过。18883未更新，父最终review仍是更新前提。
 
-当前稳定候选全量：**2049 passed、1 skipped、10条既有fork警告，660.13s**，日志`/tmp/d1-resource-scheduling-full-abd089f.log`。实际dev入口核心证据见`source/.dev-state/resource-scheduling-20261102/c3ef0f13/verified-real-dev-evidence.json`，补充边界验证和最终交付文档另列；当前线上runtime仍未实读。
+新固定源码96c1aa5已完整回归：**2057 passed、1 skipped、10既有fork警告，673.17s**，日志`/tmp/d1-resource-full-96c1aa5.log`。父独立14项验证及新源码worker0实际development入口也通过；旧abd089f模型混合证据仍明确保留原版本。
+
+基础候选abd089f全量：**2049 passed、1 skipped、10条既有fork警告，660.13s**，日志`/tmp/d1-resource-scheduling-full-abd089f.log`。实际dev模型核心证据仍明确属于abd089f；不能以此冒充96c1aa5已重复模型实测。新补丁实际worker0 development核验通过，详细重验范围见交付文档；当前线上runtime仍未实读。
 
 ## 当前体量
 
-固定候选相对9b4b2bb：81文件、2302 insertions / 727 deletions。其中生产33文件、1057/427；测试48文件、1245/300。五个新增生产模块445行：interactive_queue297、editor_preparation51、editor_frames43、resource_locks29、execution_profile25。增长只来自下文已复现的生命周期、outbox、报告锁和冻结正确性修复，没有继续增加任务类型。
+新固定源码96c1aa5相对9b4b2bb：源码/测试83文件、2500增/727删。基础abd089f为81文件、2302增/727删，其中生产33文件1057/427、测试48文件1245/300。父review只增加实际main与Hook源身份两份测试文件及两个现有生产文件的最小修复；五个新增生产模块仍445行。增长只来自下文已复现的生命周期、outbox、报告锁和冻结正确性修复，没有继续增加任务类型。
 
 首批中途快照原为tracked43文件、735/511，新生产模块408行，保留作范围演变依据。
 

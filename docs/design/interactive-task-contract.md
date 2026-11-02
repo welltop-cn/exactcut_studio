@@ -20,13 +20,13 @@
 - `cancelling`：已有取消意图，仍等待实际进程退出；不提前释放租约。
 - `completed` / `failed` / `cancelled` / `superseded`：成功、真实失败、取消、输入或用途已过期，互相区分。
 
-已有job中的id、actor、source_sha256、reset_at、progress、created_at等保留。Hook报告额外记录request_id、index、revision、configuration_sha256；完整GET返回input_current，表示当前已保存的同素材输入仍与任务一致。Hook结果不自动覆盖新编辑。不同素材的Hook不会仅因另一行preview_key回执变化而失效。
+已有job中的id、actor、source_sha256、reset_at、progress、created_at等保留。Hook报告额外记录request_id、index、revision、configuration_sha256、source_identity_sha256；完整GET返回input_current，核对当前同素材输入、配置以及原片/shot-index文件身份。旧缺source_identity_sha256报告仍可读，但不标记当前可采用。原片从缺失到位、替换或索引变化会产生新回执，无需修改草稿；后台原有内容hash和缓存校验继续执行。Hook结果不自动覆盖新编辑。不同素材的Hook不会仅因另一行preview_key回执变化而失效。
 
 报告是业务结果权威。新`.web-state/interactive-queue/queue.json`只保存pending/active、顺序、owner游标和经过服务端验证的执行描述符；包含必要输入快照与内部只读permit，不含API密钥。描述符先落盘，报告发布被打断时可从该本地outbox恢复。旧报告继续读取，新增可选字段不改变schema_version。
 
 ## 执行和公平
 
-HTTP只登记。dispatcher探测相应worker和首阶段执行资源，拿不到就保留pending，不开启一条阻塞线程。scan、preview（含Hook）、preprocess、frame按组及owner轮转。没有每账号单槽；同账号可有两个预览worker和多个等待素材。
+HTTP只登记。dispatcher探测相应worker和首阶段执行资源，拿不到就保留pending，不开启一条阻塞线程。交互dispatcher与最终/字幕一样独立于普通制作的EXACTCUT_WORKER_ENABLED开关；开关0时普通制作仍禁用，已接收的交互可执行。只读viewer必须显式拒绝写/提交，不能靠接收后永不执行实现只读。scan、preview（含Hook）、preprocess、frame按组及owner轮转。没有每账号单槽；同账号可有两个预览worker和多个等待素材。
 
 - 普通阶段沿生产基线fetch2/render3/upload2/poll4，无额外总1；普通制作3是全实例额度，不是每项目3。
 - 最终mosaic业务1、字幕业务2+30独立保留。

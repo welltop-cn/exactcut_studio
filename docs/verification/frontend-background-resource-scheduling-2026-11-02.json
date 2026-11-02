@@ -1,13 +1,15 @@
 {
   "schema_version": 1,
-  "source_revision": "abd089fda3f2b60ed66e8d2359348d2f6860bd8b",
+  "source_revision": "96c1aa555e35c394178723afd7d65e22c0142597",
   "baseline": "9b4b2bb",
   "full_regression": {
-    "passed": 2049,
+    "passed": 2057,
     "skipped": 1,
     "existing_fork_warnings": 10,
-    "seconds": 660.13,
-    "log": "/tmp/d1-resource-scheduling-full-abd089f.log"
+    "seconds": 673.17,
+    "source_revision": "96c1aa555e35c394178723afd7d65e22c0142597",
+    "log": "/tmp/d1-resource-full-96c1aa5.log",
+    "status": "passed"
   },
   "entry": "exactcut.webserver.main",
   "effective_profile": {
@@ -278,5 +280,114 @@
     "interactive_active": 0,
     "last_owned_service_pid": 59835,
     "last_owned_service_alive": false
+  },
+  "real_core_source_revision": "abd089fda3f2b60ed66e8d2359348d2f6860bd8b",
+  "boundary_source_revision": "abd089fda3f2b60ed66e8d2359348d2f6860bd8b",
+  "parent_review_patches": {
+    "ordinary_worker_independence": "81d66ac",
+    "hook_source_identity": "96c1aa5",
+    "main_red": {
+      "failed_worker0": 2,
+      "passed_worker1": 2,
+      "log": "/tmp/d1-main-worker-disabled-red.log"
+    },
+    "main_lifecycle_green": {
+      "passed": 14,
+      "seconds": 9.02,
+      "log": "/tmp/d1-main-worker-disabled-green.log"
+    },
+    "hook_red": {
+      "failed": 3,
+      "log": "/tmp/d1-hook-source-identity-red.log"
+    },
+    "hook_related_green": {
+      "passed": 48,
+      "seconds": 20.96,
+      "log": "/tmp/d1-hook-source-identity-current.log"
+    },
+    "parent_independent_tests": {
+      "passed": 14,
+      "seconds": 12.79
+    },
+    "actual_development_worker0": {
+      "revision": "96c1aa555e35c394178723afd7d65e22c0142597",
+      "entry": "exactcut.webserver.main",
+      "environment": "development",
+      "ordinary_worker_enabled": false,
+      "provider_doubles": false,
+      "source": "parent review regressions only; old mixed model evidence remains abd089f",
+      "status": "passed",
+      "effective_profile": {
+        "ordinary": {
+          "fetch": 2,
+          "render": 3,
+          "upload": 2,
+          "poll": 4,
+          "max_active_children": 11,
+          "enabled": true
+        },
+        "remaining_openai_budget": {
+          "requests_per_minute": 6,
+          "burst": 1
+        },
+        "interactive_execution": {
+          "preview_tasks": 2,
+          "scan_tasks": 2,
+          "preprocess_tasks": 2,
+          "media_tasks": 5,
+          "final_media_tasks": 1,
+          "frame_tasks": 2,
+          "transfer_tasks": 2,
+          "encoder_threads": 2
+        },
+        "mosaic_final": 1,
+        "subtitles": {
+          "max_active_tasks": 2,
+          "max_queued_tasks": 30
+        },
+        "ffmpeg_threads": 4,
+        "sam_threads": 4
+      },
+      "editors": [
+        {
+          "family": "cuts",
+          "preparation": "202->completed",
+          "frame": "202->200 JPEG"
+        },
+        {
+          "family": "mosaics",
+          "preparation": "202->completed",
+          "frame": "202->200 JPEG"
+        }
+      ],
+      "hook": {
+        "first_layout_only": true,
+        "same_draft_after_arrival_new_receipt": true,
+        "new_result_has_frame": true,
+        "old_input_current": false,
+        "unchanged_source_reuses_receipt": true
+      },
+      "ordinary_requests_rejected_503": true,
+      "new_paid_model_requests": 0,
+      "server_exit_code": 0
+    },
+    "new_full_regression": {
+      "passed": 2057,
+      "skipped": 1,
+      "existing_fork_warnings": 10,
+      "seconds": 673.17,
+      "source_revision": "96c1aa555e35c394178723afd7d65e22c0142597",
+      "log": "/tmp/d1-resource-full-96c1aa5.log",
+      "status": "passed"
+    },
+    "evidence_boundary": "Old real model/CPU mixed evidence remains abd089f; new patch rechecks actual main worker0 and real Hook/frame paths without repeating paid model load."
+  },
+  "prior_full_regression": {
+    "passed": 2049,
+    "skipped": 1,
+    "existing_fork_warnings": 10,
+    "seconds": 660.13,
+    "log": "/tmp/d1-resource-scheduling-full-abd089f.log",
+    "source_revision": "abd089fda3f2b60ed66e8d2359348d2f6860bd8b"
   }
 }

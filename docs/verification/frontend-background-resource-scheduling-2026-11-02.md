@@ -1,6 +1,6 @@
 # 前台接收、后台受控执行：固定候选验收（2026-11-02）
 
-源码候选：`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`，基线`9b4b2bb`，隔离分支`feat/frontend-background-resource-scheduling`。源码固定后未再修改。本文和JSON属于证据提交，不改变应用版本。18883没有更新或重启；父最终review仍是更新前提。
+基础源码候选：`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`，基线`9b4b2bb`，隔离分支`feat/frontend-background-resource-scheduling`。父review后最小修复为`81d66ac`和`96c1aa555e35c394178723afd7d65e22c0142597`，当前固定源码为后者。下文真实模型混合和provider边界证据仍属于abd089f；不冒称已在补丁版重复模型验收。补丁及新源码重验单独记录。18883没有更新或重启；父最终review仍是更新前提。
 
 机器可读证据：[JSON](frontend-background-resource-scheduling-2026-11-02.json)。失败和原断言映射：[范围审查](concurrency-scope-check-2026-11-02.md)。协议及回退：[任务契约](../design/interactive-task-contract.md)。业务依据仍是既有统一方案，不采用调查附件中的其他额度方案。
 
@@ -18,9 +18,17 @@
 /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q -o faulthandler_timeout=45
 ```
 
-结果：**2049 passed、1 skipped、10条既有multiprocessing fork警告，660.13秒**。日志`/tmp/d1-resource-scheduling-full-abd089f.log`。首轮中断不是全量通过：它暴露离线恢复已持非重入mutation锁而Excel内部再获取的问题；HTTP显式传短发布锁，离线默认由调用方保持事务。恢复/导入相关42项通过后才固定本候选重跑全量。
+基础abd089f结果：**2049 passed、1 skipped、10条既有multiprocessing fork警告，660.13秒**。日志`/tmp/d1-resource-scheduling-full-abd089f.log`。首轮中断不是全量通过：它暴露离线恢复已持非重入mutation锁而Excel内部再获取的问题；HTTP显式传短发布锁，离线默认由调用方保持事务。恢复/导入相关42项通过后才固定本候选重跑全量。
 
-源码相对基线：生产33文件、1057增/427删；测试48文件、1245增/300删。五个新生产模块共445行。新增范围冻结后只修复已复现的stop/claim、维护屏障、outbox、报告锁、晚回执和cuts准备绕最终冻结等问题。原278通过/20失败逐项原断言→替代业务断言、真实回归与测试桩错误的分类保留在范围审查文档，未用删额度/Semaphore断言代替业务验收。
+abd089f基础源码相对基线：生产33文件、1057增/427删；测试48文件、1245增/300删。五个新生产模块共445行。新增范围冻结后只修复已复现的stop/claim、维护屏障、outbox、报告锁、晚回执和cuts准备绕最终冻结等问题。原278通过/20失败逐项原断言→替代业务断言、真实回归与测试桩错误的分类保留在范围审查文档，未用删额度/Semaphore断言代替业务验收。
+
+## 父review补丁与新源码重验
+
+- `81d66ac`：普通制作`worker_enabled=0`不再关闭独立交互dispatcher。原来实际main冷cuts/mosaics两例queued永不推进，worker1对照通过（红2失败/2通过）；修后主入口/维护/关闭/启动失败14项通过。普通worker开关和外写开关均未改成1，交互启动仍在原try/finally内。
+- `96c1aa5`：Hook完成回执绑定源和shot-index的文件身份；三例真实submit/compute红灯为缺原片完成后补片、原片替换、既有索引变化。HTTP只stat元数据并计算身份摘要，原compute的内容hash/缓存校验不变；执行前及发布前复查源。另验证计算中源到位时旧占位结果superseded且不发布。48项相关回归通过。旧无源绑定报告可读，但不标记input_current。
+- 父独立审查上述最小diff并复跑实际main、Hook源身份、队列生命周期和Hook HTTP，14 passed/12.79s。
+- 新源码`96c1aa5`的实际development主入口，使用同一候选有效配置、普通worker0、发布/外写仍禁用：cuts与mosaics冷准备均202→completed、冷帧均202→200 JPEG；维护时pending不领取；普通`/api/jobs`保持503拒绝。真实Hook先缺原片完成，再补原片、同草稿同配置再提交得到新ID/真实帧；旧input_current=false；源不变再提交复用ID。无provider替身，新增付费模型请求0；服务退出码0。证据`review-worker0-dev.json`、`review-worker0-http.json`。
+- 新固定源码`96c1aa5`完整回归：**2057 passed、1 skipped、10条既有fork警告，673.17s**，日志`/tmp/d1-resource-full-96c1aa5.log`。相对基础版新增4个实际main组合、4个Hook源身份/发布保护用例；全量后源码无改动。
 
 ## 候选有效配置和环境差异
 
@@ -45,7 +53,9 @@
 
 **媒体5+final1目前只有Mac代表场景的功能证据，不能视为Linux长片、长时间掩码的最大承载或生产容量核定。**
 
-## 实际dev核心矩阵
+## 基础候选abd089f实际dev核心矩阵
+
+以下核心与后续provider边界均为abd089f，不是96c1aa5补丁重验。
 
 所有行均为同一源码候选；端口由实际主入口选择，数据根为`source/.dev-state/resource-scheduling-20261102/c3ef0f13/data`。这些文件不提交Git，清单和密钥文件没有纳入公开证据。
 
