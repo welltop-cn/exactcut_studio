@@ -6,7 +6,7 @@
 
 基础源码固定为`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`，分为`9860f90`、`fa42015`、`abd089f`三个关注点提交。基础全量2049 passed/1 skipped/10既有警告（660.13s）及模型混合dev属于该版本。父review后只补`81d66ac`普通worker0的交互生命周期和`96c1aa5`Hook源/索引回执有效性；新固定源码为96c1aa5，已通过实际worker0 development补验，并完成新全量2057 passed/1 skipped/10既有警告（673.17s）。
 
-实际main入口核心与provider明确替身的边界矩阵均已完成；详见[固定候选验收](../../verification/frontend-background-resource-scheduling-2026-11-02.md)及JSON。真实场景观察到普通FFmpeg3、final媒体1与两用户实际SAM产出同时执行；字幕实际HTTP2+30/第33拒绝、四路文本Excel、Hook/帧7个pending维护重启恢复、12普通接收也已核对。核心验收脚本的错误SHA和legacy结果路径失败保留，未修改应用校验或结果记录。父最终review及18883自然空闲更新仍未执行。
+实际main入口核心与provider明确替身的边界矩阵均已完成；详见[固定候选验收](../../verification/frontend-background-resource-scheduling-2026-11-02.md)及JSON。真实场景观察到普通FFmpeg3、final媒体1与两用户实际SAM产出同时执行；字幕实际HTTP2+30/第33拒绝、四路文本Excel、Hook/帧7个pending维护重启恢复、12普通接收也已核对。核心验收脚本的错误SHA和legacy结果路径失败保留，未修改应用校验或结果记录。父最终review通过后，18883已在实际空闲、维护屏障与备份回退准备下按明确授权于2026-11-03正常更新；未发布生产或合并main，未取消用户任务，详情见[升级记录](../../verification/frontend-background-user-upgrade-2026-11-03.md)。
 
 ## 旧产物处理
 

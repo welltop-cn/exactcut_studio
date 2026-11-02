@@ -1,6 +1,6 @@
 # 前台接收、后台受控执行：固定候选验收（2026-11-02）
 
-基础源码候选：`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`，基线`9b4b2bb`，隔离分支`feat/frontend-background-resource-scheduling`。父review后最小修复为`81d66ac`和`96c1aa555e35c394178723afd7d65e22c0142597`，当前固定源码为后者。下文真实模型混合和provider边界证据仍属于abd089f；不冒称已在补丁版重复模型验收。补丁及新源码重验单独记录。18883没有更新或重启；父最终review仍是更新前提。
+基础源码候选：`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`，基线`9b4b2bb`，隔离分支`feat/frontend-background-resource-scheduling`。父review后最小修复为`81d66ac`和`96c1aa555e35c394178723afd7d65e22c0142597`，当前固定源码为后者。下文真实模型混合和provider边界证据仍属于abd089f；不冒称已在补丁版重复模型验收。补丁及新源码重验单独记录。父最终review随后通过，2026-11-03仅本地18883获授权并完成空闲维护升级；见[升级记录](frontend-background-user-upgrade-2026-11-03.md)。以下验收过程保留各自版本与当时状态。
 
 机器可读证据：[JSON](frontend-background-resource-scheduling-2026-11-02.json)。失败和原断言映射：[范围审查](concurrency-scope-check-2026-11-02.md)。协议及回退：[任务契约](../design/interactive-task-contract.md)。业务依据仍是既有统一方案，不采用调查附件中的其他额度方案。
 
@@ -106,4 +106,4 @@ upload/poll外部写入在本地dev禁用，不作为真实供应商发布/轮�
 
 本轮没有数据库迁移，原报告schema1和普通/final/字幕权威保留。新前端需要随新异步HTTP契约一起更新；旧客户端不能将冷open/frame的202当同步session/JPEG。回退前需排空或显式取消新pending/active工作，并等实际子进程退出，不能只删队列文件或关闭页面。
 
-本候选不合并main、不发布生产、不修改18883。范围外确认问题单独列在[待审批清单](concurrency-followups-awaiting-approval.md)，本轮不顺手修复。父review通过、用户dev自然空闲且既有维护/备份/恢复条件满足后，才可另行更新18883。
+本轮不合并main、不发布生产。18883已在父review通过、实际空闲和维护/备份/回退条件满足后单独授权更新，详见上述升级记录；未取消用户任务。范围外确认问题单独列在[待审批清单](concurrency-followups-awaiting-approval.md)，当前无确认项。

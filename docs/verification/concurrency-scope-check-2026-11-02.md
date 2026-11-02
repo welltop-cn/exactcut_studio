@@ -1,6 +1,6 @@
 # 并发修复范围审查与失败映射（2026-11-02）
 
-新增功能范围、任务类型和队列抽象保持冻结。隔离分支`feat/frontend-background-resource-scheduling`，基线9b4b2bb；基础源码候选`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`，父review补丁`81d66ac`、`96c1aa5`，当前固定源码为96c1aa5。以下保留中途失败和原断言映射，不能将历史失败或中断当通过。18883未更新，父最终review仍是更新前提。
+新增功能范围、任务类型和队列抽象保持冻结。隔离分支`feat/frontend-background-resource-scheduling`，基线9b4b2bb；基础源码候选`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`，父review补丁`81d66ac`、`96c1aa5`，当前固定源码为96c1aa5。以下保留中途失败和原断言映射，不能将历史失败或中断当通过。18883在审查过程中保持未动；父最终review通过后已于2026-11-03按明确授权空闲维护更新，详情见frontend-background-user-upgrade-2026-11-03.md。
 
 新固定源码96c1aa5已完整回归：**2057 passed、1 skipped、10既有fork警告，673.17s**，日志`/tmp/d1-resource-full-96c1aa5.log`。父独立14项验证及新源码worker0实际development入口也通过；旧abd089f模型混合证据仍明确保留原版本。
 

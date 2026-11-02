@@ -193,8 +193,11 @@
   },
   "capacity_status": "media5 + dedicated final1 is representative Mac functional evidence only; not Linux/long-mask maximum-capacity certification or production approval",
   "deployment": {
-    "user_18883_updated": false,
-    "parent_final_review_required": true
+    "user_18883_updated": true,
+    "parent_final_review": "passed before explicit local upgrade authorization",
+    "production_deployment": false,
+    "upgrade_evidence": "frontend-background-user-upgrade-2026-11-03.json",
+    "parent_independent_post_update_health": "pending"
   },
   "model_configuration_comparison": {
     "baseline": "explicit candidate model settings from known runtime, not current online runtime",

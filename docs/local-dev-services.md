@@ -1,5 +1,14 @@
 # 本地 dev 服务与专项测试交接
 
+## 2026-11-03：18883资源调度候选已按授权更新
+
+- 父最终review通过后，确认全部用户active/queued及子进程为空，维护屏障内复查，再正常SIGTERM更新。当前PID15988（操作前仍须实核），加载`e2cbcc0`、应用源码`96c1aa5`，cwd为`cut-mosaic-resource-scheduling/source`。
+- 原用户数据根、账号/凭据、四素材、旧任务结果/冻结状态、ai-rate桶保留；336既有保护文件重启前后SHA相同。浏览器仅新增预期auth session，users逻辑哈希及其他既有文件不变。
+- runtime普通2/3/2/4推总11，final1，字幕2+30，交互各2，media5+final1/frame2/transfer2，FFmpeg4/交互2/SAM4/其他OpenAI6burst1。保留worker0和外写/发布/素材fetch禁用，原MPS及真实SAM/Gemini不变。交互dispatcher真实owner lease已验证，未为升级触发用户模型/生成。
+- 第一次静态核验漏认证401，已正常回旧代码/config，无DB恢复；纠正核验后重新空闲检查切换成功，失败备份保留。旧只读viewer及其他服务未动。
+- 用户入口仍为`http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5`。独立Chromium真实登录四入口、JS0，新静态资源字节一致。保持服务运行，等待父独立health核验；不自动打开识别编辑器或重提用户任务。
+- [升级记录](verification/frontend-background-user-upgrade-2026-11-03.md)及JSON；范围外确认问题无。生产未发布，main未合并。
+
 ## 2026-11-02：资源调度固定候选独立验收（已退出）
 
 - 工作树`cut-mosaic-resource-scheduling`，源码候选`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`；实际入口`exactcut.webserver.main`，私有启动器`source/.dev-state/resource-scheduling-20261102/launch_dev.py`。
