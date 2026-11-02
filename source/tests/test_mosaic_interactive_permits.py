@@ -130,3 +130,5 @@ def test_legacy_cut_scan_does_not_wait_for_final_compute(ready,tmp_path,monkeypa
         report=cutting_scan.start(bid,session['id'],'standard')
         path=cutting.session_path(bid,session['id'])/f"scan-{report['id']}.json";terminal(path)
         assert read_json(path)['status']=='completed'
+
+from interactive_test_support import interactive_dispatcher

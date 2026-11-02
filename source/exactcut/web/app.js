@@ -15,6 +15,57 @@ let savedDraftBaseline=null;
 function rememberSavedDraft(item){savedDraftBaseline={id:item.id,draft:JSON.stringify(item.draft)}}
 const busy=new Set();
 const hookPreviews=new Map();
+const hookTasks=new Map(),hookWatchers=new Map();
+const hookTaskKey=(id,rid)=>id+':'+rid;
+const hookPending=job=>['queued','running','cancelling'].includes(job?.status);
+function hookIndex(job){return current?.draft.rows.findIndex(row=>row.request_id===job.request_id)??-1;}
+function paintHookTask(job){
+ if(!current)return;const i=hookIndex(job);if(i<0)return;
+ const result=document.querySelector(`[data-hook-result="${i}"]`);if(result)result.innerHTML=hookPreviewMarkup(i);
+ const button=document.querySelector(`[data-hook-preview="${i}"]`);if(button){button.disabled=hookPending(job);button.textContent=job.status==='queued'?'Hook 已排队':job.status==='running'?'Hook 处理中':'预览 Hook';}
+}
+async function watchHookJob(id,initial){
+ const key=hookTaskKey(id,initial.request_id);hookTasks.set(key,initial);
+ if(hookWatchers.has(initial.id))return;
+ hookWatchers.set(initial.id,true);
+ try{
+  let job=await api(`/api/batches/${id}/hook-previews/${initial.id}`);
+  while(current?.id===id&&selectedId===id){
+   hookTasks.set(key,job);paintHookTask(job);
+   if(!hookPending(job)){
+    const i=hookIndex(job);
+    if(job.status==='completed'&&job.input_current===true&&!dirty&&i>=0){
+     hookPreviews.set(i,job.result);const options=hookOptions(current.draft.rows[i]);if(options.preview_key!==job.result.preview_key){options.preview_key=job.result.preview_key;changed();}paintHookTask(job);
+    }
+    return;
+   }
+   await new Promise(resolve=>setTimeout(resolve,1000));
+   if(current?.id!==id||selectedId!==id)return;
+   job=await api(`/api/batches/${id}/hook-previews/${job.id}`);
+  }
+ }catch(error){if(current?.id===id)toast(error.message,true);}
+ finally{hookWatchers.delete(initial.id);}
+}
+async function restoreHookPreviews(id){
+ try{
+  const state=await api(`/api/batches/${id}/hook-previews`);if(current?.id!==id)return;
+  const seen=new Set();
+  for(const job of state.jobs||[]){if(seen.has(job.request_id))continue;seen.add(job.request_id);watchHookJob(id,job);}
+ }catch(error){/* A missing old report never blocks opening or editing a project. */}
+}
+async function submitHookPreview(i,button){
+ if(button.disabled)return;
+ button.disabled=true;
+ try{
+  if(!await saveCurrent())throw Error('请先修正制作内容再预览');
+  const id=current.id,revision=current.revision;
+  const job=await api(`/api/batches/${id}/hook-preview`,{index:i,revision});
+  if(current?.id!==id)return;
+  toast(job.status==='queued'?'Hook 预览已接收，后台等待处理；可继续编辑。':'Hook 预览已就绪。');
+  watchHookJob(id,job);
+ }catch(error){toast(error.message,true);}
+ finally{if(button.isConnected)button.disabled=false;}
+}
 const statusLabel=s=>labels[s]||s;
 const badgeClass=s=>['fbbm_ready','complete','qc_passed','safety_passed','review'].includes(s)?'good':['failed','partial','interrupted','publish_failed','unverified'].includes(s)?'bad':activeStatuses.includes(s)||['uploading','upload_queued','fbbm_queued','processing'].includes(s)?'running':'';
 async function api(path,data,{signal}={}){
@@ -78,7 +129,7 @@ async function openBatch(id,{refreshList=false}={}){
   }else displayBatch(item);
   if(refreshList)refreshBatches().catch(()=>{});scheduleSourcePrefetch();
  }catch(e){if(request!==openingBatchRequest)return;batchDetails.delete(id);if(!cached||!dirty)showEmptyWorkspace(true);throw e}
- finally{if(request===openingBatchRequest)openingBatchId=null}
+ finally{if(request===openingBatchRequest){openingBatchId=null;if(current?.id===id)restoreHookPreviews(id);}}
 }
 function isoDate(value){const text=String(value||'').replace(/\D/g,'');return /^\d{8}$/.test(text)?`${text.slice(0,4)}-${text.slice(4,6)}-${text.slice(6)}`:''}
 function inputField(label,key,value,attrs=''){const date=attrs.includes('type="date"');const input=`<input id="meta-${key}" ${attrs} value="${esc(date?isoDate(value):value)}" data-meta="${key}">`;if(key==='drama_id')return `<div class="field"><label for="meta-${key}">${esc(label)}</label><div class="drama-id-line">${input}<button type="button" class="secondary" id="originalsOpen" disabled>下载原片</button></div><div class="originals-lookup" id="originalsLookup" hidden><p id="originalsStatus" role="status"></p><button type="button" class="quiet" id="originalsLookupRetry" hidden>重试</button></div></div>`;return `<div class="field"><label for="meta-${key}">${esc(label)}</label>${input}</div>`}
@@ -221,7 +272,7 @@ function hookSettings(r,i){const o=hookOptions(r),opening=r.composition?.opening
 
 function hookSelect(i,key,label,value,items){return `<div><label for="hook-${key}-${i}">${label}</label><select id="hook-${key}-${i}" data-row="${i}" data-hook-field="${key}">${Object.entries(items).map(([k,v])=>`<option value="${k}" ${value===k?'selected':''}>${v}</option>`).join('')}</select></div>`}
 function hookWords(r,i){const o=hookOptions(r);if(o.mode!=='manual')return `<p class="hint">${o.mode==='none'?'整段文字使用文字颜色，不使用强调颜色。':'AI 选择需要强调的词，并使用强调颜色；也可改为手工选词。'}</p>`;return `<p class="hint">点击词语切换强调；相邻词会合并。</p><div class="hook-words">${hookTokens(r.hook_text).map((t,n)=>`<button type="button" aria-pressed="${(o.manual_ranges||[]).some(s=>s.start<=t.start&&s.end>=t.end)}" class="${(o.manual_ranges||[]).some(s=>s.start<=t.start&&s.end>=t.end)?'chosen':''}" data-hook-token="${i}" data-token="${n}">${esc(t.text)}</button>`).join('')}</div>`}
-function hookPreviewMarkup(i){const preview=hookPreviews.get(i);if(!preview)return '<p class="hint">保存后生成手机尺寸预览；尚未下载原片时展示排版。</p>';const d=preview.decision;return `<img class="hook-preview-image" src="${preview.image}" alt="Hook 手机尺寸预览"><p class="hint">${esc(preview.notice)} 显示 ${seconds(d.duration_ms)} · ${esc(d.label_zh||hookStyleNames[d.style_id])}</p><p>${esc(d.emphasis?.reason||'')} ${esc((d.emphasis?.highlights||[]).map(h=>h.phrase).join(' · '))}</p>${[d.placement?.warning,d.readability_warning,d.sampling?.warning].filter(Boolean).map(w=>`<p class="notice warning">${esc(w)}</p>`).join('')}<p class="hint">${preview.sources_complete?'保存当前设置后，制作会采用这次预览。':'原片未齐或片尾未确定；制作时会重新检查画面位置。'}</p>`}
+function hookPreviewMarkup(i){const job=current&&hookTasks.get(hookTaskKey(current.id,current.draft.rows[i]?.request_id));const preview=hookPreviews.get(i);if(!preview){if(hookPending(job))return `<p class="hint" role="status">${job.status==='queued'?'Hook 预览已排队，轮到后自动处理；可以继续编辑。':esc(job.progress||'Hook 在后台处理中，可以继续编辑。')}</p>`;if(job?.status==='failed')return `<p class="notice warning">${esc(job.error||'Hook 预览未完成，可重试。')}</p>`;if(job?.status==='superseded')return '<p class="hint">设置已更新，旧预览未采用；保存后可重新预览。</p>';return '<p class="hint">保存后生成手机尺寸预览；尚未下载原片时展示排版。</p>';}const d=preview.decision;return `<img class="hook-preview-image" src="${preview.image}" alt="Hook 手机尺寸预览"><p class="hint">${esc(preview.notice)} 显示 ${seconds(d.duration_ms)} · ${esc(d.label_zh||hookStyleNames[d.style_id])}</p><p>${esc(d.emphasis?.reason||'')} ${esc((d.emphasis?.highlights||[]).map(h=>h.phrase).join(' · '))}</p>${[d.placement?.warning,d.readability_warning,d.sampling?.warning].filter(Boolean).map(w=>`<p class="notice warning">${esc(w)}</p>`).join('')}<p class="hint">${preview.sources_complete?'保存当前设置后，制作会采用这次预览。':'原片未齐或片尾未确定；制作时会重新检查画面位置。'}</p>`}
 function invalidateHook(i){delete hookOptions(current.draft.rows[i]).preview_key;hookPreviews.delete(i);const box=document.querySelector(`[data-hook-result="${i}"]`);if(box)box.innerHTML='<p class="hint">设置已变化，请重新预览。</p>'}
 function seconds(ms){return (Number(ms)/1000).toFixed(3)+' 秒'}
 function clock(ms){if(ms===null||ms===undefined)return '待读取片尾';const n=Number(ms);return String(Math.floor(n/60000)).padStart(2,'0')+':'+((n%60000)/1000).toFixed(3).padStart(6,'0')}
@@ -477,7 +528,7 @@ $('requests').addEventListener('input',e=>{if(e.target.dataset.segmentEffect){ap
 $('requests').addEventListener('click',e=>{const button=e.target.closest('[data-reset-typography]');if(!button)return;const i=Number(button.dataset.resetTypography),o=hookOptions(current.draft.rows[i]);o.font='auto';o.font_size=null;o.text_color=null;o.accent_color=null;invalidateHook(i);changed();renderEditor()});
 $('requests').addEventListener('click',e=>{const restore=e.target.closest('[data-restore-asset]');if(restore){if(dirty){toast('请先保存当前修改，再恢复素材',true);return}operation(restore,async()=>{const id=current.id,result=await api(`/api/batches/${id}/restore`,{request_id:restore.dataset.restoreAsset});if(selectedId!==id||current?.id!==id)return;current=result;rememberSavedDraft(current);renderEditor();renderRuntime()});return}const button=e.target.closest('[data-delete]');if(button){current.draft.rows.splice(Number(button.dataset.delete),1);renderEditor();changed()}});
 $('requests').addEventListener('change',e=>{if(e.target.dataset.compose){applyComposition(e.target);changed()}if(e.target.dataset.endingFile!==undefined)uploadEnding(e.target).catch(err=>toast(err.message,true))});
-$('requests').addEventListener('click',e=>{const addClip=e.target.closest('[data-add-clip]'),removeClip=e.target.closest('[data-remove-clip]');if(addClip||removeClip){const i=Number((addClip||removeClip).dataset.row),clips=ensureEditorClips(current.draft.rows[i]);if(addClip){if(clips.length>=30){toast('一条素材最多 30 段',true);return}clips.push(blankClip())}else removeSegment(clips,Number(removeClip.dataset.removeClip));invalidateHook(i);changed();renderEditor();return}const addPlot=e.target.closest('[data-add-plot]'),removePlot=e.target.closest('[data-remove-plot]');if(addPlot||removePlot){const i=Number((addPlot||removePlot).dataset.row),plots=compositionOf(current.draft.rows[i]).plots;if(addPlot){if(plots.length>=12){toast('一条成片最多 12 段剧情',true);return}plots.push({episode:'',start:'',end:''})}else removeSegment(plots,Number(removePlot.dataset.removePlot));invalidateHook(i);changed();renderEditor();return}const word=e.target.closest('[data-hook-token]'),preview=e.target.closest('[data-hook-preview]');if(word){const i=Number(word.dataset.hookToken),r=current.draft.rows[i],o=hookOptions(r),tokens=hookTokens(r.hook_text),text=Array.from(hookPlain(r.hook_text));const selected=new Set(tokens.map((t,n)=>(o.manual_ranges||[]).some(s=>s.start<=t.start&&s.end>=t.end)?n:-1).filter(n=>n>=0)),n=Number(word.dataset.token);selected.has(n)?selected.delete(n):selected.add(n);const spans=[];for(const j of Array.from(selected).sort((a,b)=>a-b)){const t=tokens[j],last=spans.at(-1);if(last&&/^\s*$/.test(text.slice(last.end,t.start).join('')))last.end=t.end;else spans.push({start:t.start,end:t.end})}if(spans.length>4){toast('最多四处重点，请先取消一处',true);return}o.manual_ranges=spans;invalidateHook(i);document.querySelector(`[data-hook-words="${i}"]`).innerHTML=hookWords(r,i);changed();controls()}if(preview){const i=Number(preview.dataset.hookPreview);operation(preview,async()=>{if(!await saveCurrent())throw Error('请先修正制作内容再预览');const id=current.id,revision=current.revision;toast('正在理解文案与检查画面，请稍候…');const result=await api(`/api/batches/${id}/hook-preview`,{index:i,revision});if(current?.id!==id||current.revision!==revision||dirty)throw Error('设置已变化，请重新预览');hookPreviews.set(i,result);hookOptions(current.draft.rows[i]).preview_key=result.preview_key;await saveCurrent();document.querySelector(`[data-hook-result="${i}"]`).innerHTML=hookPreviewMarkup(i);toast('Hook 预览已保存，制作将核对并采用这些设置')})}});
+$('requests').addEventListener('click',e=>{const addClip=e.target.closest('[data-add-clip]'),removeClip=e.target.closest('[data-remove-clip]');if(addClip||removeClip){const i=Number((addClip||removeClip).dataset.row),clips=ensureEditorClips(current.draft.rows[i]);if(addClip){if(clips.length>=30){toast('一条素材最多 30 段',true);return}clips.push(blankClip())}else removeSegment(clips,Number(removeClip.dataset.removeClip));invalidateHook(i);changed();renderEditor();return}const addPlot=e.target.closest('[data-add-plot]'),removePlot=e.target.closest('[data-remove-plot]');if(addPlot||removePlot){const i=Number((addPlot||removePlot).dataset.row),plots=compositionOf(current.draft.rows[i]).plots;if(addPlot){if(plots.length>=12){toast('一条成片最多 12 段剧情',true);return}plots.push({episode:'',start:'',end:''})}else removeSegment(plots,Number(removePlot.dataset.removePlot));invalidateHook(i);changed();renderEditor();return}const word=e.target.closest('[data-hook-token]'),preview=e.target.closest('[data-hook-preview]');if(word){const i=Number(word.dataset.hookToken),r=current.draft.rows[i],o=hookOptions(r),tokens=hookTokens(r.hook_text),text=Array.from(hookPlain(r.hook_text));const selected=new Set(tokens.map((t,n)=>(o.manual_ranges||[]).some(s=>s.start<=t.start&&s.end>=t.end)?n:-1).filter(n=>n>=0)),n=Number(word.dataset.token);selected.has(n)?selected.delete(n):selected.add(n);const spans=[];for(const j of Array.from(selected).sort((a,b)=>a-b)){const t=tokens[j],last=spans.at(-1);if(last&&/^\s*$/.test(text.slice(last.end,t.start).join('')))last.end=t.end;else spans.push({start:t.start,end:t.end})}if(spans.length>4){toast('最多四处重点，请先取消一处',true);return}o.manual_ranges=spans;invalidateHook(i);document.querySelector(`[data-hook-words="${i}"]`).innerHTML=hookWords(r,i);changed();controls()}if(preview)submitHookPreview(Number(preview.dataset.hookPreview),preview);});
 $('addRow').onclick=()=>{const seq=Math.max(0,...current.draft.rows.map(r=>Number(r.seq)||0))+1;const row={request_id:current.media_managed?null:'R'+Date.now().toString().slice(-8),seq:String(seq),title_cn:'',hook_text:'',structure:'顺叙',notes:'',timeline_text:'',source:current.filename==='网页填写'?'网页填写':'手动添加'};if(current.draft.rows.some(item=>item.composition)){row.composition=blankComposition();row.hook_options={mode:'none',style:'default',position:'bottom',duration_ms:5000,manual_ranges:[]}}else if(current.filename==='网页填写'||current.draft.rows.some(item=>Array.isArray(item.clips))){row.clips=[blankClip()];row.hook_options={mode:'ai',style:'auto',position:'auto',duration_ms:null,manual_ranges:[]};row.source='网页填写'}current.draft.rows.push(row);renderEditor();changed()};
 $('saveButton').onclick=()=>operation($('saveButton'),async()=>{validationDismissed=false;const okay=await saveCurrent();toast(okay?'已保存，校验通过':'已保存，请修正标出的内容',!okay);if(!okay){renderValidation(true);focusValidationIssue()}});
 $('confirmButton').onclick=()=>operation($('confirmButton'),async()=>{validationDismissed=false;if(!await saveCurrent()){toast('请先修正标准化内容',true);renderValidation(true);focusValidationIssue();return}const p=current.plan;$('confirmSummary').textContent=`剧集：${current.draft.drama_id} · ${current.draft.drama_title}\n编导：${current.draft.author}\n素材：${current.draft.rows.length} 条\n命名示例：${current.assets[0]?.filename||''}\n必需正片：${p.required.join('、')||'无'}\n下载范围：前 ${p.episode_limit} 集中实际可用的正片\n\n确认后制作此版本；已纳管项目可继续编辑，当前成片保留。`;const dialogHint=document.querySelector('#confirmDialog .hint');if(dialogHint)dialogHint.textContent=current.filename==='网页填写'?'将下载实际可用正片，按填写的剧情时间剪辑并检查格式与时长。启用的结尾会作为静态画面追加到成片。预览通过后再决定上传。物料同步结果会发送至飞书「🤖物料D」。':'将下载实际可用正片，按 Excel 时间线剪辑并检查格式与时长。素材库上传需要你在预览后另行确认。物料同步结果会发送至飞书「🤖物料D」。';$('confirmDialog').showModal()});

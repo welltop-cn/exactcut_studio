@@ -26,6 +26,26 @@ def call(app, method, suffix, body=None, auth=True, csrf=True):
         conn.close()
 
 
+def prepared(app,base,value):
+    """Follow the public asynchronous snapshot receipt, without hiding the first status."""
+    deadline=time.monotonic()+6
+    while value.get('status') in {'queued','running','cancelling'}:
+        assert time.monotonic()<deadline
+        time.sleep(.01);code,value=call(app,'GET',base+'/preparation/'+value['id']);assert code==200
+    if value.get('status'):
+        assert value['status']=='completed',value
+        return value['result']['session']
+    return value
+
+
+def exact_frame(app,url):
+    deadline=time.monotonic()+6
+    while True:
+        code,data=call(app,'GET',url)
+        if code!=202:return code,data
+        assert time.monotonic()<deadline;time.sleep(.01)
+
+
 @pytest.fixture
 def ready(fixture, tmp_path, monkeypatch):
     config = tmp_path/'cutting-config.json'
@@ -54,13 +74,14 @@ def test_access_and_source_identity(ready):
         assert call(app, 'POST', route, body, csrf=False)[0] == 403
         assert call(app, 'POST', route, {**body, 'source_sha256': 'f'*64})[0] == 409
         status, session = call(app, 'POST', route, body)
-        assert status == 200
+        assert status in {200,202}
+        session=prepared(app,route.removesuffix('/open'),session)
         assert session['metadata']['frame_count'] == 90
         assert call(app, 'POST', route, body)[1]['id'] == session['id']
         other = w.create_blank()
         assert call(app, 'GET', f"/api/batches/{other['id']}/cuts/{session['id']}")[0] == 404
         assert call(app, 'GET', f"/api/batches/{bid}/cuts/{session['id']}/frame/90")[0] == 400
-        status, image = call(app, 'GET', f"/api/batches/{bid}/cuts/{session['id']}/frame/10")
+        status, image = exact_frame(app,f"/api/batches/{bid}/cuts/{session['id']}/frame/10")
         assert status == 200 and image.startswith(b'\xff\xd8')
         assert file_sha256(source) == sha
     finally:
@@ -73,7 +94,8 @@ def test_render_save_reopen_and_source_immutable(ready):
     base = f'/api/batches/{bid}/cuts'
     try:
         status, session = call(app, 'POST', base+'/open', {'request_id': rid, 'source_sha256': sha})
-        assert status == 200
+        assert status in {200,202}
+        session=prepared(app,base,session)
         path = base+'/'+session['id']
         assert call(app, 'POST', path+'/render', {'ranges': [[0, 90]]})[0] == 400
         status, job = call(app, 'POST', path+'/render', {'ranges': [[10, 11], [30, 40]]})
@@ -103,6 +125,7 @@ def test_mosaic_placeholder_rejected_by_api(ready):
     app = serve()
     try:
         session = call(app, 'POST', f'/api/batches/{bid}/cuts/open', {'request_id': rid, 'source_sha256': sha})[1]
+        session=prepared(app,f'/api/batches/{bid}/cuts',session)
         path = f"/api/batches/{bid}/cuts/{session['id']}"
         box = {'start': 10, 'end': 20, 'x': 16, 'y': 16, 'w': 32, 'h': 32}
         status, result = call(app, 'POST', path+'/render', {'ranges': [], 'mosaics': [box]})
@@ -182,6 +205,7 @@ def test_discard_fences_stale_window_mutations(ready):
     app = serve()
     try:
         _, session = call(app, 'POST', f'/api/batches/{bid}/cuts/open', {'request_id': rid, 'source_sha256': sha})
+        session=prepared(app,f'/api/batches/{bid}/cuts',session)
         route = f"/api/batches/{bid}/cuts/{session['id']}"
         code, reset = call(app, 'POST', route+'/discard', {})
         assert code == 200 and reset['reset_at']
@@ -204,7 +228,8 @@ def test_source_stream_works_while_compute_and_frame_locks_busy(ready, kind):
     try:
         status, session = call(app, 'POST', base+'/open', {
             'request_id': rid, 'source_sha256': sha})
-        assert status == 200
+        assert status in {200,202}
+        session=prepared(app,base,session)
         with cutting.lock_file(cutting.lock_root()/'compute.lock'), \
                 cutting.lock_file(cutting.lock_root()/'frame.lock'):
             status, video = call(app, 'GET', base+'/'+session['id']+'/source')
@@ -212,3 +237,5 @@ def test_source_stream_works_while_compute_and_frame_locks_busy(ready, kind):
         assert video == source.read_bytes()
     finally:
         app.shutdown(); app.server_close()
+
+from interactive_test_support import interactive_dispatcher

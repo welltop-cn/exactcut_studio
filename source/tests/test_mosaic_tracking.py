@@ -103,3 +103,5 @@ def test_inference_size_override_is_bounded_and_part_of_cache_identity():
         with pytest.raises(ValueError):mosaic_sam2.model_overrides({'inference_size':value})
     session={'source_sha256':'a'*64,'reset_at':''}
     assert mosaic_tracking.identity(session,{}, {'inference_size':512})!=mosaic_tracking.identity(session,{}, {'inference_size':1024})
+
+from interactive_test_support import interactive_dispatcher

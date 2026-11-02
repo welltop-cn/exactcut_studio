@@ -14,10 +14,17 @@ window.EditorBusy=(()=>{
     result.retryAfterMs=Math.max(seconds,Number.isFinite(body.retry_after_ms)&&body.retry_after_ms>=0?body.retry_after_ms:0);
     return result;
   }
-  async function frame(url,signal){
-    const response=await fetch(url,{signal});
-    if(!response.ok){let body={};try{body=await response.json()}catch{}throw error(response,body)}
-    return response;
+  async function frame(url,signal,onQueued=()=>{}){
+    let first=true;
+    for(;;){
+      if(signal?.aborted||document.hidden)throw cancelled();
+      const response=await fetch(url,{signal,...(first?{headers:{'X-Exactcut-Frame-Retry':'1'}}:{})});first=false;
+      if(!response.ok){let body={};try{body=await response.json()}catch{}throw error(response,body)}
+      if(response.status!==202)return response;
+      const job=await response.json();onQueued(job);
+      if(['failed','cancelled','superseded'].includes(job.status))throw Error(job.error||job.progress||'本次准确帧请求已结束，请重试');
+      await new Promise(resolve=>setTimeout(resolve,400));
+    }
   }
   async function run(send,{signal,valid=()=>true,maxRetries=3,onWait=()=>{},onSend=()=>{},diagnostics={}}={}){
     let deadline=null,last;

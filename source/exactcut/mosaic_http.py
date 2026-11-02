@@ -22,7 +22,14 @@ def handle(handler,bid,suffix,method):
     try:
         with cutting.batch_lease(bid):
             if not handler.can_access(bid):raise cutting.CutError('项目不存在或无权访问',404)
-            if method=='POST' and suffix=='open':return handler.respond(200,sessions.open_session(bid,data.get('request_id'),data.get('source_sha256')))
+            if method=='POST' and suffix=='open':
+                from . import editor_preparation
+                value=editor_preparation.submit('mosaics',bid,data.get('request_id'),data.get('source_sha256'),handler.user['username'])
+                return handler.respond(202 if value.get('status') in {'queued','running'} else 200,value)
+            preparation=re.fullmatch(r'preparation/([0-9a-f]{32})',suffix)
+            if method=='GET' and preparation:
+                from . import editor_preparation
+                return handler.respond(200,editor_preparation.state('mosaics',bid,preparation[1]))
             match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|source-url|scan|discard|discard-result|replace|stop|clip-preview|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/(?:preview|stop))?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
             if not match:raise cutting.CutError('打码入口不存在',404)
             sid,action=match.groups();session=sessions.read_session(bid,sid)
@@ -49,7 +56,9 @@ def handle(handler,bid,suffix,method):
                     from . import editor_source
                     return handler.respond(200,editor_source.resolve(bid,session,f'/api/batches/{bid}/mosaics/{sid}/source'))
                 if action=='source':return handler.stream_video(sessions.session_path(bid,sid)/'source.mp4')
-                if action.startswith('frame/'):return handler.respond(200,sessions.frame_file(bid,sid,int(action[6:])).read_bytes(),'image/jpeg')
+                if action.startswith('frame/'):
+                    from . import editor_frames
+                    return editor_frames.handle(handler,'mosaics',bid,sid,int(action[6:]))
                 if action.startswith('locate/'):return handler.respond(200,mosaic_locate.state(bid,sid,action[7:]))
             if method=='POST' and track_stop:
                 return handler.respond(202,mosaic_tracking.stop(bid,sid,action.split('/')[1],data.get('reset_at','')))

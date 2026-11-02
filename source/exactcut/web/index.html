@@ -400,10 +400,11 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 </dialog>
 
 
-<dialog id="mosaicTrackDialog" aria-labelledby="mosaicTrackTitle"><div class="row"><h2 id="mosaicTrackTitle">动态打码预览</h2><button id="mosaicTrackClose">返回检查</button></div><div class="mosaic-preview-stage"><p id="mosaicTrackStatus" role="status"></p><video id="mosaicTrackVideo" controls playsinline hidden></video></div><p id="mosaicTrackHint" class="hint">仅预览当前区域、当前片段。</p></dialog>
+<dialog id="mosaicTrackDialog" aria-labelledby="mosaicTrackTitle"><div class="row"><h2 id="mosaicTrackTitle">动态打码预览</h2><div class="actions"><button id="mosaicTrackStop" type="button">取消预览</button><button id="mosaicTrackClose">返回检查</button></div></div><div class="mosaic-preview-stage"><p id="mosaicTrackStatus" role="status"></p><video id="mosaicTrackVideo" controls playsinline hidden></video></div><p id="mosaicTrackHint" class="hint">仅预览当前区域、当前片段。</p></dialog>
 <dialog id="mosaicDialog" aria-labelledby="mosaicTitle">
   <header class="mosaic-header"><div><h2 id="mosaicTitle">剪切打码</h2><small>选择片段删除或打码，生成后确认替换</small></div><small class="processing-autosave">自动保存 · 关闭后可继续</small><button id="mosaicClose" aria-label="关闭剪切打码">关闭</button></header>
   <div id="mosaicStatus" role="status" aria-live="polite"></div>
+  <button id="mosaicResumePreview" type="button" class="secondary" hidden>查看后台片段预览</button>
   <div id="mosaicWorkspace" hidden>
     <div class="mosaic-main" role="region" aria-label="片段预览">
       <div id="mosaicStage"><video id="mosaicSource" playsinline preload="metadata"></video><img id="mosaicFrame" alt="马赛克参考帧" hidden><div id="mosaicOverlay" hidden></div><span class="mosaic-stage-label">原片 · 参考帧区域</span></div>

@@ -188,13 +188,14 @@ def test_missing_source_reports_drama_episode_and_reason(diag, monkeypatch):
 
 
 def test_media_timeout_retains_cause_without_command_secrets(diag, monkeypatch):
-    from exactcut import media
+    from exactcut import media,processing_cancel
     d, root = diag
     def timeout(*args, **kwargs):
         raise subprocess.TimeoutExpired(['ffmpeg', 'password=never-log-this'], 3)
-    monkeypatch.setattr(media.subprocess, 'run', timeout)
-    with pytest.raises(RuntimeError):
+    monkeypatch.setattr(processing_cancel, 'run', timeout)
+    with pytest.raises(RuntimeError) as error:
         media.run_checked(['ffmpeg', '-i', 'private-input', 'out.mp4'], timeout=3)
+    assert isinstance(error.value.__cause__,subprocess.TimeoutExpired)
     row = next(r for r in records(root) if r['event'] == 'media.timeout')
     assert row['tool'] == 'ffmpeg' and row['timeout_seconds'] == 3
     assert 'never-log-this' not in json.dumps(records(root))
@@ -210,7 +211,7 @@ def test_scheduler_wait_has_identifiers_reason_and_is_throttled(diag):
     assert rows[0]['queue_seconds'] >= 60 and rows[0]['batch_id'] == 'batch-test'
 
 
-def test_preview_admission_logs_exact_budget_and_release(diag, monkeypatch):
+def test_hook_worker_disk_reservation_logs_without_the_old_submit_quota(diag, monkeypatch):
     from exactcut import webserver as web, concurrency, storage
     from exactcut.stage_results import ResourceDeferred
     d, root = diag
@@ -218,20 +219,19 @@ def test_preview_admission_logs_exact_budget_and_release(diag, monkeypatch):
     monkeypatch.setattr(web, 'INLINE_RENDERS', set())
     monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'hook_previews': 1}})
     with d.context(trace_id='a' * 32, batch_id='b' * 32, actor='producer03'):
-        token = web.admit_hook_preview(root / 'project')
+        first=web.admit_hook_preview(root/'project')
         try:
-            with pytest.raises(ResourceDeferred): web.admit_hook_preview(root / 'project')
-        finally:
-            web.release_hook_preview(token)
-    rows = records(root)
-    denial = next(r for r in rows if r['event'] == 'hook_preview.admission_denied')
-    assert denial['reason'] == 'preview_pool_full'
-    assert denial['active_previews'] == 1 and denial['preview_limit'] == 1
-    assert denial['actor'] == 'producer03' and denial['batch_id'] == 'b' * 32
-    assert next(r for r in rows if r['event'] == 'hook_preview.released')['active_previews'] == 0
+            second=web.admit_hook_preview(root/'project')
+            web.release_hook_preview(second)
+        finally:web.release_hook_preview(first)
+    rows=records(root);admitted=[r for r in rows if r['event']=='hook_preview.admitted']
+    assert [r['active_previews'] for r in admitted]==[1,2]
+    assert all(r['actor']=='producer03' and r['batch_id']=='b'*32 for r in admitted)
+    assert [r for r in rows if r['event']=='hook_preview.released'][-1]['active_previews']==0
+    assert not any(r['event']=='hook_preview.admission_denied' for r in rows)
     monkeypatch.setattr(storage, 'reserve', lambda *args: False)
-    with pytest.raises(ResourceDeferred): web.admit_hook_preview(root / 'project')
-    assert records(root)[-1]['reason'] == 'disk_reservation'
+    with pytest.raises(ResourceDeferred):web.admit_hook_preview(root/'project')
+    assert records(root)[-1]['reason']=='disk_reservation'
 
 
 def test_preview_stage_logs_real_layout_without_recording_text(diag, fixture):
@@ -254,7 +254,7 @@ def test_preview_stage_logs_real_layout_without_recording_text(diag, fixture):
 from test_phase2_preview_api import fixture
 
 
-@pytest.mark.parametrize('outcome,status', [('success', 200), ('error', 400), ('deferred', 429), ('cleanup_error', 200)])
+@pytest.mark.parametrize('outcome,status', [('success','completed'),('error','failed'),('deferred','queued'),('cleanup_error','completed')])
 def test_preview_http_cleanup_and_compute_deferral_are_observable(diag, fixture, monkeypatch, outcome, status):
     from exactcut import hook_preview, storage, webserver as web
     from exactcut.stage_results import ResourceDeferred
@@ -272,8 +272,21 @@ def test_preview_http_cleanup_and_compute_deferral_are_observable(diag, fixture,
         monkeypatch.setattr(storage, 'release', lambda *args: (_ for _ in ()).throw(OSError('fixture cleanup failure')))
     app = serve()
     try:
-        assert call(app, 'POST', f"/api/batches/{fixture['id']}/hook-preview", {
-            'index': 0, 'revision': fixture['revision']})[0] == status
+        code,job=call(app,'POST',f"/api/batches/{fixture['id']}/hook-preview",{'index':0,'revision':fixture['revision']})
+        assert code==202
+        from exactcut import interactive_queue
+        deadline=time.monotonic()+5
+        while True:
+            job=hook_preview.state(fixture['id'],job['id'])
+            queue_state=interactive_queue.snapshot()
+            pending=[row for row in queue_state['pending'] if row['job']['id']==job['id']]
+            active=any(row['job']['id']==job['id'] for row in queue_state['active'])
+            finished=(bool(pending and pending[0].get('not_before',0)>time.time()) if outcome=='deferred' else job['status'] in {'completed','failed'} and not active)
+            if finished:
+                job=hook_preview.state(fixture['id'],job['id']);break
+            assert time.monotonic()<deadline;time.sleep(.01)
+        assert job['status']==status
+        if status=='completed':assert job['result']['preview_key']=='a'*64
         assert not web.INLINE_RENDERS
         if outcome != 'cleanup_error':
             with storage.reservation_lock(web.JOBS) as ledger:
@@ -470,3 +483,5 @@ def test_private_span_keeps_provider_code_without_response(monkeypatch):
     assert fields['error']['frames']
     assert 'private-provider-body' not in str(logged)
     assert fields['duration_ms']>=0
+
+from interactive_test_support import interactive_dispatcher

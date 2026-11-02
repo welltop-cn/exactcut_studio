@@ -44,6 +44,7 @@ def checked_candidates(text,meta):
 
 
 def detect(jpeg,meta,cfg,key,*,deadline=None):
+    editor_resources.release_reservation()
     from google import genai
     from google.genai import types
     client=genai.Client(api_key=key,http_options=types.HttpOptions(timeout=cfg['request_timeout_ms'],retry_options=types.HttpRetryOptions(attempts=1)))
@@ -107,32 +108,16 @@ def start(bid,sid,start,end,seed,reset_at,*,actor='admin'):
         session=sessions.read_session(bid,sid);validate(session,start,end,seed,reset_at)
         cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
         if not scan.enabled():raise cutting.CutError('区域识别未启用；请配置本机识别凭据',503)
-        cfg=scan.settings();key=scan.credential();jid=identity(session,start,end,seed,cfg)
+        cfg=scan.settings();scan.credential();jid=identity(session,start,end,seed,cfg)
         path=sessions.session_path(bid,sid)/f'locate-{jid}.json'
         with cutting.lock_file(path.parent/'locate-state.lock',blocking=True):
             previous=recover(path)
-            if previous and previous['status'] in ('running','completed'):return previous
-            leases=[]
-            try:
-                leases.append(editor_resources.acquire('scan',actor))
-                for target,shared in [(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
-                    leases.append(cutting.lock_file(target,shared=shared))
-                job={'schema_version':1,'id':jid,'status':'running','actor':actor,'source_sha256':session['source_sha256'],'reset_at':session.get('reset_at',''),
-                     'start':start,'end':end,'seed_frame':seed,'model':cfg['model'],'candidates':[],'created_at':now_iso(),'progress':'正在识别所选帧','notice':NOTICE}
-                write_json_atomic(path,job)
-                permit=cutting_access.InteractiveReadPermit.issue(session,job)
-            except Exception:
-                for lease in reversed(leases):lease.close()
-                raise
-    # Start only after releasing admission/state locks: even a cached-frame response
-    # may complete immediately, and final validation needs the same admission gate.
-    try:
-        threading.Thread(target=copy_context().run,args=(_work,bid,sid,path,job,cfg,key,leases,permit),daemon=True).start()
-    except Exception:
-        for lease in reversed(leases):lease.close()
-        raise
+            if previous and previous['status'] in ('queued','running','completed'):return previous
+            job={'schema_version':1,'id':jid,'status':'queued','actor':actor,'source_sha256':session['source_sha256'],'reset_at':session.get('reset_at',''),
+                 'start':start,'end':end,'seed_frame':seed,'model':cfg['model'],'candidates':[],'created_at':now_iso(),'progress':'区域识别已接收，等待处理','notice':NOTICE}
+            from . import interactive_queue
+            interactive_queue.enqueue('locate',session,path,job,cfg,state_lock=path.parent/'locate-state.lock')
     return job
-
 
 def _work(bid,sid,path,job,cfg,key,leases,permit=None):
     with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases), editor_resources.encoding():

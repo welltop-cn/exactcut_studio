@@ -21,12 +21,7 @@ def ai_settings(config):
 
 def settings():
     section = load_config().get('concurrency')
-    if section is None:
-        # No concurrency section configured anywhere: keep conservative global
-        # serial behaviour with safe defaults.
-        capacities = {name: 1 for name in LANES}
-        return {**capacities, 'max_active_children': 1, 'enabled': True,
-                'hook_previews': 1, 'ai': ai_settings({})}
+    if section is None:section={}
     if not isinstance(section, dict):
         raise ValueError('concurrency 必须为对象')
     enabled = section.get('enabled', True)
@@ -44,11 +39,10 @@ def settings():
     total = section.get('max_active_children', sum(capacities.values()))
     if not isinstance(total, int) or isinstance(total, bool) or total < 1:
         raise ValueError('concurrency.max_active_children 必须为正整数')
-    previews = section.get('hook_previews', 1)
-    if isinstance(previews, bool) or not isinstance(previews, int) or previews < 1:
-        raise ValueError('concurrency.hook_previews 必须为正整数')
+    # Legacy hook_previews was a submission-time gate. Hook work now shares the
+    # persistent interactive preview workers and stage resources.
     return {**capacities, 'max_active_children': total, 'enabled': enabled,
-            'hook_previews': previews, 'ai': ai_settings(section)}
+            'ai': ai_settings(section)}
 
 
 def scope(job, batch_id=None):

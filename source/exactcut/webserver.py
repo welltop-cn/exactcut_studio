@@ -241,7 +241,7 @@ def prefetch_sources(batch_id, data, actor):
     result = source_prefetch.status(path, drama, episodes, jobs, manifest)
     missing = [e['episode'] for e in result['episodes'] if e['status'] == 'waiting'
                or (e['status'] == 'failed' and data.get('retry') is True)]
-    if missing and queue_size() < 10:
+    if missing:
         job = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'project': drama, 'episodes': missing,
                'actor': actor, 'action': 'prefetch', 'created': time.time(), 'status': 'queued',
                'instance': instance_marker()}
@@ -770,14 +770,9 @@ def project_render_usage(owned=None):
 
 
 def admit_hook_preview(project):
-    """Bound interactive previews independently and reserve their temporary disk peak."""
+    """Reserve a dispatched Hook worker's temporary disk, without a submit quota."""
     from .util import load_config
     with LOCK, batch_control.LOCK:
-        limits = concurrency.settings()
-        if len(INLINE_RENDERS) >= limits['hook_previews']:
-            diag.event('hook_preview.admission_denied', level='warning', reason='preview_pool_full',
-                       active_previews=len(INLINE_RENDERS), preview_limit=limits['hook_previews'])
-            raise stage_results.ResourceDeferred(time.time() + 1, '制作或预览资源繁忙，请稍后重试')
         token = 'inline-' + uuid.uuid4().hex
         # Up to sixteen sampled frames, full-resolution overlays and copied JSON decisions.
         render = load_config()['render']
@@ -787,11 +782,10 @@ def admit_hook_preview(project):
         paths = {str(project): peak, str(Path(tempfile.gettempdir())): peak + cache_bytes}
         if not storage.reserve(token, paths, JOBS):
             diag.event('hook_preview.admission_denied', level='warning', reason='disk_reservation',
-                       active_previews=len(INLINE_RENDERS), preview_limit=limits['hook_previews'])
+                       active_previews=len(INLINE_RENDERS))
             raise stage_results.ResourceDeferred(time.time() + 1, '预览磁盘资源不足，请稍后重试')
         INLINE_RENDERS.add(token)
-        diag.event('hook_preview.admitted', active_previews=len(INLINE_RENDERS),
-                   preview_limit=limits['hook_previews'])
+        diag.event('hook_preview.admitted', active_previews=len(INLINE_RENDERS))
         return token
 
 
@@ -1219,6 +1213,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         self.normalize_path()
+        hook_route=re.fullmatch(r'/api/batches/([0-9a-f]{32})/hook-previews(?:/([0-9a-f]{32}))?',self.path)
+        if hook_route:
+            from .hook_preview import handle
+            return handle(self,*hook_route.groups())
         subtitle_route = re.fullmatch(r'/api/batches/([0-9a-f]{32})/preview-subtitles/([^/]+)', self.path)
         if subtitle_route:
             from .preview_subtitles_http import handle
@@ -1635,7 +1633,6 @@ class Handler(BaseHTTPRequestHandler):
                 previous = existing_submission(batch_id, action, data, self.user['username'])
                 if previous: return self.respond(200, batch_response(batch_id, previous))
                 if snapshot() != before: return self.respond(409, {'error': '确认期间批次已变化，请重新确认'})
-                if queue_size() >= 10: return self.respond(429, {'error': '任务队列已满，请稍后再试'})
                 if action == 'verify-delivery' and any(
                         concurrency.scope_blocked((batch_id, data.get('request_id')), {concurrency.scope(job)})
                         and job.get('status') not in {'completed', 'failed', 'interrupted', 'unverified'}
@@ -1669,15 +1666,13 @@ class Handler(BaseHTTPRequestHandler):
             self.respond(400, {'error': str(exc)})
 
     def hook_preview(self, batch_id):
-        from .hook_preview import compute
+        from .hook_preview import submit
         from .intake import validate_draft
         from .runtime import protect_path
         if not self.authorized():
             return
         if self.headers.get('X-Exactcut-Request') != '1':
             return self.respond(403, {'error':'无效请求来源'})
-        admission = None
-        response = None
         try:
             size = int(self.headers.get('Content-Length','0'))
             if not 1 <= size <= 10000:
@@ -1715,55 +1710,11 @@ class Handler(BaseHTTPRequestHandler):
                 request = manifest.requests[index]
                 diag.bind(request_id=request.request_id, drama_id=manifest.drama_id, revision=snapshot['revision'])
                 fingerprint = json_sha256(snapshot['draft'])
-            admission = admit_hook_preview(project)
-            # Network/model calls and media reads use temporary files, outside the write barrier.
-            with tempfile.TemporaryDirectory(prefix='exactcut-hook-preview-') as temp:
-                deferred = None
-                try:
-                    with diag.span('hook_preview.compute'):
-                        result, doc, cache = compute(project,request,Path(temp))
-                except stage_results.ResourceDeferred as exc:
-                    diag.event('hook_preview.deferred', level='warning', phase='compute',
-                               reason=str(exc), not_before=exc.not_before)
-                    deferred = exc
-                    cache = Path(temp) / 'cache'
-                with mutation_lock(), LOCK:
-                    if maintenance_file().exists():
-                        response = (503, {'error':'正在发布维护，预览结果未保存，请稍后重试'})
-                    elif not self.authorized():
-                        return
-                    elif not self.can_access(batch_id):
-                        response = (404, {'error':'项目不存在或无权访问'})
-                    else:
-                        latest = workflow.detail(batch_id)
-                        if (not latest.get('media_managed') and latest['runtime']['status']!='draft') or latest['runtime'].get('archived') or latest['revision']!=snapshot['revision'] or json_sha256(latest['draft'])!=fingerprint:
-                            response = (409, {'error':'预览期间草稿已变化，结果未采用，请重新预览'})
-                        else:
-                            for directory in ('hook-emphasis','hook-placement'):
-                                for file in (cache/directory).glob('*.json'):
-                                    write_json_atomic(project/'cache'/directory/file.name,read_json(file))
-                            if deferred is not None:
-                                response = (429, {'error': str(deferred), 'not_before': deferred.not_before})
-                            else:
-                                write_json_atomic(project/'cache/hook-previews'/f"{result['preview_key']}.json",doc)
-                                response = (200, result)
-                    if response and response[0] != 200:
-                        diag.event('hook_preview.result_rejected', level='warning', status=response[0],
-                                   reason=response[1]['error'])
-        except stage_results.ResourceDeferred as exc:
-            diag.event('hook_preview.deferred', level='warning', phase='admission',
-                       reason=str(exc), not_before=exc.not_before)
-            response = (429, {'error': str(exc), 'not_before': exc.not_before})
+            job=submit(batch_id,snapshot,index,request,self.user['username'])
+            return self.respond(200 if job['status']=='completed' else 202,job)
         except (ValueError,KeyError,TypeError,RuntimeError,OSError) as exc:
-            diag.event('http.hook_preview_failed', level='warning', batch_id=batch_id, error=exc)
-            response = (400, {'error':str(exc)})
-        finally:
-            if admission:
-                release_hook_preview(admission)
-        # Publish the reply only after temp cleanup AND admission release. A
-        # client can retry as soon as it reads the reply, before this thread exits.
-        if response:
-            self.respond(*response)
+            diag.event('http.hook_preview_failed',level='warning',batch_id=batch_id,error=exc)
+            return self.respond(400,{'error':str(exc)})
 
     def handle_post(self):
         if self.path != '/api/login' and not self.authorized():
@@ -1881,8 +1832,6 @@ class Handler(BaseHTTPRequestHandler):
                     previous = existing_submission(batch_id, action, data, self.user['username'])
                     if previous:
                         return self.respond(200, batch_response(batch_id, previous))
-                    if queue_size() >= 10:
-                        return self.respond(429, {'error': '任务队列已满，请稍后再试'})
                     if action == 'start':
                         cmd = workflow.start_batch(batch_id, data.get('revision'))
                     elif action == 'preview':
@@ -1928,8 +1877,6 @@ class Handler(BaseHTTPRequestHandler):
                 else:
                     cmd = job_command(data)
                 with LOCK:
-                    if queue_size() >= 10:
-                        return self.respond(429, {'error': '任务队列已满，请稍后再试'})
                     job = {'id': uuid.uuid4().hex, 'project': data['project'], 'action': data['action'],
                            'input': data.get('input'), 'status': 'queued', 'created': time.time()}
                     job['command'] = cmd
@@ -1995,9 +1942,11 @@ def main():
     # One background dispatcher per data root; it, not page polling, advances the queue.
     from .preview_subtitle_queue import Dispatcher
     from .mosaic_queue import Dispatcher as MosaicDispatcher
+    from .interactive_queue import Dispatcher as InteractiveDispatcher
     import signal
     server.subtitle_dispatcher = Dispatcher()
     server.mosaic_dispatcher=MosaicDispatcher()
+    server.interactive_dispatcher=InteractiveDispatcher()
     previous_signals={}
     try:
         if not server.subtitle_dispatcher.start():
@@ -2007,6 +1956,7 @@ def main():
             if not (path.parent / 'access.json').exists():
                 workflow.write_json_atomic(path.parent / 'access.json', {'owner':'admin'})
         if worker_enabled:
+            server.interactive_dispatcher.start()
             recover_jobs(enqueue=True, scheduler=True)
             server.worker_thread = threading.Thread(target=worker, daemon=True)
             server.worker_thread.start()
@@ -2018,6 +1968,7 @@ def main():
         server.serve_forever()
     finally:
         try:
+            server.interactive_dispatcher.stop(timeout=None)
             server.mosaic_dispatcher.stop(timeout=None)
         finally:
             try:server.subtitle_dispatcher.stop(timeout=None)

@@ -44,37 +44,19 @@ def start(bid,sid,reset_at,*,force=False,actor='admin'):
         session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
         cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
         if not scan.enabled():raise cutting.CutError('整片识别未启用；请配置本机识别凭据',503)
-        cfg=scan.settings();key=scan.credential();identifier=identity(session,cfg)
+        cfg=scan.settings();scan.credential();identifier=identity(session,cfg)
         path=sessions.session_path(bid,sid)/'scan.json'
         with cutting.lock_file(path.parent/'scan-state.lock',blocking=True):
             previous=recover(path)
-            if previous and previous['identity']==identifier and (previous['status']=='running' or (previous['status']=='completed' and not force)):
-                diagnostics.event('mosaic.scan_reused',batch_id=bid,session_id=sid,job_id=previous['id'],status=previous['status'])
-                return previous
-            leases=[]
-            try:
-                leases.append(editor_resources.acquire('scan',actor))
-                for target,shared in [(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
-                    leases.append(cutting.lock_file(target,shared=shared))
-                leases.append(editor_resources.acquire('preprocess',actor))
-                from .storage import require_space
-                require_space(path.parent,512*1024**2)
-                job={'schema_version':1,'id':uuid.uuid4().hex,'identity':identifier,'status':'running','actor':actor,
-                     'source_sha256':session['source_sha256'],'reset_at':session.get('reset_at',''),'model':cfg['model'],
-                     'events':[],'warnings':[],'progress':'正在准备整片识别','notice':NOTICE,'created_at':now_iso()}
-                write_json_atomic(path,job)
-                permit=cutting_access.InteractiveReadPermit.issue(session,job)
-            except Exception as exc:
-                diagnostics.event('mosaic.scan_admission_failed',level='warning',batch_id=bid,session_id=sid,error=diagnostics.private_exception(exc))
-                for lease in reversed(leases):lease.close()
-                raise
-    try:threading.Thread(target=copy_context().run,args=(_work,bid,sid,path,job,cfg,key,leases,permit),daemon=True).start()
-    except Exception as exc:
-        diagnostics.event('mosaic.scan_spawn_failed',level='error',batch_id=bid,session_id=sid,job_id=job['id'],error=diagnostics.private_exception(exc))
-        for lease in reversed(leases):lease.close()
-        raise
+            if previous and previous['identity']==identifier and (previous['status'] in {'queued','running'} or previous['status']=='completed' and not force):return previous
+            from .storage import require_space
+            require_space(path.parent,512*1024**2)
+            job={'schema_version':1,'id':uuid.uuid4().hex,'identity':identifier,'status':'queued','actor':actor,
+                 'source_sha256':session['source_sha256'],'reset_at':session.get('reset_at',''),'model':cfg['model'],
+                 'events':[],'warnings':[],'progress':'整片识别已接收，等待处理','notice':NOTICE,'created_at':now_iso()}
+            from . import interactive_queue
+            interactive_queue.enqueue('mosaic_scan',session,path,job,cfg,state_lock=path.parent/'scan-state.lock')
     return job
-
 
 def _work(bid,sid,path,job,cfg,key,leases,permit=None):
     with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases), editor_resources.encoding():

@@ -119,6 +119,7 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
     prompt=PROMPT+(STRICT if policy=='strict' else '')+f'\n原成片总时长 {duration} 毫秒。'
 
     def ask(parts, extra=''):
+        editor_resources.release_reservation()
         if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:
             raise cutting.CutError('本次识别用时过长，未完成，请重试')
         with diagnostics.span('scan.model_request',private_error=True,model=cfg['model'],timeout_ms=cfg['request_timeout_ms']):
@@ -155,7 +156,10 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
                     parts=[]
                     for stamp in stamps:
                         if time.monotonic()+30>deadline:raise cutting.CutError('复查超时')
-                        with cutting.frame_lease(cutting.lock_root()/'frame.lock'):
+                        # image2pipe has no shared output; only the same source/time
+                        # extraction identity may wait, never unrelated materials.
+                        frame_key=json_sha256([str(source.resolve()),source.stat().st_mtime_ns,stamp,'refine720'])
+                        with cutting.frame_lease(cutting.lock_root()/('refine-'+frame_key+'.lock')):
                             jpeg=cutting.run(['ffmpeg','-v','error','-ss',f'{stamp/1000:.6f}','-i',str(source),
                                 '-frames:v','1','-vf',"scale=w='min(720,iw)':h=-2",'-f','image2pipe','-vcodec','mjpeg','-'],30)
                         if not jpeg:raise cutting.CutError('抽样画面为空')
@@ -207,30 +211,19 @@ def start(bid,sid,policy,*,force=False,actor='admin'):
     if type(force) is not bool:raise cutting.CutError('重新识别参数必须为布尔值')
     session=cutting.read_session(bid,sid);cfg=settings();identifier=identity(session,policy,cfg)
     if not enabled():raise cutting.CutError('自动识别未启用；请使用本机识别启动参数',503)
-    key=credential();path=cutting.session_path(bid,sid)/f'scan-{identifier}.json'
+    credential();path=cutting.session_path(bid,sid)/f'scan-{identifier}.json'
     with cutting.lock_file(path.parent/'scan-state.lock',blocking=True):
         previous=recover(path)
-        if previous and (previous['status']=='running' or (previous['status']=='completed' and not force)):return previous
-        leases=[]
-        try:
-            leases.append(editor_resources.acquire('scan',actor))
-            for target,shared in [(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
-                leases.append(cutting.lock_file(target,shared=shared))
-            leases.append(editor_resources.acquire('preprocess',actor))
-            from .storage import require_space
-            require_space(path.parent,512*1024**2)
-            report={'schema_version':1,'id':identifier,'source_sha256':session['source_sha256'],'actor':actor,'reset_at':session.get('reset_at',''),
-                    'policy':policy,'model':cfg['model'],'status':'running','progress':'识别已提交',
-                    'risk_events':[],'warnings':[],'created_at':now_iso(),'notice':NOTICE,
-                    'sampling':{'coarse_fps':cfg['coarse_fps'],'refine_max_frames':48,'max_refine_events':cfg['max_refine_events']}}
-            write_json_atomic(path,report)
-            permit=cutting_access.InteractiveReadPermit.issue(session,report)
-            threading.Thread(target=_work,args=(path,session,report,cfg,key,leases,permit),daemon=True).start()
-            return report
-        except Exception:
-            for lease in leases:lease.close()
-            raise
-
+        if previous and (previous['status'] in {'queued','running'} or previous['status']=='completed' and not force):return previous
+        from .storage import require_space
+        require_space(path.parent,512*1024**2)
+        report={'schema_version':1,'id':identifier,'source_sha256':session['source_sha256'],'actor':actor,'reset_at':session.get('reset_at',''),
+                'policy':policy,'model':cfg['model'],'status':'queued','progress':'识别已接收，等待处理',
+                'risk_events':[],'warnings':[],'created_at':now_iso(),'notice':NOTICE,
+                'sampling':{'coarse_fps':cfg['coarse_fps'],'refine_max_frames':48,'max_refine_events':cfg['max_refine_events']}}
+        from . import interactive_queue
+        interactive_queue.enqueue('cut_scan',session,path,report,cfg,state_lock=path.parent/'scan-state.lock')
+    return report
 
 def _work(path,session,report,cfg,key,leases,permit=None):
     with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases), editor_resources.encoding():

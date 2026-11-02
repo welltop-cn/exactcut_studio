@@ -68,12 +68,12 @@ def test_resume_retains_batch_serial_limit(runner, monkeypatch):
     assert kill.call_count == 1
 
 
-def test_ceiling_defaults_to_sum_of_lanes_and_no_section_is_serial(monkeypatch):
-    # No concurrency section anywhere -> conservative global serial.
+def test_ceiling_defaults_to_sum_even_without_a_section_but_explicit_emergency_total_is_retained(monkeypatch):
+    # Missing optional section must not silently couple all lanes to total=1.
     monkeypatch.setattr(concurrency, 'load_config', lambda: {})
     limits = concurrency.settings()
     assert all(limits[lane] == 1 for lane in concurrency.LANES)
-    assert limits['max_active_children'] == 1
+    assert limits['max_active_children'] == 4
     # A configured section opts into per-lane concurrency; the ceiling defaults
     # to the sum of lanes (including lanes left at their default of 1).
     monkeypatch.setattr(concurrency, 'load_config', lambda: {'concurrency': {'render': 3, 'fetch': 2}})
@@ -93,12 +93,8 @@ def test_startup_logs_merged_effective_limits_before_initializing_data(runner, m
     monkeypatch.setenv('EXACTCUT_CONFIG_FILE', str(config))
     monkeypatch.setattr(concurrency, 'load_config', load_config)
     limits = concurrency.settings()
-    if segment is None:
-        expected_total = 1
-    elif 'max_active_children' in segment:
-        expected_total = segment['max_active_children']
-    else:
-        expected_total = sum(segment.get(lane, 1) for lane in concurrency.LANES)
+    expected_total=segment['max_active_children'] if segment and 'max_active_children' in segment else 11
+    assert limits['render']==3 and limits['fetch']==2 and limits['upload']==2 and limits['poll']==4
     assert limits['max_active_children'] == expected_total
     monkeypatch.setattr(web, 'load_env_file', lambda *a: None)
     def claim():

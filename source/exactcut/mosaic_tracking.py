@@ -86,7 +86,9 @@ def stop(bid,sid,jid,reset_at):
         job=recover(path)
         if not job:raise cutting.CutError('跟踪任务不存在',404)
         mosaic_locate.current(bid,sid,job,readonly=True)
-        if job['status']=='running':
+        if job['status']=='queued':
+            job.update(status='cancelled',cancel_requested=True,progress='已取消等待中的预览');write_json_atomic(path,job)
+        elif job['status'] in {'running','cancelling'}:
             job.update(cancel_requested=True,progress='正在停止预览…');write_json_atomic(path,job)
         return job
 
@@ -115,44 +117,29 @@ def identity(session,target,cfg,effect=None):
 
 
 def start(bid,sid,target,reset_at,effect=None,*,actor='admin'):
-    effect=effects.validate(effect)
-    session=sessions.read_session(bid,sid)
+    effect=effects.validate(effect);session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
         cutting.require_reset(session,reset_at)
         cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
         target=validate_target(session['metadata'],target)
         if target.get('motion')=='fixed':raise cutting.CutError('固定位置请使用片段效果预览')
         if not enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
-        cfg=settings()
-        jid=identity(session,target,cfg,effect)
-        path=sessions.session_path(bid,sid)/f'track-{jid}.json'
+        cfg=settings();jid=identity(session,target,cfg,effect);path=sessions.session_path(bid,sid)/f'track-{jid}.json'
         with cutting.lock_file(path.parent/'track-state.lock',blocking=True):
             previous=recover(path)
-            if previous and (previous['status']=='running' or previous['status']=='completed' and not any(f.get('box') is None for f in previous.get('result',{}).get('frames',[])) and (path.parent/f'track-{jid}'/'preview.mp4').is_file()):return previous
-            leases=[]
-            try:
-                leases.append(editor_resources.acquire('preview',actor))
-                for lock,shared in [(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
-                    leases.append(cutting.lock_file(lock,shared=shared))
-                job={'schema_version':1,'id':jid,'status':'running','actor':actor,'source_sha256':session['source_sha256'],'reset_at':reset_at,'target':target,'effect':effect,'created_at':now_iso(),'progress':'SAM 2 正在跟踪并生成预览'}
-                write_json_atomic(path,job)
-                permit=cutting_access.InteractiveReadPermit.issue(session,job)
-            except Exception:
-                for lease in reversed(leases):lease.close()
-                raise
-    try:threading.Thread(target=_work,args=(bid,sid,path,job,cfg,leases,permit),daemon=True).start()
-    except Exception:
-        for lease in reversed(leases):lease.close()
-        raise
+            if previous and (previous['status'] in {'queued','running'} or previous['status']=='completed' and not any(f.get('box') is None for f in previous.get('result',{}).get('frames',[])) and (path.parent/f'track-{jid}'/'preview.mp4').is_file()):return previous
+            job={'schema_version':1,'id':jid,'status':'queued','actor':actor,'source_sha256':session['source_sha256'],'reset_at':reset_at,'target':target,'effect':effect,'created_at':now_iso(),'progress':'跟踪预览已接收，等待处理'}
+            from . import interactive_queue
+            interactive_queue.enqueue('track',session,path,job,cfg,state_lock=path.parent/'track-state.lock')
     return job
 
-
+@editor_resources.media_operation
 def run_tracker(source,directory,meta,target,cfg):
     storage.require_space(source.parent,1024**3)
     directory.mkdir(exist_ok=True)
     (directory/'progress.json').unlink(missing_ok=True)
     from .media import encoder_limit
-    request={'source':str(source),'output':str(directory),'metadata':meta,'target':target,'config':cfg,'encoder_threads':encoder_limit()}
+    request={'source':str(source),'output':str(directory),'metadata':meta,'target':target,'config':cfg,'encoder_threads':encoder_limit(),'execution_lease':editor_resources.export_media()}
     write_json_atomic(directory/'request.json',request)
     env=os.environ.copy()
     env['PYTHONPATH']=os.pathsep.join([str(Path(__file__).resolve().parents[1]),*cfg.get('dependency_paths',[])])

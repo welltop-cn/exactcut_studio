@@ -1,5 +1,13 @@
 {
   "schema_version": 1,
+  "concurrency": {
+    "enabled": true,
+    "fetch": 2,
+    "render": 3,
+    "upload": 2,
+    "poll": 4,
+    "ai": {"requests_per_minute": 6, "burst": 1}
+  },
   "logging": {
     "enabled": true,
     "retention_days": 14,
@@ -74,11 +82,12 @@
   },
   "editor_resources": {
     "preview_tasks": 2,
-    "preview_per_user": 1,
     "scan_tasks": 2,
-    "scan_per_user": 1,
     "preprocess_tasks": 2,
-    "preprocess_per_user": 1,
+    "media_tasks": 5,
+    "final_media_tasks": 1,
+    "frame_tasks": 2,
+    "transfer_tasks": 2,
     "encoder_threads": 2
   },
   "preview_subtitles": {
@@ -97,7 +106,7 @@
     "total_timeout_seconds": 1800,
     "max_cues": 1000,
     "max_active_tasks": 2,
-    "max_queued_tasks": 20
+    "max_queued_tasks": 30
   },
   "cutting": {
     "enabled": false,

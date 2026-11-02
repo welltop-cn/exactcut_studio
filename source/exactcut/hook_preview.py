@@ -78,3 +78,117 @@ def compute(project: Path, request, work: Path):
     return {'preview_key':key,'image':'data:image/png;base64,'+base64.b64encode(buffer.getvalue()).decode(),
             'decision':decision,'has_frame':bool(frames),'sources_complete':not missing and total is not None,
             'notice':f'预览覆盖 Hook 显示期间的 {len(frames)} 个抽样画面；请播放核对人物和原字幕遮挡。' if frames else '尚无原片，仅预览排版；下载后会重新检查位置。'}, doc, cache
+
+
+# Queued HTTP contract: the report is authoritative, the queue owns waiting order.
+def request_fingerprint(request):
+    value=request.model_dump(mode='json')
+    # The approved preview cache pointer is a receipt, not a visual input.
+    if isinstance(value.get('hook_options'),dict):value['hook_options'].pop('preview_key',None)
+    return json_sha256(value)
+
+
+def current_request(batch_id,request_id):
+    from . import workflow
+    from .intake import validate_draft
+    latest=workflow.detail(batch_id)
+    manifest,errors=validate_draft(latest['draft'],str(workflow.folder(batch_id)/'source.xlsx'))
+    if errors:raise ValueError('制作内容需要修正')
+    request=next((row for row in manifest.requests if row.request_id==request_id),None)
+    if request is None:raise ValueError('该素材已变化')
+    return latest,manifest,request
+
+
+def submit(batch_id,snapshot,index,request,actor):
+    from . import workflow,cutting,interactive_queue
+    from .util import read_json,write_json_atomic,now_iso
+    fingerprint=request_fingerprint(request);config_fingerprint=json_sha256(load_config())
+    jid=json_sha256([batch_id,request.request_id,fingerprint,config_fingerprint])[:32]
+    path=workflow.folder(batch_id)/'hook-previews'/(jid+'.json')
+    with cutting.lock_file(path.parent/'state.lock',blocking=True):
+        if path.is_file():
+            previous=read_json(path)
+            if previous['status'] in {'queued','running','completed'} and not previous.get('cancel_requested'):return previous
+        job={'schema_version':1,'id':jid,'status':'queued','actor':actor,'index':index,'request_id':request.request_id,
+             'revision':snapshot['revision'],'source_sha256':fingerprint,'configuration_sha256':config_fingerprint,'reset_at':str(snapshot['revision']),
+             'created_at':now_iso(),'progress':'Hook 预览已接收，等待处理'}
+        session={'batch_id':batch_id,'id':request.request_id,'request_id':request.request_id,'source_sha256':fingerprint,'reset_at':str(snapshot['revision'])}
+        interactive_queue.enqueue('hook',session,path,job,{},state_lock=path.parent/'state.lock',
+            payload={'index':index,'revision':snapshot['revision'],'fingerprint':fingerprint,'config_fingerprint':config_fingerprint})
+    return job
+
+
+def state(batch_id,jid):
+    import re
+    from . import workflow
+    from .util import read_json
+    if not isinstance(jid,str) or not re.fullmatch('[a-f0-9]{32}',jid):raise ValueError('Hook 预览任务不存在')
+    path=workflow.folder(batch_id)/'hook-previews'/(jid+'.json')
+    if not path.is_file():raise ValueError('Hook 预览任务不存在')
+    job=read_json(path)
+    try:
+        _,_,request=current_request(batch_id,job['request_id'])
+        job['input_current']=request_fingerprint(request)==job['source_sha256'] and json_sha256(load_config())==job['configuration_sha256']
+    except (ValueError,OSError):job['input_current']=False
+    return job
+
+
+def run_queued(entry,leases):
+    import tempfile
+    from . import workflow,accounts,interactive_queue,processing_cancel,webserver
+    from .intake import validate_draft
+    from .runtime import mutation_lock,maintenance_file
+    from .stage_results import ResourceDeferred
+    from .util import read_json,write_json_atomic,now_iso
+    bid=entry['session']['batch_id'];binding=entry['payload'];path=interactive_queue.report(entry)
+    def current():
+        processing_cancel.check()
+        try:latest,manifest,request=current_request(bid,entry['job']['request_id'])
+        except ValueError:
+            interactive_queue._update(entry,status='superseded',progress='输入已变化，旧预览不再采用');return None
+        db=workflow.BATCHES.parent/'accounts.sqlite3'
+        if db.is_file():
+            user=accounts.get(db,entry['actor'])
+            if not user or not user.get('enabled') or not accounts.allowed(workflow.folder(bid),user):raise ValueError('无权继续此预览')
+        if (latest['runtime'].get('archived') or request_fingerprint(request)!=binding['fingerprint']
+                or json_sha256(load_config())!=binding['config_fingerprint']):
+            interactive_queue._update(entry,status='superseded',progress='设置已变化，旧预览结果不再采用');return None
+        if not latest.get('media_managed') and latest['runtime']['status']!='draft':
+            interactive_queue._update(entry,status='superseded',progress='项目状态已变化，旧预览不再采用');return None
+        return latest,manifest,request
+    current_value=current()
+    if current_value is None:return
+    latest,manifest,request=current_value
+    project=workflow.ROOT/'projects'/manifest.drama_id
+    admission=webserver.admit_hook_preview(project)
+    try:
+        with tempfile.TemporaryDirectory(prefix='exactcut-hook-preview-') as temp:
+            deferred=None
+            try:result,doc,cache=compute(project,request,Path(temp))
+            except ResourceDeferred as exc:
+                diag.event('hook_preview.deferred',phase='compute',not_before=exc.not_before)
+                deferred=exc;cache=Path(temp)/'cache'
+            with mutation_lock():
+                if current() is None:return
+                if maintenance_file().exists():raise ResourceDeferred(__import__('time').time()+1,'等待维护结束后继续预览')
+                for directory in ('hook-emphasis','hook-placement'):
+                    for file in (cache/directory).glob('*.json'):
+                        write_json_atomic(project/'cache'/directory/file.name,read_json(file))
+                if deferred is not None:raise deferred
+                write_json_atomic(project/'cache/hook-previews'/f"{result['preview_key']}.json",doc)
+                interactive_queue._update(entry,status='completed',result=result,completed_at=now_iso(),progress='Hook 预览已生成')
+    finally:webserver.release_hook_preview(admission)
+
+
+def handle(handler,batch_id,jid=None):
+    from . import workflow,cutting
+    from .util import read_json
+    if not handler.authorized():return
+    if not handler.can_access(batch_id):return handler.respond(404,{'error':'项目不存在或无权访问'})
+    try:
+        if jid:return handler.respond(200,state(batch_id,jid))
+        jobs=[]
+        for path in (workflow.folder(batch_id)/'hook-previews').glob('*.json'):
+            job=read_json(path);jobs.append({key:value for key,value in job.items() if key!='result'})
+        return handler.respond(200,{'jobs':sorted(jobs,key=lambda row:row['created_at'],reverse=True)})
+    except (ValueError,OSError):return handler.respond(404,{'error':'Hook 预览任务不存在'})

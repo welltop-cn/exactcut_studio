@@ -6,7 +6,7 @@ import pytest
 from exactcut import accounts, workflow, cutting, mosaic_queue as queue, mosaic_render as render
 from exactcut import mosaic_session as sessions, material_versions
 from exactcut.util import read_json, write_json_atomic, file_sha256
-from test_cutting_api import ready, call
+from test_cutting_api import ready, call, prepared, exact_frame
 from test_phase2_preview_api import fixture, serve
 
 
@@ -44,7 +44,8 @@ def test_compute_busy_open_another_submit_restore_and_freeze(ready,managed):
     try:
         with cutting.lock_file(cutting.lock_root()/'compute.lock'):
             dispatcher.start()
-            _,a=call(app,'POST',root+'/open',{'request_id':rid,'source_sha256':sha})
+            code,a=call(app,'POST',root+'/open',{'request_id':rid,'source_sha256':sha})
+            assert code in {200,202};a=prepared(app,root,a)
             path=root+'/'+a['id'];body={'targets':[],'ranges':[[1,3]],'reset_at':''}
             code,job=call(app,'POST',path+'/render',body);assert code==202,job
             assert job['actor']=='admin'
@@ -53,7 +54,7 @@ def test_compute_busy_open_another_submit_restore_and_freeze(ready,managed):
             assert call(app,'POST',path+'/scan',{'reset_at':''})[0]==409
             assert call(app,'POST',f'/api/batches/{bid}/cuts/open',{'request_id':rid,'source_sha256':sha})[0]==409
             assert call(app,'GET',path+'/source')[0]==200
-            assert call(app,'GET',path+'/frame/2')[0]==200
+            assert exact_frame(app,path+'/frame/2')[0]==200
             assert call(app,'POST',root+'/open',{'request_id':rid,'source_sha256':sha})[0]==200
             if managed:
                 import copy,uuid
@@ -73,7 +74,8 @@ def test_compute_busy_open_another_submit_restore_and_freeze(ready,managed):
                 from exactcut import batch_control
                 with pytest.raises(cutting.CutError):batch_control.change(batch,'archive')
             before=time.monotonic()
-            code,b=call(app,'POST',root+'/open',{'request_id':rid2,'source_sha256':sha});assert code==200,b
+            code,b=call(app,'POST',root+'/open',{'request_id':rid2,'source_sha256':sha});assert code in {200,202},b
+            b=prepared(app,root,b)
             assert time.monotonic()-before<5
             code,job2=call(app,'POST',root+'/'+b['id']+'/render',body);assert code==202,job2
             assert len(queue.load()['tasks'])==2
@@ -98,7 +100,8 @@ def test_submission_receipt_is_persisted_and_validated(ready):
     bid,rid,sha,source=ready;app=serve()
     try:
         code,session=call(app,'POST',f'/api/batches/{bid}/mosaics/open',{'request_id':rid,'source_sha256':sha})
-        assert code==200
+        assert code in {200,202}
+        session=prepared(app,f'/api/batches/{bid}/mosaics',session)
         endpoint=f"/api/batches/{bid}/mosaics/{session['id']}/render"
         body={'targets':[],'ranges':[[1,3]],'reset_at':'','submission_id':'a'*32}
         assert call(app,'POST',endpoint,{**body,'submission_id':'invalid'})[0]==400
@@ -209,7 +212,13 @@ def test_two_authenticated_users_fifo_fairness_and_actual_ffmpeg(ready,monkeypat
         admin=request('POST','/api/login',{'username':'admin','password':'two-actor-admin-password'})[2].split(';')[0]
         alice=request('POST','/api/login',{'username':'queue_alice','password':'two-actor-alice-password'})[2].split(';')[0]
         for actor,cookie,request_id in [('queue_alice',alice,rid),('queue_alice',alice,second),('admin',admin,'queue-3'),('admin',admin,'queue-4')]:
-            code,session,_=request('POST',f'/api/batches/{bid}/mosaics/open',{'request_id':request_id,'source_sha256':sha},cookie);assert code==200,session
+            code,session,_=request('POST',f'/api/batches/{bid}/mosaics/open',{'request_id':request_id,'source_sha256':sha},cookie);assert code in {200,202},session
+            deadline=time.monotonic()+5
+            while session.get('status') in {'queued','running','cancelling'}:
+                assert time.monotonic()<deadline;time.sleep(.01)
+                code,session,_=request('GET',f"/api/batches/{bid}/mosaics/preparation/{session['id']}",None,cookie);assert code==200
+            if session.get('status'):
+                assert session['status']=='completed',session;session=session['result']['session']
             sid=session['id'];sid_owners[sid]=(actor,request_id)
             code,job,_=request('POST',f'/api/batches/{bid}/mosaics/{sid}/render',{'targets':[],'ranges':[[1,3]],'actor':'forged'},cookie)
             assert code==202,job;assert job['actor']==actor
@@ -225,3 +234,5 @@ def test_two_authenticated_users_fifo_fairness_and_actual_ffmpeg(ready,monkeypat
         assert order==[('queue_alice',rid),('admin','queue-3'),('queue_alice',second),('admin','queue-4')]
         assert file_sha256(source)==sha
     finally:dispatcher.stop(timeout=None);app.shutdown();app.server_close()
+
+from interactive_test_support import interactive_dispatcher

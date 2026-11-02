@@ -78,3 +78,5 @@ def test_browser_close_relogin_discard_and_confirm_real_media(ready):
             finally:browser.close()
     finally:
         lease.close();dispatcher.stop(timeout=None);app.shutdown();app.server_close()
+
+from interactive_test_support import interactive_dispatcher

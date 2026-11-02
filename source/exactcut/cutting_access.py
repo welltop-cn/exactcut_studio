@@ -20,7 +20,7 @@ class InteractiveReadPermit:
     @classmethod
     def issue(cls,session,job):
         from .cutting import CutError
-        if job.get('queued_task') or job.get('status')!='running':raise CutError('交互只读许可仅用于已准入任务',503)
+        if job.get('queued_task') or job.get('status') not in {'queued','running'}:raise CutError('交互只读许可仅用于已接收任务',503)
         return cls(session['batch_id'],session['id'],session['request_id'],job['id'],session['source_sha256'],session.get('reset_at',''),job.get('actor','admin'))
 
     def require(self,session,job):

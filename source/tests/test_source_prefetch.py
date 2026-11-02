@@ -185,14 +185,14 @@ assert(!el('stageOverview').innerHTML.includes('<progress'));
     assert result.returncode == 0, result.stderr
 
 
-def test_queue_limit_waits_and_disabled_material_fetch_never_queues(console, monkeypatch):
+def test_prefetch_ignores_old_total_ten_gate_but_disabled_fetch_does_not_queue_new_work(console, monkeypatch):
     monkeypatch.setattr(web, 'queue_size', lambda: 10)
     status, result = prefetch(console, draft_with('EP1'))
-    assert status == 200 and result['episodes'][0]['status'] == 'waiting'
-    assert jobs() == []
-    monkeypatch.setenv('EXACTCUT_ALLOW_MATERIAL_FETCH', '0')
-    assert prefetch(console, draft_with('EP1'))[0] == 400
-    assert jobs() == []
+    assert status==200 and result['episodes'][0]['status']=='queued'
+    accepted=jobs();assert len(accepted)==1
+    monkeypatch.setenv('EXACTCUT_ALLOW_MATERIAL_FETCH','0')
+    assert prefetch(console,draft_with('EP5'))[0]==400
+    assert jobs()==accepted
 
 
 def test_prefetch_episode_references_survive_until_draft_is_saved(console):

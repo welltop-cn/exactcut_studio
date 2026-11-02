@@ -41,3 +41,5 @@ def test_separated_tracked_intervals_preserve_full_late_envelope(ready,tmp_path,
     assert meta['frame_count']==500 and meta['has_audio']
     assert frame_numbers(output)==[n&127 for n in range(10,510)]
     assert file_sha256(source)==sha
+
+from interactive_test_support import interactive_dispatcher

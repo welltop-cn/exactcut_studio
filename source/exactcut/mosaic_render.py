@@ -87,6 +87,7 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,rang
     return {'metadata':actual,'sha256':file_sha256(output),'bytes':output.stat().st_size}
 
 
+@editor_resources.media_operation
 def encode_mask(mask_video,meta,tracks,size,rate,effect,progress):
     width,height=size
     progress('正在合并全部区域遮罩…')
@@ -229,7 +230,7 @@ def execute(item,stop_event):
                 job=read_json(path)
                 if not job.get('cancel_requested'):job.update(status='running',stage='tracking',progress='正在准备处理视频')
                 write_json_atomic(path,job)
-        with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases):
+        with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases),editor_resources.final_group():
             _work(bid,sid,path,job,job['config'],[])
     finally:
         for lease in reversed(leases):lease.close()
@@ -265,26 +266,13 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False,actor='
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)
-            if old and (old['status']=='running' or old['status']=='completed' and (path.parent/f'render-{jid}'/'mosaic.mp4').is_file()):
+            if old and (old['status'] in {'queued','running'} or old['status']=='completed' and (path.parent/f'render-{jid}'/'mosaic.mp4').is_file()):
                 if not preview:write_json_atomic(path.parent/'render-latest.json',{'id':jid})
                 return old
-            leases=[]
-            try:
-                leases.append(editor_resources.acquire('preview',actor))
-                for lock,shared in [(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
-                    leases.append(cutting.lock_file(lock,shared=shared))
-                job={'schema_version':1,'id':jid,'status':'running','stage':'tracking','source_sha256':session['source_sha256'],'reset_at':reset_at,
-                     'targets':targets,'ranges':ranges,'effect':effect,'preview':preview,'actor':actor,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
-                write_json_atomic(path,job)
-                permit=cutting_access.InteractiveReadPermit.issue(session,job)
-                if not preview:write_json_atomic(path.parent/'render-latest.json',{'id':jid})
-            except Exception:
-                for lease in reversed(leases):lease.close()
-                raise
-    try:threading.Thread(target=_work,args=(bid,sid,path,job,cfg,leases,permit),daemon=True).start()
-    except Exception:
-        for lease in reversed(leases):lease.close()
-        raise
+            job={'schema_version':1,'id':jid,'status':'queued','stage':'waiting','source_sha256':session['source_sha256'],'reset_at':reset_at,
+                 'targets':targets,'ranges':ranges,'effect':effect,'preview':True,'actor':actor,'created_at':now_iso(),'progress':'效果预览已接收，等待处理','completed_regions':0,'total_regions':len(targets)}
+            from . import interactive_queue
+            interactive_queue.enqueue('clip',session,path,job,cfg,state_lock=path.parent/'render-state.lock')
     return job
 
 

@@ -58,13 +58,14 @@ def test_scan_http_lifecycle_cache_recovery_and_acl(configured, monkeypatch):
         code,report=call(app,'POST',base,{'policy':'standard'})
         assert code==202 and started.wait(2)
         assert call(app,'POST',base,{'policy':'standard'})[1]['id']==report['id']
-        assert call(app,'POST',base,{'policy':'strict'})[0]==429
+        strict_code,strict=call(app,'POST',base,{'policy':'strict'})
+        assert strict_code==202 and strict['id']!=report['id']
         with pytest.raises(cutting.CutError):
             with cutting.batch_lease(bid,exclusive=True):pytest.fail('active scan must protect its source')
         finish.set()
         for _ in range(100):
             state=call(app,'GET',base+'/standard')[1]
-            if state['report']['status']!='running':break
+            if state['report']['status'] not in {'queued','running','cancelling'}:break
             time.sleep(.02)
         assert state['report']['status']=='completed'
         assert state['report']['risk_events']==[]
@@ -76,7 +77,7 @@ def test_scan_http_lifecycle_cache_recovery_and_acl(configured, monkeypatch):
         assert call(app,'POST',base,{'policy':'standard'})[0]==202
         for _ in range(100):
             state=call(app,'GET',base+'/standard')[1]
-            if state['report']['status']!='running':break
+            if state['report']['status'] not in {'queued','running','cancelling'}:break
             time.sleep(.02)
         assert state['report']['status']=='failed' and 'secret' not in state['report']['error']
     finally:
@@ -96,7 +97,6 @@ def test_detector_preserves_coarse_on_provider_refinement_failure(tmp_path, monk
         return SimpleNamespace(text=json.dumps({'risk_events':[EVENT]}))
     closed=[]
     monkeypatch.setattr(genai,'Client',lambda **kwargs:SimpleNamespace(models=SimpleNamespace(generate_content=ask),close=lambda:closed.append(True)))
-    monkeypatch.setattr(scan.ai_rate,'acquire',lambda:None)
     def run(command,*args):
         if command[-1]=='-':return b'jpeg'
         from pathlib import Path
@@ -110,7 +110,8 @@ def test_detector_preserves_coarse_on_provider_refinement_failure(tmp_path, monk
     assert result['risk_events'][0]['refinement']=='inconclusive'
     assert result['warnings'] and compute.closed and closed
     names=[name for name,_ in logged]
-    assert 'scan.proxy.completed' in names and 'scan.rate_wait.completed' in names
+    assert 'scan.proxy.completed' in names and 'scan.model_request.completed' in names
+    assert 'scan.rate_wait.completed' not in names
     assert 'scan.model_request.completed' in names and 'scan.model_request.failed' in names
     assert 'scan.result_validate.completed' in names and 'scan.refinement_failed' in names
     assert 'provider blocked refinement' not in str(logged)
@@ -150,7 +151,7 @@ def test_scan_rejects_modified_frozen_source(configured, monkeypatch):
     scan.start(bid,sid,'standard')
     for _ in range(100):
         report=scan.state(bid,sid,'standard')['report']
-        if report['status']!='running':break
+        if report['status'] not in {'queued','running','cancelling'}:break
         time.sleep(.02)
     assert report['status']=='failed' and '校验' in report['error']
     assert not called and original.read_bytes()==original_bytes
@@ -175,17 +176,17 @@ def test_explicit_rescan_bypasses_completed_cache_but_not_running(configured,mon
         assert len(calls)==1
         assert call(app,'POST',base,{'policy':'standard','force':'true'})[0]==400
         code,report=call(app,'POST',base,{'policy':'standard','force':True})
-        assert code==202 and report['status']=='running'
+        assert code==202 and report['status'] in {'queued','running'}
         for _ in range(100):
             if len(calls)==2:break
             time.sleep(.02)
         assert len(calls)==2
-        assert call(app,'POST',base,{'policy':'standard','force':True})[1]['status']=='running'
+        assert call(app,'POST',base,{'policy':'standard','force':True})[1]['status'] in {'queued','running'}
         assert len(calls)==2
     finally:
         finish.set()
         for _ in range(100):
-            if scan.state(bid,sid,'standard')['report']['status']!='running':break
+            if scan.state(bid,sid,'standard')['report']['status'] not in {'queued','running','cancelling'}:break
             time.sleep(.02)
         app.shutdown();app.server_close()
 
@@ -204,3 +205,5 @@ def test_scan_requires_explicit_configuration(environment, monkeypatch):
     monkeypatch.setattr(scan, 'settings', lambda: {'enabled': True})
     monkeypatch.setattr(cutting, 'enabled', lambda: False)
     assert not scan.enabled()
+
+from interactive_test_support import interactive_dispatcher

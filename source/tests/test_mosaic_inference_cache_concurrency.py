@@ -89,3 +89,5 @@ def test_different_keys_infer_at_the_same_time(ready,tmp_path,monkeypatch):
         futures=[pool.submit(render.prepare_track,bid,session['id'],session,{**target,'x':x},cfg,root/f'target-{x}') for x in (10,40)]
         tracks=[f.result(5) for f in futures]
     assert tracks[0]['directory']!=tracks[1]['directory']
+
+from interactive_test_support import interactive_dispatcher

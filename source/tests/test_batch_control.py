@@ -52,7 +52,9 @@ def test_pid_reuse_is_never_signalled():
         kill.assert_not_called()
 
 
-def test_resume_waits_for_other_running_task(tmp_path):
+def test_resume_waits_for_other_running_task_under_explicit_emergency_total(tmp_path,monkeypatch):
+    from exactcut import concurrency
+    monkeypatch.setattr(concurrency,'load_config',lambda:{'concurrency':{'max_active_children':1}})
     paused = state(tmp_path)
     other = tmp_path / ('b' * 32)
     other.mkdir()

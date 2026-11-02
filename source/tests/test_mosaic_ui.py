@@ -16,7 +16,8 @@ def editor():
     Image.new('RGB', (160, 96), '#555555').save(jpeg, 'JPEG')
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={'width': 1440, 'height': 900})
+        context=browser.new_context(viewport={'width':1440,'height':900})
+        page=context.new_page()
         page.set_default_timeout(3000)
         page.route('**/*', lambda r: r.fulfill(body=html, content_type='text/html'))
         page.route('**/frame/*', lambda r: r.fulfill(body=jpeg.getvalue(), content_type='image/jpeg'))
@@ -311,7 +312,7 @@ def test_preparing_failure_can_retry_and_does_not_reopen_closed_dialog(editor):
     editor.locator('#mosaicWorkspace').wait_for(state='visible')
 
 
-def test_running_scan_allows_view_but_locks_editing(editor):
+def test_running_scan_keeps_existing_regions_editable(editor):
     scan_result(editor)
     editor.evaluate('''() => {
       const original=api;
@@ -321,12 +322,14 @@ def test_running_scan_allows_view_but_locks_editing(editor):
     }''')
     editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     editor.locator('[data-scan-event="e1"]').wait_for()
-    assert '完成后可继续编辑' in editor.locator('#mosaicScanStatus').inner_text()
+    assert '已有片段可编辑' in editor.locator('#mosaicScanStatus').inner_text()
     assert editor.locator('#mosaicScan').is_disabled()
     editor.locator('[data-scan-event="e1"]').click()
     editor.locator('#mosaicOverlay').wait_for(state='visible')
-    assert editor.locator('[data-proposal]').is_disabled()
-    assert editor.locator('#mosaicConfirm').is_disabled()
+    assert editor.locator('[data-proposal]').is_enabled()
+    assert editor.locator('#mosaicConfirm').is_enabled()
+    editor.locator('[data-proposal]').click()
+    assert active_count(editor)==1
 
 
 def test_wide_list_and_fixed_adopt_next(editor):
@@ -768,7 +771,7 @@ def test_effect_preview_sends_all_clip_regions_without_saving(editor):
     assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
 
 
-def test_closing_running_clip_preview_stops_without_discarding_effect_draft(editor):
+def test_closing_running_clip_preview_detaches_without_cancelling_or_discarding_effect_draft(editor):
     scan_result(editor)
     editor.evaluate("""() => {
       session.capabilities.tracking=true;window.previewStopped=false;
@@ -782,11 +785,11 @@ def test_closing_running_clip_preview_stops_without_discarding_effect_draft(edit
     open_auto(editor);editor.locator('#mosaicScan').click();editor.locator('[data-proposal]').click()
     editor.locator('[data-effect-target]').click();editor.locator('#mosaicEffectStyle').select_option('soft_blur')
     editor.locator('#mosaicEffectPreview').click()
-    assert editor.locator('#mosaicEffectSave').is_disabled()
+    assert editor.locator('#mosaicEffectSave').is_enabled()
     assert editor.locator('#mosaicTrackDialog').bounding_box()['height']>=700
     editor.locator('#mosaicTrackClose').click()
     editor.wait_for_function("!document.querySelector('#mosaicEffectSave').disabled")
-    assert editor.evaluate('stopPreviewBody.job_id')=='c'*32
+    assert editor.evaluate('previewStopped') is False
     assert editor.locator('#mosaicEffectStyle').input_value()=='soft_blur'
 
 

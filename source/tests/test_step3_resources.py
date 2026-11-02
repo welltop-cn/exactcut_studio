@@ -236,14 +236,16 @@ def test_inline_preview_has_independent_budget_and_keeps_disk_reservation(runner
         assert token in ledger['jobs']
         assert sum(v['bytes'] for v in ledger['jobs'][token].values()) > 0
     queued('a', 'render'); queued('b', 'fetch')
-    owned = {}
+    owned = {};additional=None
     try:
         web.worker_tick([], owned)
         assert set(owned) == {'a'*32, 'b'*32}
         with storage.reservation_lock(web.JOBS) as ledger:
             assert token in ledger['jobs'], 'recovery must not discard live HTTP reservations'
-        with pytest.raises(ResourceDeferred): web.admit_hook_preview(runner/'project')
+        additional=web.admit_hook_preview(runner/'project')
+        with storage.reservation_lock(web.JOBS) as ledger:assert additional in ledger['jobs']
     finally:
+        if additional:web.release_hook_preview(additional)
         web.release_hook_preview(token)
         close_logs(owned)
     with storage.reservation_lock(web.JOBS) as ledger: assert token not in ledger['jobs']
@@ -370,11 +372,22 @@ def test_preview_deferral_preserves_verified_partial_cache_for_retry(fixture, tm
     monkeypatch.setattr(hook_preview,'compute',compute)
     app=serve(); path=f"/api/batches/{fixture['id']}/hook-preview"; body={'revision':fixture['revision'],'index':0}
     try:
-        status, result = call(app,'POST',path,body)
-        assert status == 429 and result['not_before'] == 1010.
-        clock[0] = 1010.
-        assert call(app,'POST',path,body)[0] == 200
-        assert attempts == [False, True]
+        from exactcut import interactive_queue
+        import time
+        status,result=call(app,'POST',path,body);assert status==202
+        deadline=time.monotonic()+3
+        while True:
+            pending=[row for row in interactive_queue.snapshot()['pending'] if row['job']['id']==result['id']]
+            if pending and pending[0].get('not_before')==1010.:break
+            assert time.monotonic()<deadline;time.sleep(.01)
+        record=tmp_path/'projects'/fixture['draft']['drama_id']/'cache/hook-emphasis'/('b'*64+'.json')
+        assert read_json(record)=={'complete':'validated'} and attempts==[False]
+        assert not web.INLINE_RENDERS
+        clock[0]=1010.
+        from test_phase2_preview_api import finished_hook
+        code,retry=call(app,'POST',path,body);assert code in {200,202} and retry['id']==result['id']
+        assert finished_hook(app,fixture['id'],retry)['status']=='completed'
+        assert attempts==[False,True]
     finally: app.shutdown();app.server_close()
     assert not web.INLINE_RENDERS
 
@@ -589,3 +602,5 @@ def test_emphasis_invalid_cache_cleanup_never_masks_original_ai_error(tmp_path, 
     monkeypatch.setattr(semantic,'_request_analysis',Mock(side_effect=original))
     with pytest.raises(RuntimeError) as failure:semantic.resolve_emphasis(TEXT,tmp_path)
     assert failure.value is original
+
+from interactive_test_support import interactive_dispatcher

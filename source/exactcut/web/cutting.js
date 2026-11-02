@@ -193,7 +193,7 @@
         if (!blob) {
           frameController = new AbortController();
           const signal=frameController.signal;
-          const response = await EditorBusy.run(()=>EditorBusy.frame(appUrl(path()+`/frame/${target}`),signal),{signal,maxRetries:1,diagnostics:{batch:context.batch,request:context.asset.request_id,session:context.session.id},valid:()=>active(version)&&target===wanted&&!quick&&!resultMode,onWait:(n,max)=>{$('cutFrameHint').textContent=`处理资源暂忙，正在重试（${n}/${max}）`;}});
+          const response = await EditorBusy.run(()=>EditorBusy.frame(appUrl(path()+`/frame/${target}`),signal,job=>{if(active(version)&&target===wanted)$('cutFrameHint').textContent=job.progress||'准确帧已排队，等待后台读取…';}),{signal,maxRetries:1,diagnostics:{batch:context.batch,request:context.asset.request_id,session:context.session.id},valid:()=>active(version)&&target===wanted&&!quick&&!resultMode,onWait:(n,max)=>{$('cutFrameHint').textContent=`处理资源暂忙，正在重试（${n}/${max}）`;}});
           blob = await response.blob();
           frameController = null;
           if (!active(version)) return;
@@ -258,8 +258,8 @@
         scanReport=state.report;
         const events=scanReport?.status==='completed' ? scanReport.risk_events : [];
         if(scanReport?.status==='completed')ingestSuggestions(events);else paintRiskMarkers();
-        $('cutScanStatus').textContent=!state.enabled?'本机未启用识别，可手动选片段。':!scanReport?'暂无识别记录':scanReport.status==='running'?(scanReport.progress||'正在识别…'):scanReport.status==='failed'?scanReport.error:events.length?'勾选要删除的片段；AI 建议仅供参考。':'本次抽样未发现疑似内容，仍请检查视频。';
-        if (scanReport?.status!=='running') { $('cutScan').disabled=!state.enabled; return; }
+        $('cutScanStatus').textContent=!state.enabled?'本机未启用识别，可手动选片段。':!scanReport?'暂无识别记录':scanReport&&['queued','running','cancelling'].includes(scanReport.status)?(scanReport.progress||'已接收，等待后台处理…'):['failed','cancelled','superseded'].includes(scanReport?.status)?(scanReport.error||scanReport.progress||'本次识别未完成'):events.length?'勾选要删除的片段；AI 建议仅供参考。':'本次抽样未发现疑似内容，仍请检查视频。';
+        if (!['queued','running','cancelling'].includes(scanReport?.status)) { $('cutScan').disabled=!state.enabled; return; }
         await new Promise(r=>setTimeout(r,1500)); if(!valid())return; state=await api(base+'/scan/standard');
       }
     } catch(e) { if(valid()) { $('cutScanStatus').textContent=e.message; $('cutScan').disabled=false; } }
@@ -277,7 +277,15 @@
     if(!dialog.open)dialog.showModal(); status('正在准备视频…');
     try {
       const body={request_id:asset.request_id,source_sha256:asset.sha256};
-      const session=await EditorBusy.run(()=>api(`/api/batches/${batch}/cuts/open`,body),{signal:openController.signal,diagnostics:{batch,request:asset.request_id},valid:()=>version===epoch&&dialog.open,onWait:(n,max)=>status(`处理资源暂忙，正在重试（${n}/${max}）`)});
+      let receipt=await EditorBusy.run(()=>api(`/api/batches/${batch}/cuts/open`,body),{signal:openController.signal,diagnostics:{batch,request:asset.request_id},valid:()=>version===epoch&&dialog.open,onWait:(n,max)=>status(`处理资源暂忙，正在重试（${n}/${max}）`)});
+      while(['queued','running','cancelling'].includes(receipt?.status)){
+        if(version!==epoch||!dialog.open)return;
+        status(receipt.progress||'原片准备已排队，后台轮到后自动处理…');
+        await new Promise(resolve=>setTimeout(resolve,500));
+        receipt=await api(`/api/batches/${batch}/cuts/preparation/${receipt.id}`,undefined,{signal:openController.signal});
+      }
+      if(receipt?.status&&receipt.status!=='completed')throw Error(receipt.error||receipt.progress||'原片准备未完成');
+      const session=receipt.status==='completed'?receipt.result.session:receipt;
       if(version!==epoch||!dialog.open)return;
       context={batch,asset,session};
       for(const id of ['cutSource', 'cutOutput']){Object.assign($(id).dataset,{previewBatch:batch,previewRequest:asset.request_id,previewSession:session.id});}

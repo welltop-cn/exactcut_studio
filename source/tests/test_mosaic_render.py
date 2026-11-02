@@ -554,3 +554,5 @@ def test_live_tracking_progress_is_scoped_and_tolerates_missing_file(tmp_path):
         assert render.tracking_progress(tmp_path,job)==job
     file.write_text('{')
     assert render.tracking_progress(tmp_path,job)==job
+
+from interactive_test_support import interactive_dispatcher

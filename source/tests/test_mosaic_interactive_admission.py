@@ -29,7 +29,7 @@ def enable_models(tmp_path,monkeypatch):
 
 def terminal(path):
     deadline=time.monotonic()+5
-    while path.is_file() and read_json(path)['status']=='running' and time.monotonic()<deadline:time.sleep(.01)
+    while path.is_file() and read_json(path)['status'] in {'queued','running','cancelling'} and time.monotonic()<deadline:time.sleep(.01)
     assert read_json(path)['status'] in ('completed','failed','cancelled')
 
 
@@ -128,3 +128,5 @@ def test_two_authenticated_users_enter_model_work_concurrently(ready,tmp_path,mo
         finish.set()
         for path in profiles:terminal(path)
         app.shutdown();app.server_close()
+
+from interactive_test_support import interactive_dispatcher
