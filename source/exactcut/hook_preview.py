@@ -88,6 +88,24 @@ def request_fingerprint(request):
     return json_sha256(value)
 
 
+def source_identity(project,request):
+    """Cheap receipt invalidation; compute still hashes sources and validates placement caches."""
+    from .media import resolve_episode_video
+    from .runtime import protect_path
+    def identity(path):
+        protect_path(path)
+        try:
+            stat=path.stat()
+            return [stat.st_dev,stat.st_ino,stat.st_size,stat.st_mtime_ns,stat.st_ctime_ns]
+        except FileNotFoundError:return None
+    sources=[]
+    for episode in sorted({item.episode for item in request.timeline if item.type=='episode'}):
+        try:source=identity(resolve_episode_video(project,episode))
+        except ValidationError:source=None
+        sources.append([episode,source,identity(project/'data/episodes'/f'{episode}.video.json')])
+    return json_sha256(sources)
+
+
 def current_request(batch_id,request_id):
     from . import workflow
     from .intake import validate_draft
@@ -103,18 +121,21 @@ def submit(batch_id,snapshot,index,request,actor):
     from . import workflow,cutting,interactive_queue
     from .util import read_json,write_json_atomic,now_iso
     fingerprint=request_fingerprint(request);config_fingerprint=json_sha256(load_config())
-    jid=json_sha256([batch_id,request.request_id,fingerprint,config_fingerprint])[:32]
+    source_fingerprint=source_identity(workflow.ROOT/'projects'/str(snapshot['draft']['drama_id']).strip().strip('#'),request)
+    jid=json_sha256([batch_id,request.request_id,fingerprint,config_fingerprint,source_fingerprint])[:32]
     path=workflow.folder(batch_id)/'hook-previews'/(jid+'.json')
     with cutting.lock_file(path.parent/'state.lock',blocking=True):
         if path.is_file():
             previous=read_json(path)
             if previous['status'] in {'queued','running','completed'} and not previous.get('cancel_requested'):return previous
         job={'schema_version':1,'id':jid,'status':'queued','actor':actor,'index':index,'request_id':request.request_id,
-             'revision':snapshot['revision'],'source_sha256':fingerprint,'configuration_sha256':config_fingerprint,'reset_at':str(snapshot['revision']),
+             'revision':snapshot['revision'],'source_sha256':fingerprint,'configuration_sha256':config_fingerprint,
+             'source_identity_sha256':source_fingerprint,'reset_at':str(snapshot['revision']),
              'created_at':now_iso(),'progress':'Hook 预览已接收，等待处理'}
         session={'batch_id':batch_id,'id':request.request_id,'request_id':request.request_id,'source_sha256':fingerprint,'reset_at':str(snapshot['revision'])}
         interactive_queue.enqueue('hook',session,path,job,{},state_lock=path.parent/'state.lock',
-            payload={'index':index,'revision':snapshot['revision'],'fingerprint':fingerprint,'config_fingerprint':config_fingerprint})
+            payload={'index':index,'revision':snapshot['revision'],'fingerprint':fingerprint,'config_fingerprint':config_fingerprint,
+                     'source_identity_sha256':source_fingerprint})
     return job
 
 
@@ -127,8 +148,9 @@ def state(batch_id,jid):
     if not path.is_file():raise ValueError('Hook 预览任务不存在')
     job=read_json(path)
     try:
-        _,_,request=current_request(batch_id,job['request_id'])
-        job['input_current']=request_fingerprint(request)==job['source_sha256'] and json_sha256(load_config())==job['configuration_sha256']
+        _,manifest,request=current_request(batch_id,job['request_id'])
+        job['input_current']=(request_fingerprint(request)==job['source_sha256'] and json_sha256(load_config())==job['configuration_sha256']
+                              and source_identity(workflow.ROOT/'projects'/manifest.drama_id,request)==job.get('source_identity_sha256'))
     except (ValueError,OSError):job['input_current']=False
     return job
 
@@ -151,7 +173,8 @@ def run_queued(entry,leases):
             user=accounts.get(db,entry['actor'])
             if not user or not user.get('enabled') or not accounts.allowed(workflow.folder(bid),user):raise ValueError('无权继续此预览')
         if (latest['runtime'].get('archived') or request_fingerprint(request)!=binding['fingerprint']
-                or json_sha256(load_config())!=binding['config_fingerprint']):
+                or json_sha256(load_config())!=binding['config_fingerprint']
+                or source_identity(workflow.ROOT/'projects'/manifest.drama_id,request)!=binding.get('source_identity_sha256')):
             interactive_queue._update(entry,status='superseded',progress='设置已变化，旧预览结果不再采用');return None
         if not latest.get('media_managed') and latest['runtime']['status']!='draft':
             interactive_queue._update(entry,status='superseded',progress='项目状态已变化，旧预览不再采用');return None
