@@ -1521,7 +1521,9 @@ class Handler(BaseHTTPRequestHandler):
         publication = re.fullmatch(r'/api/batches/([0-9a-f]{32})/(publish|verify-delivery)', self.path)
         if publication:
             return self.publication_submission(*publication.groups())
-        if self.path in {'/api/help', '/api/client-events'}:
+        # Parsing does not hold a global write transaction during provider I/O.
+        # Excel publication acquires its own short mutation/naming transaction.
+        if self.path in {'/api/help', '/api/client-events', '/api/clip-text', '/api/batches/import'}:
             return self.handle_post()
         with mutation_lock():
             self.handle_post()
@@ -1845,8 +1847,8 @@ class Handler(BaseHTTPRequestHandler):
                         result = workflow.detail(result['id'])
                     return self.respond(201, result)
             if self.path == '/api/batches/import':
-                result = workflow.import_excel(data)
-                with LOCK:
+                result = workflow.import_excel(data,publication_lock=mutation_lock)
+                with mutation_lock(), LOCK:
                     return self.respond(201, self.new_batch(result))
             image_upload = re.fullmatch(r'/api/batches/([0-9a-f]{32})/ending-image', self.path)
             if image_upload:

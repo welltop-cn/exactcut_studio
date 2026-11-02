@@ -152,18 +152,17 @@ def test_invalid_ai_rate_fails_closed(monkeypatch, value):
     with pytest.raises(ValueError): concurrency.settings()
 
 
-def test_all_openai_entrances_defer_before_http(monkeypatch):
-    from exactcut import ai_rate, hook_emphasis, llm_intake, production_helper
+def test_budgeted_openai_entrances_defer_before_http(monkeypatch):
+    from exactcut import ai_rate, hook_emphasis, production_helper
     blocked = ResourceDeferred(1234, 'AI busy')
     monkeypatch.setattr(ai_rate, 'acquire', Mock(side_effect=blocked))
-    for module in (hook_emphasis, llm_intake, production_helper):
+    for module in (hook_emphasis, production_helper):
         monkeypatch.setattr(module, 'require_ai', lambda: None)
         monkeypatch.setattr(module, 'load_env_file', lambda *a: None)
     monkeypatch.setenv('OPENAI_API_KEY', 'fixture')
     client = Mock(side_effect=AssertionError('must not contact AI when exhausted'))
     monkeypatch.setattr(hook_emphasis.httpx, 'Client', client)
     with pytest.raises(ResourceDeferred): hook_emphasis.responses_json('x', 'y', {}, 'test', 'fixture-model')
-    with pytest.raises(ResourceDeferred): llm_intake.interpret('{}')
     result = production_helper.ask({'username':'budget-test'}, {'question':'制作进度', 'conversation':'test'})
     assert result['mode'] == 'busy'
     client.assert_not_called()
@@ -179,26 +178,21 @@ def test_placement_does_not_swallow_deferred_ai(monkeypatch, tmp_path):
         presentation.placement([b'fixture'], HookOptions(), {'source':'ai_semantic'}, tmp_path)
 
 
-def test_gemini_and_frame_ai_defer_without_requests_or_failure_report(monkeypatch, tmp_path):
+def test_gemini_bypasses_budget_but_openai_frame_ai_still_defers(monkeypatch, tmp_path):
     from exactcut import ai_rate, safety
-    monkeypatch.setattr(ai_rate, 'acquire', Mock(side_effect=ResourceDeferred(1234)))
-    client = Mock()
-    with pytest.raises(ResourceDeferred): safety._gemini_images_json(client, 'fixture', 'x', [])
-    client.models.generate_content.assert_not_called()
-    video = tmp_path/'fixture.mp4'; video.write_bytes(b'fixture')
-    report = tmp_path/'report.json'
-    monkeypatch.setattr(safety, '_gemini_client', lambda: client)
-    client.files.upload.return_value.name = 'files/fixture'
-    client.files.get.return_value = Mock(state='ACTIVE', uri='fixture-uri')
-    with pytest.raises(ResourceDeferred): safety.final_video_gemini(video, {'safety':{'final_video_model':'fixture'}}, report)
-    client.models.generate_content.assert_not_called()
-    client.files.delete.assert_not_called()
-    monkeypatch.setenv('OPENAI_API_KEY', 'fixture')
-    monkeypatch.setattr(safety, 'duration_ms', lambda *a: 1)
-    monkeypatch.setattr(safety, '_extract_frame', lambda *a: __import__('PIL.Image', fromlist=['Image']).new('RGB',(1,1)))
-    with pytest.raises(ResourceDeferred): safety.final_video_gpt_frames(video, [], {'safety':{'gpt_frame_model':'fixture'}}, report)
-    assert not report.exists()
-
+    permit=Mock(side_effect=ResourceDeferred(1234));monkeypatch.setattr(ai_rate,'acquire',permit)
+    client=Mock();client.models.generate_content.return_value.text='{"risk_events":[]}'
+    assert safety._gemini_images_json(client,'fixture','x',[])=={'risk_events':[]}
+    video=tmp_path/'fixture.mp4';video.write_bytes(b'fixture');report=tmp_path/'gemini.json'
+    monkeypatch.setattr(safety,'_gemini_client',lambda:client)
+    client.files.upload.return_value.name='files/fixture';client.files.get.return_value=Mock(state='ACTIVE',uri='fixture-uri')
+    assert safety.final_video_gemini(video,{'safety':{'final_video_model':'fixture'}},report)['status']=='passed'
+    assert client.models.generate_content.call_count==2;permit.assert_not_called()
+    monkeypatch.setenv('OPENAI_API_KEY','fixture');monkeypatch.setattr(safety,'duration_ms',lambda *a:1)
+    monkeypatch.setattr(safety,'_extract_frame',lambda *a:__import__('PIL.Image',fromlist=['Image']).new('RGB',(1,1)))
+    gpt_report=tmp_path/'gpt.json'
+    with pytest.raises(ResourceDeferred):safety.final_video_gpt_frames(video,[],{'safety':{'gpt_frame_model':'fixture'}},gpt_report)
+    permit.assert_called_once();assert not gpt_report.exists()
 
 def test_safety_sdk_disables_hidden_retries(monkeypatch):
     from exactcut import safety
@@ -297,31 +291,25 @@ def test_resuming_resident_at_global_cap_does_not_require_an_extra_slot(runner, 
     kill.assert_called_once_with(123,signal.SIGCONT)
 
 
-def test_safety_preflight_reentry_keeps_completed_ai_shots_with_single_token(tmp_path, monkeypatch):
+def test_safety_gemini_shots_complete_without_consuming_openai_budget(tmp_path, monkeypatch):
     from exactcut import ai_rate, safety
     from PIL import Image
-    monkeypatch.setattr(ai_rate, 'data_root', lambda: tmp_path)
-    monkeypatch.setattr(ai_rate, 'load_config', lambda: {'concurrency':{'ai':{'requests_per_minute':6,'burst':1}}})
-    clock = [100.]; monkeypatch.setattr(ai_rate.time, 'time', lambda: clock[0])
-    monkeypatch.setattr(safety.time, 'sleep', lambda *a: pytest.fail('deferred requests must not sleep'))
-    source = tmp_path/'source.mp4'; source.write_bytes(b'fixture')
-    monkeypatch.setattr(safety, 'resolve_episode_video', lambda *a: source)
-    monkeypatch.setattr(safety, '_extract_frame', lambda *a: Image.new('RGB',(8,8)))
-    units = [dict(type='episode',episode='EP1',start_ms=i*1000,end_ms=(i+1)*1000,shot_id=f'shot-{i}') for i in range(2)]
-    monkeypatch.setattr(safety, '_expand_episode_item', lambda *a: units)
-    client = Mock(); client.models.generate_content.return_value.text = '{"decision":"pass","categories":[],"evidence_zh":"","confidence":1}'
-    monkeypatch.setattr(safety, '_gemini_client', lambda: client)
-    request = Mock(timeline=[dict(type='episode',episode='EP1',start_ms=0,end_ms=2000)])
-    config = {'safety':{'editorial_model':'fixture','story_model':'fixture'}}
-    report = tmp_path/'audit'/'preflight.json'
-    with pytest.raises(ResourceDeferred): safety.editorial_preflight(tmp_path, request, config, report)
-    assert client.models.generate_content.call_count == 1
-    assert not report.exists()
-    clock[0] = 110.
-    timeline, result = safety.editorial_preflight(tmp_path, request, config, report)
-    assert result['status'] == 'passed' and len(timeline) == 2
-    assert client.models.generate_content.call_count == 2, 'first completed shot must not consume a second permit on reentry'
-
+    monkeypatch.setattr(ai_rate,'data_root',lambda:tmp_path)
+    monkeypatch.setattr(ai_rate,'load_config',lambda:{'concurrency':{'ai':{'requests_per_minute':6,'burst':1}}})
+    monkeypatch.setattr(ai_rate.time,'time',lambda:100.);ai_rate.acquire()
+    budget=tmp_path/'.web-state/ai-rate.json';before=budget.read_bytes()
+    monkeypatch.setattr(safety.time,'sleep',lambda *a:pytest.fail('Gemini must not wait for a local budget'))
+    source=tmp_path/'source.mp4';source.write_bytes(b'fixture')
+    monkeypatch.setattr(safety,'resolve_episode_video',lambda *a:source);monkeypatch.setattr(safety,'_extract_frame',lambda *a:Image.new('RGB',(8,8)))
+    units=[dict(type='episode',episode='EP1',start_ms=i*1000,end_ms=(i+1)*1000,shot_id=f'shot-{i}') for i in range(2)]
+    monkeypatch.setattr(safety,'_expand_episode_item',lambda *a:units)
+    client=Mock();client.models.generate_content.return_value.text='{"decision":"pass","categories":[],"evidence_zh":"","confidence":1}'
+    monkeypatch.setattr(safety,'_gemini_client',lambda:client)
+    request=Mock(timeline=[dict(type='episode',episode='EP1',start_ms=0,end_ms=2000)]);config={'safety':{'editorial_model':'fixture','story_model':'fixture'}};report=tmp_path/'audit/preflight.json'
+    timeline,result=safety.editorial_preflight(tmp_path,request,config,report)
+    assert result['status']=='passed' and len(timeline)==2 and client.models.generate_content.call_count==2
+    safety.editorial_preflight(tmp_path,request,config,report)
+    assert client.models.generate_content.call_count==2 and budget.read_bytes()==before
 
 def test_orchestrator_preserves_deferred_stage_as_retryable(workspace, monkeypatch):
     from exactcut import orchestrator, workflow
@@ -413,7 +401,7 @@ def test_inline_intake_returns_busy_when_ai_budget_exhausted(fixture, monkeypatc
     finally: app.shutdown();app.server_close()
 
 
-@pytest.mark.parametrize('module_name,slot_name', [('production_helper','_SLOTS'),('llm_intake','SLOTS')])
+@pytest.mark.parametrize('module_name,slot_name', [('production_helper','_SLOTS')])
 def test_inline_ai_default_has_one_nonblocking_slot(module_name, slot_name):
     from importlib import import_module
     slots = getattr(import_module('exactcut.'+module_name),slot_name)
@@ -445,25 +433,21 @@ def test_gemini_processing_defers_and_reuses_uploaded_handle_without_sleep(tmp_p
     result=safety.final_video_gemini(video,config,report)
     assert result['status']=='passed'
     client.files.upload.assert_called_once(); assert client.files.get.call_count==2
-    permit.assert_called_once(); client.models.generate_content.assert_called_once(); client.files.delete.assert_called_once_with(name='files/fixture')
+    permit.assert_not_called(); client.models.generate_content.assert_called_once(); client.files.delete.assert_called_once_with(name='files/fixture')
     assert safety.final_video_gemini(video,config,report)['status']=='passed'
     assert client.files.upload.call_count==1 and client.models.generate_content.call_count==1
 
 
-def test_gemini_quota_deferral_retains_ready_upload_for_reentry(tmp_path, monkeypatch):
-    from exactcut import safety, ai_rate
-    client=Mock(); client.files.upload.return_value.name='files/fixture'
-    client.files.get.return_value=Mock(state='ACTIVE',uri='fixture-uri')
-    client.models.generate_content.return_value.text='{"risk_events":[]}'
+def test_gemini_vendor_failure_is_not_faked_as_success_or_retried_indefinitely(tmp_path, monkeypatch):
+    from exactcut import safety,ai_rate
+    client=Mock();client.files.upload.return_value.name='files/fixture';client.files.get.return_value=Mock(state='ACTIVE',uri='fixture-uri')
+    client.models.generate_content.side_effect=RuntimeError('vendor 429')
     monkeypatch.setattr(safety,'_gemini_client',lambda:client)
-    permit=Mock(side_effect=[ResourceDeferred(1234),None]);monkeypatch.setattr(ai_rate,'acquire',permit)
-    video=tmp_path/'fixture.mp4';video.write_bytes(b'fixture');report=tmp_path/'audit'/'gemini.json';config={'safety':{'final_video_model':'fixture'}}
-    with pytest.raises(ResourceDeferred):safety.final_video_gemini(video,config,report)
-    client.files.upload.assert_called_once()
-    client.models.generate_content.assert_not_called();client.files.delete.assert_not_called();assert not report.exists()
-    assert safety.final_video_gemini(video,config,report)['status']=='passed'
-    client.files.upload.assert_called_once();client.models.generate_content.assert_called_once();client.files.delete.assert_called_once()
-
+    permit=Mock(side_effect=ResourceDeferred(1234));monkeypatch.setattr(ai_rate,'acquire',permit)
+    video=tmp_path/'fixture.mp4';video.write_bytes(b'fixture');report=tmp_path/'audit/gemini.json'
+    result=safety.final_video_gemini(video,{'safety':{'final_video_model':'fixture'}},report)
+    assert result['status']=='unverified' and result['allowed'] is False
+    client.models.generate_content.assert_called_once();client.files.delete.assert_called_once();permit.assert_not_called()
 
 def test_emphasis_correction_survives_single_token_quota_reentry(tmp_path, monkeypatch):
     from exactcut import hook_emphasis as semantic, ai_rate

@@ -94,7 +94,6 @@ def test_sdk_schema_conversion_cannot_change_persistent_task_identity(tmp_path,m
         return SimpleNamespace(text='{"cues":[]}')
     client=SimpleNamespace(models=SimpleNamespace(generate_content=request))
     proxy=tmp_path/'proxy.mp4';proxy.write_bytes(b'proxy')
-    monkeypatch.setattr(model.ai_rate,'acquire',lambda:None)
     try:
         model.ask(client,proxy,1000,cfg,time.monotonic()+500)
         assert model.SCHEMA==original

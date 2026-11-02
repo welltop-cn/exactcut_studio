@@ -7,7 +7,6 @@ import re
 import threading
 import time
 from . import cutting, cutting_scan as scan, mosaic_session as sessions, cutting_access, workflow, diagnostics
-from .stage_results import ResourceDeferred
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 from . import editor_resources, processing_cancel
 
@@ -50,11 +49,7 @@ def detect(jpeg,meta,cfg,key,*,deadline=None):
     client=genai.Client(api_key=key,http_options=types.HttpOptions(timeout=cfg['request_timeout_ms'],retry_options=types.HttpRetryOptions(attempts=1)))
     try:
         deadline=min(deadline,time.monotonic()+180) if deadline is not None else time.monotonic()+180
-        with diagnostics.span('mosaic.region_rate_wait',private_error=True,model=cfg['model']):
-            while True:
-                if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:raise cutting.CutError('区域识别等待超时，请重试')
-                try:scan.ai_rate.acquire();break
-                except ResourceDeferred as exc:time.sleep(min(1,max(.05,exc.not_before-time.time())))
+        if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:raise cutting.CutError('区域识别等待超时，请重试')
         with diagnostics.span('mosaic.region_request',private_error=True,model=cfg['model'],timeout_ms=cfg['request_timeout_ms']):
             response=client.models.generate_content(model=cfg['model'],contents=[types.Part.from_bytes(data=jpeg,mime_type='image/jpeg'),types.Part.from_text(text=PROMPT)],
                 config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=deepcopy(SCHEMA)))

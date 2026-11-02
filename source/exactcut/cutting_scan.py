@@ -11,9 +11,8 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
-from . import cutting, ai_rate, diagnostics, editor_resources, processing_cancel, cutting_access, workflow
+from . import cutting, diagnostics, editor_resources, processing_cancel, cutting_access, workflow
 from .runtime import protect_path
-from .stage_results import ResourceDeferred
 from .util import load_config, file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 
 PROMPT = '''你是短剧成片的人工审片辅助员。只标记可见的疑似色情/擦边画面，不作平台通过承诺。
@@ -120,12 +119,8 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
     prompt=PROMPT+(STRICT if policy=='strict' else '')+f'\n原成片总时长 {duration} 毫秒。'
 
     def ask(parts, extra=''):
-        with diagnostics.span('scan.rate_wait',private_error=True,model=cfg['model']):
-            while True:
-                if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:
-                    raise cutting.CutError('本次识别用时过长，未完成，请重试')
-                try:ai_rate.acquire();break
-                except ResourceDeferred as exc:time.sleep(min(1,max(.05,exc.not_before-time.time())))
+        if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:
+            raise cutting.CutError('本次识别用时过长，未完成，请重试')
         with diagnostics.span('scan.model_request',private_error=True,model=cfg['model'],timeout_ms=cfg['request_timeout_ms']):
             response=client.models.generate_content(model=cfg['model'],contents=[*parts,types.Part.from_text(text=prompt+extra)],
                         config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=deepcopy(SCHEMA)))
