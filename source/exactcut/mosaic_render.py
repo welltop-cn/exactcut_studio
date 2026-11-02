@@ -15,6 +15,7 @@ import uuid
 import time
 from contextlib import nullcontext
 from .runtime import mutation_lock, maintenance_file
+from . import editor_resources
 
 
 def validate_targets(meta,targets):
@@ -112,7 +113,7 @@ def recover(path):
     if job['status']=='running' and not job.get('queued_task'):
         try:lease=cutting.lock_file(path.with_suffix('.worker.lock'))
         except cutting.CutError:return job
-        lease.close();job.update(status='failed',error='上次完整视频生成已中断，请重新生成')
+        lease.close();processing_cancel.recover_interrupted(job,'上次完整视频生成已中断，请重新生成')
         write_json_atomic(path,job)
     return job
 
@@ -120,7 +121,7 @@ def recover(path):
 def tracking_progress(root,job):
     if job.get('status')!='running' or job.get('stage')!='tracking' or job.get('cancel_requested'):return job
     name=job.get('tracking_inference','')
-    if not isinstance(name,str) or not re.fullmatch(r'inference-[0-9a-f]{32}',name):return job
+    if not isinstance(name,str) or not re.fullmatch(r'inference-[0-9a-f]{32}(?:-work-[0-9a-f]{32})?',name):return job
     try:
         index=job['completed_regions'];target=job['targets'][index]
         p=read_json(root/name/'progress.json');done=p['frames_done'];total=p['frames_total']
@@ -141,7 +142,7 @@ def state(bid,sid,jid):
         # Recovery leaves running only while the replacement owns the edit gate.
         # Its commit can change the source between two version reads.
         if job.get('replacement',{}).get('status')=='running':return job
-        if not job.get('queued_task') and not mosaic_replace.is_current(bid,session,job):mosaic_locate.current(bid,sid,job)
+        if not job.get('queued_task') and not mosaic_replace.is_current(bid,session,job):mosaic_locate.current(bid,sid,job,readonly=True)
         return tracking_progress(path.parent,job)
 
 
@@ -162,8 +163,9 @@ def video_file(bid,sid,jid):
     return output
 
 
-def current(bid,sid,job):
-    if not job.get('queued_task'):return mosaic_locate.current(bid,sid,job)
+def current(bid,sid,job,*,permit=None):
+    if not job.get('queued_task'):return mosaic_locate.current(bid,sid,job,permit=permit)
+    if permit is not None:raise cutting.CutError("最终任务不能使用交互只读许可",409)
     session=sessions.read_session(bid,sid);cutting.require_reset(session,job['reset_at'])
     if session['source_sha256']!=job['source_sha256']:raise cutting.CutError('原片版本已变化',409)
     cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=job['source_sha256'],allow_job=job['id'])
@@ -259,7 +261,7 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False,actor='
         if not targets and not ranges:raise cutting.CutError('请选择要删除或打码的片段')
         if any(t.get('motion')!='fixed' for t in targets) and not tracking.enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
         cfg=tracking.settings()
-        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':7,'effect':effect,'fallback':'skip_region',**({'preview':True,'preview_engine':2} if preview else {})})[:32]
+        jid=json_sha256({'source':session['source_sha256'],'reset':reset_at,'targets':targets,'ranges':ranges,'config':cfg,'engine':7,'effect':effect,'fallback':'fail_job',**({'preview':True,'preview_engine':2} if preview else {})})[:32]
         path=sessions.session_path(bid,sid)/f'render-{jid}.json'
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             old=recover(path)
@@ -268,16 +270,18 @@ def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False,actor='
                 return old
             leases=[]
             try:
-                for lock,shared,resource in [(cutting.lock_root()/'compute.lock',False,'compute'),(path.with_suffix('.worker.lock'),False,None),(cutting.lock_root()/f'{bid}.lock',True,None)]:
-                    leases.append(cutting.lock_file(lock,shared=shared,resource=resource))
+                leases.append(editor_resources.acquire('preview',actor))
+                for lock,shared in [(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
+                    leases.append(cutting.lock_file(lock,shared=shared))
                 job={'schema_version':1,'id':jid,'status':'running','stage':'tracking','source_sha256':session['source_sha256'],'reset_at':reset_at,
-                     'targets':targets,'ranges':ranges,'effect':effect,'preview':preview,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
+                     'targets':targets,'ranges':ranges,'effect':effect,'preview':preview,'actor':actor,'created_at':now_iso(),'progress':f'准备删除 {len(ranges)} 段、打码 {len(targets)} 个区域','completed_regions':0,'total_regions':len(targets)}
                 write_json_atomic(path,job)
+                permit=cutting_access.InteractiveReadPermit.issue(session,job)
                 if not preview:write_json_atomic(path.parent/'render-latest.json',{'id':jid})
             except Exception:
                 for lease in reversed(leases):lease.close()
                 raise
-    try:threading.Thread(target=_work,args=(bid,sid,path,job,cfg,leases),daemon=True).start()
+    try:threading.Thread(target=_work,args=(bid,sid,path,job,cfg,leases,permit),daemon=True).start()
     except Exception:
         for lease in reversed(leases):lease.close()
         raise
@@ -292,7 +296,7 @@ def stop(bid,sid,jid,reset_at):
         job=recover(path)
         if not job:raise cutting.CutError('生成任务不存在',404)
         if job.get('queued_task'):current(bid,sid,job)
-        else:mosaic_locate.current(bid,sid,job)
+        else:mosaic_locate.current(bid,sid,job,readonly=True)
         if job['status']=='queued':
             job.update(status='cancelled',cancel_requested=True,progress='已取消排队，参数已保留')
             write_json_atomic(path,job)
@@ -302,61 +306,18 @@ def stop(bid,sid,jid,reset_at):
         return job
 
 
-def prepare_track(bid,sid,session,target,cfg,directory,*,on_tracking=None):
+def prepare_track(bid,sid,session,target,cfg,directory,*,on_tracking=None,validate=lambda:None):
     if target.get('motion')=='fixed':
         return {'target':target,'result':{'width':session['metadata']['width'],'height':session['metadata']['height'],'frames':[]}}
-    # compute.lock is already held by this batch. Never recursively enqueue a single job.
-    jid=tracking.identity(session,target,cfg);root=sessions.session_path(bid,sid)
-    geometry={k:target[k] for k in ('start','end','seed_frame','x','y','w','h')}
-    inference=root/f'inference-{tracking.inference_identity(session,geometry,cfg)}'
-    raw_caches=[inference,*[root/f'inference-{key}' for key in tracking.legacy_inference_identities(session,geometry,cfg)]]
-    for raw_cache in raw_caches:
-        if not (raw_cache/'result.json').is_file():continue
-        result=read_json(raw_cache/'result.json')
-        tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
-        if all((raw_cache/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
-            return {'target':target,'directory':raw_cache,'result':result}
-    cached=root/f'track-{jid}.json';cache_dir=root/f'track-{jid}'
-    if cached.is_file():
-        previous=read_json(cached)
-        if previous['status']=='completed' and (cache_dir/'result.json').is_file():
-            result=read_json(cache_dir/'result.json')
-            tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
-            if all((cache_dir/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
-                return {'target':target,'directory':cache_dir,'result':result}
-    # A retry of this batch can reuse its own completed per-target inference.
-    if (directory/'result.json').is_file():
-        result=read_json(directory/'result.json')
-        tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
-        if all((directory/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
-            return {'target':target,'directory':directory,'result':result}
-    # Reuse verified inference from earlier render/preview jobs made before the shared cache.
-    for job_path in root.glob('render-*.json'):
-        previous=read_json(job_path)
-        if previous.get('source_sha256')!=session['source_sha256'] or previous.get('reset_at','')!=session.get('reset_at',''):continue
-        for request_path in (root/job_path.stem).glob('target-*/request.json'):
-            request=read_json(request_path)
-            if request.get('config')!=cfg or request.get('metadata')!=session['metadata']:continue
-            if request.get('source')!=str(root/'source.mp4'):continue
-            if {k:request.get('target',{}).get(k) for k in geometry}!=geometry:continue
-            legacy=request_path.parent
-            if not (legacy/'result.json').is_file():continue
-            result=read_json(legacy/'result.json')
-            tracking.checked_frames(target,result.get('frames'),result['width'],result['height'])
-            if all((legacy/'masks'/f'{i:06d}.png').is_file() for i in range(target['end']-target['start'])):
-                return {'target':target,'directory':legacy,'result':result}
-    (inference/'progress.json').unlink(missing_ok=True)
-    if on_tracking:on_tracking(inference.name)
-    result=tracking.run_tracker(root/'source.mp4',inference,session['metadata'],geometry,{**cfg,'masks_only':True})
-    return {'target':target,'directory':inference,'result':result}
+    from . import mosaic_inference
+    return mosaic_inference.prepare(sessions.session_path(bid,sid),session,target,cfg,directory,on_tracking=on_tracking,validate=validate)
+
+def _work(bid,sid,path,job,cfg,leases,permit=None):
+    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases or None), (editor_resources.encoding() if job.get('preview') else nullcontext()):
+        _work_cancelable(bid,sid,path,job,cfg,leases,permit)
 
 
-def _work(bid,sid,path,job,cfg,leases):
-    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases or None):
-        _work_cancelable(bid,sid,path,job,cfg,leases)
-
-
-def _work_cancelable(bid,sid,path,job,cfg,leases):
+def _work_cancelable(bid,sid,path,job,cfg,leases,permit=None):
     cancelled=False
     def update(**fields):
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
@@ -364,33 +325,28 @@ def _work_cancelable(bid,sid,path,job,cfg,leases):
             if saved.get('cancel_requested'):raise processing_cancel.Cancelled()
             saved.update(fields);write_json_atomic(path,saved)
     try:
-        session=current(bid,sid,job);source=path.parent/'source.mp4';directory=path.parent/f"render-{job['id']}"
+        session=current(bid,sid,job,permit=permit);source=path.parent/'source.mp4';directory=path.parent/f"render-{job['id']}"
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败')
         storage.require_space(source.parent,source.stat().st_size*3+2*1024**3)
         directory.mkdir(exist_ok=True);tracks=[];warnings=[];skipped=set()
         for index,target in enumerate(job['targets']):
-            current(bid,sid,job)
+            current(bid,sid,job,permit=permit)
             update(progress=f"正在准备第 {index+1} / {len(job['targets'])} 个打码区域",completed_regions=index,tracking_inference='')
-            try:
-                track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}',on_tracking=lambda name:update(tracking_inference=name))
-                for frame in track['result']['frames']:
-                    if frame['box'] is None:skipped.add(frame['frame'])
-                for warning in track['result'].get('warnings',[]):warnings.append({'region':index+1,**warning})
-                empty=sum(f['box'] is None for f in track['result']['frames'])
-                if empty:warnings.append({'region':index+1,'frame':target['start'],'reason':f'{empty} 帧失跟，已跳过该区域'})
-            except (cutting.CutError,subprocess.TimeoutExpired):
-                track={'target':target,'failed':True}
-                skipped.update(range(target['start'],target['end']))
-                warnings.append({'region':index+1,'frame':target['start'],'reason':'跟踪未完成，已跳过该区域'})
+            track=prepare_track(bid,sid,session,target,cfg,directory/f'target-{index}',on_tracking=lambda name:update(tracking_inference=name),validate=lambda:current(bid,sid,job,permit=permit))
+            for frame in track['result']['frames']:
+                if frame['box'] is None:skipped.add(frame['frame'])
+            for warning in track['result'].get('warnings',[]):warnings.append({'region':index+1,**warning})
+            empty=sum(f['box'] is None for f in track['result']['frames'])
+            if empty:warnings.append({'region':index+1,'frame':target['start'],'reason':f'{empty} 帧失跟，已跳过该区域'})
             tracks.append(track)
         update(stage='composing',completed_regions=len(tracks))
-        current(bid,sid,job)
+        current(bid,sid,job,permit=permit)
         if job.get('preview'):
             result=process_preview(source,directory/'mosaic.mp4',session['metadata'],tracks,lambda text:update(progress=text),job.get('effect'))
         else:
             result=process_video(source,directory/'mosaic.mp4',session['metadata'],tracks,job.get('ranges',[]),lambda text:update(progress=text),effect=job.get('effect'))
-        with cutting_access.gate(workflow.folder(bid),session['request_id'],allow_job=job['id'] if job.get('queued_task') else None):
-            current(bid,sid,job)
+        with cutting_access.gate(workflow.folder(bid),session['request_id'],allow_job=job['id'] if job.get('queued_task') else None,readonly=permit is not None):
+            current(bid,sid,job,permit=permit)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
             result.update(skipped_frames=len(skipped),warnings=warnings,region_count=len(tracks),notice='请预览检查遮挡效果；无告警不代表没有漏遮。')
             update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='处理后视频已生成，可预览和下载')

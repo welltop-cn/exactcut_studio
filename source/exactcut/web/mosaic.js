@@ -3,16 +3,17 @@
   const dialog=$('mosaicDialog'), video=$('mosaicSource'), image=$('mosaicFrame'), overlay=$('mosaicOverlay');
   let context=null, epoch=0, token=0, wanted=0, ready=-1, candidates=[], selected=null, targets=[], editing=null;
   let motion='tracked',regionDrafts=[],autoScanPending=false;
+  const trackingUnavailableHint='跟随目标当前不可用；请启用目标跟踪，或在编辑中明确改为固定位置并保存。';
   let loading=false, frameLoading=false, drawing=false, pointer=null, frameUrl=null, controller=null, timer;
   let batchJob=null,batchToken=0,batchLoading=false,batchError="";
   let trackToken=0,clipBounds=null;
   let deletions=[],savedDeletions=[],oldDraftRaw=null,mutationBusy=false,resultBefore=false,resultMode=false;
-  let stopPending=false,previewBusy=false,previewClose=false,previewJob=null,previewEndpoint=null,previewReset="";
+  let stopPending=false,previewOperation=null;
   let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
   let sourceManager=null,sourceBinding=null,beforeBinding=null;
   const pendingJob=(job=batchJob)=>['queued','running','cancelling'].includes(job?.status);
   const awaitingDecision=(job=batchJob)=>job?.status==='completed'&&!job?.discarded_at&&job?.replacement?.status!=='completed';
-  const editLocked=()=>scanLoading||previewBusy||batchLoading||pendingJob()||awaitingDecision()||stopPending||mutationBusy;
+  const editLocked=()=>scanLoading||(previewOperation?.busy&&!previewOperation.closed)||batchLoading||pendingJob()||awaitingDecision()||stopPending||mutationBusy;
   const defaultEffect={style:'pixel',strength:'medium',expansion:'small'};
   let effect={...defaultEffect},savedEffect={...defaultEffect},clipEffects={},savedClipEffects={};
   let removedClip=null,removeTimer;
@@ -92,6 +93,7 @@
   function selectRegion(id){selected=id;const c=selectedBox();editing=c?.uid?targets.findIndex(t=>t.uid===c.uid):null;if(editing===-1)editing=null;motion=c?.motion||(editing!==null?targets[editing].motion||'tracked':motion);}
   function selectedBox(){return candidates.find(c=>c.id===selected);}
   function resetCandidate(){regionDrafts=[];token++;loading=false;candidates=[];selected=null;editing=null;drawing=false;pointer=null;scanEvent=null;paint();}
+  function motionHint(){return motion==='fixed'?'固定位置 · 所选时间内保持此位置':context?.session.capabilities?.tracking?'准确帧 · 框仅对应当前参考帧，尚未跟踪':trackingUnavailableHint;}
   function paint(){
     if(!context)return;
     for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
@@ -116,8 +118,10 @@
     $('mosaicManualOptions').hidden=!addingClip;
     $('mosaicAddSubmit').hidden=!addingClip;$('mosaicConfirm').hidden=addingClip;
     $('mosaicAddSubmit').disabled=editLocked()||(manualAction==='mosaic'&&$('mosaicConfirm').disabled);
+    const trackedOption=$('mosaicMotion').querySelector('option[value="tracked"]');
+    trackedOption.disabled=!context.session.capabilities?.tracking;trackedOption.textContent=trackedOption.disabled?'跟随目标（当前不可用）':'跟随目标（人物 / 物体）';
     $('mosaicManualAction').value=manualAction;$('mosaicMotion').value=motion;
-    if(accurate)$('mosaicFrameHint').textContent=motion==='fixed'?'固定位置 · 所选时间内保持此位置':'准确帧 · 框仅对应当前参考帧，尚未跟踪';
+    if(accurate)$('mosaicFrameHint').textContent=motionHint();
     $('mosaicAdjust').classList.toggle('manual-delete',addingClip&&manualAction==='delete');
     $('mosaicPrevEvent').disabled=eventIndex<=0;
     $('mosaicNextEvent').disabled=eventIndex<0||eventIndex>=(allEvents().length||0)-1;
@@ -332,7 +336,7 @@
       try{await image.decode();}catch{URL.revokeObjectURL(next);throw Error('准确帧读取失败，请重试');}
       if(!active(version)||request!==controller||request.signal.aborted||document.hidden||frame!==wanted||!video.paused){URL.revokeObjectURL(next);return;}
       if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=next;ready=frame;image.hidden=false;
-      $('mosaicFrameHint').textContent=motion==='fixed'?'固定位置 · 所选时间内保持此位置':'准确帧 · 框仅对应当前参考帧，尚未跟踪';
+      $('mosaicFrameHint').textContent=motionHint();
     }catch(e){if(active(version)&&request===controller&&e.name!=='AbortError'){$('mosaicFrameHint').textContent=e.message;$('mosaicFrameRetry').hidden=false;}}
     finally{if(active(version)&&request===controller){frameLoading=false;paint();if(autoScanPending&&ready===wanted&&!image.hidden)scanVideo(false,true);}}
   }
@@ -389,7 +393,7 @@
   async function open(batch,asset){
     releasePreparation?.();scanController?.abort();
     sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;
-    const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;playbackError=false;pausePlayback();motion='tracked';wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
+    stopClipPreview();previewOperation=null;const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;playbackError=false;pausePlayback();motion='tracked';wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
     batchToken++;batchJob=null;batchLoading=false;stopPending=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
     autoScanPending=false;clearRemovedClip();scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;addingClip=false;manualClips=[];aiEvents=[];clipEdits={};$('mosaicAdjust').open=false;$('mosaicEffects').close();
     image.hidden=true;overlay.hidden=true;$('mosaicWorkspace').hidden=true;$('mosaicTitle').textContent='剪切打码 · '+asset.title;
@@ -433,7 +437,7 @@
   }
   $('mosaicClose').onclick=()=>{if(!mutationBusy){$('mosaicEffects').close();dialog.close();}};
   dialog.addEventListener('cancel',e=>{if(mutationBusy)e.preventDefault();});
-  dialog.addEventListener('close',()=>{if(dialog.open)return;releasePreparation?.();releasePreparation=null;scanController?.abort();sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
+  dialog.addEventListener('close',()=>{if(dialog.open)return;stopClipPreview();previewOperation=null;$('mosaicTrackDialog').close();releasePreparation?.();releasePreparation=null;scanController?.abort();sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
   document.addEventListener('visibilitychange',()=>{if(document.hidden){releasePreparation?.();scanController?.abort();controller?.abort();clearTimeout(timer);}else if(context&&dialog.open&&video.paused&&!resultMode&&ready!==wanted){loadFrame();}});
   $('mosaicScan').onclick=()=>scanVideo(!scanError&&scanReport?.status!=='running');
   $('mosaicScanEvents').onclick=e=>{const b=e.target.closest('[data-scan-event]');if(b)viewScanEvent(b.dataset.scanEvent);};
@@ -451,7 +455,7 @@
     $('mosaicStart').value=clock(wanted);$('mosaicEnd').value=clock(Math.min(meta().frame_count-1,wanted+Math.round(rate()*5)-1));
     $('mosaicAdjust').open=true;paint();status('设置时间，选择删除或打码后添加。');
   };
-  $('mosaicMotion').onchange=e=>{if(editLocked())return;motion=e.target.value;if(selectedBox())selectedBox().motion=motion;paint();status('位置模式已修改，保存修改后生效。');};
+  $('mosaicMotion').onchange=e=>{if(editLocked())return;if(e.target.value==='tracked'&&!context.session.capabilities?.tracking){paint();status(trackingUnavailableHint,true);return;}motion=e.target.value;if(selectedBox())selectedBox().motion=motion;paint();status('位置模式已修改，保存修改后生效。');};
   $('mosaicManualAction').onchange=e=>{manualAction=e.target.value;paint();};
   $('mosaicAddSubmit').onclick=guard(()=>{
     if(editLocked())return;
@@ -632,11 +636,12 @@
     $('mosaicStatus').hidden=generating||showOutput;
     dialog.classList.toggle('processing-result',showOutput);
     const clip=currentClip();
-    $('mosaicBatchStart').disabled=(!context.session.capabilities?.tracking&&adopted.some(t=>t.motion!=='fixed'))||(!adopted.length&&!deletions.length)||running||scanLoading;
+    const trackingUnavailable=!context.session.capabilities?.tracking&&adopted.some(t=>t.motion!=='fixed');
+    $('mosaicBatchStart').disabled=trackingUnavailable||(!adopted.length&&!deletions.length)||running||scanLoading;
     $('mosaicDiscard').disabled=mutationBusy||scanReport?.status==='running';
     $('mosaicClose').disabled=mutationBusy;
     $('mosaicBatchStart').textContent=running?'正在生成视频…':'生成处理后视频';
-    $('mosaicBatchHint').textContent=[`删除 ${deletions.length} 段 · 打码 ${segments} 段`,batchError].filter(Boolean).join('\n');
+    $('mosaicBatchHint').textContent=[`删除 ${deletions.length} 段 · 打码 ${segments} 段`,trackingUnavailable&&!running&&!awaitingDecision()?trackingUnavailableHint:'',batchError].filter(Boolean).join('\n');
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
     $('mosaicBatchClose').hidden=!showOutput;
@@ -826,65 +831,73 @@
   });
   $('mosaicSaveDelete').onclick=guard(()=>{const event=allEvents().find(e=>e.id===scanEvent);if(!event)return;const r=range();setEventRange(event,r);deletions=deletions.filter(t=>!belongs(t,event));deletions.push({...r,eventId:event.id,originStart:event.start,originEnd:event.end,label:event.label});targets.filter(t=>belongs(t,event)).forEach(t=>t.adopted=false);if(save())paint();});
   function currentClip(){const event=allEvents().find(e=>e.id===scanEvent);return event?eventRange(event):targets[editing]||null;}
-  async function stopClipPreview(){
-    previewClose=true;
-    if(previewJob?.status==='running'){
-      try{await api(previewEndpoint+'/stop',{job_id:previewJob.id,reset_at:previewReset});}
-      catch(e){if(context)status('停止预览未成功，正在等待任务结束。',true);}
+  const previewCurrent=op=>previewOperation===op&&active(op.version)&&!op.closed&&$('mosaicTrackDialog').open&&!pendingJob()&&!batchLoading&&!awaitingDecision();
+  async function stopClipPreview(op=previewOperation){
+    if(!op)return;
+    op.closed=true;
+    if(op.job?.status==='running'&&!op.stopping&&!op.stopSent){
+      op.stopping=true;
+      try{
+        const reply=await api(op.kind==='track'?op.endpoint+'/track/'+op.job.id+'/stop':op.endpoint+'/stop',
+          op.kind==='track'?{reset_at:op.reset}:{job_id:op.job.id,reset_at:op.reset});
+        op.stopSent=true;
+        if(reply?.id===op.job.id&&reply.status)op.job=reply;
+      }catch(e){if(previewOperation===op&&active(op.version)&&!pendingJob()&&!batchLoading&&!awaitingDecision())status('停止预览未成功，正在等待任务结束。',true);}
+      finally{op.stopping=false;}
     }
   }
-  $('mosaicEffectPreview').onclick=async()=>{
-    if(editLocked()||!effectDraft||!effectEditKey)return;
-    const selectedTargets=targets.filter(t=>t.adopted!==false&&clipKey(t)===effectEditKey)
-      .map(t=>({...renderTarget(t),effect:{...effectDraft}}));
-    if(!selectedTargets.length)return;
-    const version=epoch,endpoint=base(),appearance={...effectDraft},reset=context.session.reset_at||'',previewStarted=Date.now();
-    previewBusy=true;previewClose=false;previewJob=null;previewEndpoint=endpoint;previewReset=reset;
-    clipBounds=null;trackToken++;paint();
-    $('mosaicTrackTitle').textContent='本片段效果预览';$('mosaicTrackHint').textContent='';
+  async function runPreview(kind,body){
+    const op={kind,body,endpoint:base(),reset:context.session.reset_at||'',version:epoch,job:null,busy:true,closed:false,started:Date.now(),stopping:false,stopSent:false};
+    previewOperation=op;clipBounds=null;trackToken++;paint();
+    $('mosaicTrackTitle').textContent=kind==='track'?'动态打码预览':'本片段效果预览';
+    $('mosaicTrackHint').textContent=kind==='track'?'仅预览当前区域、当前片段。':'';
     $('mosaicTrackStatus').textContent='正在生成本片段预览…';$('mosaicTrackVideo').hidden=true;
-    $('mosaicTrackClose').textContent='返回设置';$('mosaicTrackDialog').classList.add('is-loading');$('mosaicTrackDialog').showModal();
+    $('mosaicTrackClose').textContent=kind==='track'?'返回检查':'返回设置';$('mosaicTrackDialog').classList.add('is-loading');$('mosaicTrackDialog').showModal();
     try{
-      previewJob=await api(endpoint+'/clip-preview',{targets:selectedTargets,effect:appearance,reset_at:reset});
-      if(previewClose)await stopClipPreview();
-      while(previewJob.status==='running'){
-        if(active(version)&&!previewClose){const seconds=Math.floor((Date.now()-previewStarted)/1000);$('mosaicTrackStatus').textContent=`${previewJob.stage==='composing'?'正在合成片段预览':selectedTargets.every(t=>t.motion==='fixed')?'正在准备固定位置打码':'正在跟踪片段'} · 已等待 ${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;}
+      op.job=await api(op.endpoint+(kind==='track'?'/track':'/clip-preview'),body);
+      if(op.closed||!active(op.version)||previewOperation!==op)await stopClipPreview(op);
+      while(pendingJob(op.job)){
+        if(op.closed&&!op.stopSent)await stopClipPreview(op);
+        if(!pendingJob(op.job))break;
+        if(previewCurrent(op)){
+          const seconds=Math.floor((Date.now()-op.started)/1000),fixed=(body.targets||[body.target]).every(t=>t.motion==='fixed');
+          $('mosaicTrackStatus').textContent=(kind==='track'?op.job.progress:null)||
+            (op.job.stage==='composing'?'正在合成片段预览':fixed?'正在准备固定位置打码':'正在跟踪片段')+' · 已等待 '+Math.floor(seconds/60)+':'+String(seconds%60).padStart(2,'0');
+        }
         await new Promise(r=>setTimeout(r,1000));
-        previewJob=await api(endpoint+'/render/'+previewJob.id);
+        op.job=await api(op.endpoint+(kind==='track'?'/track/':'/render/')+op.job.id);
       }
-      if(!active(version)||previewClose)return;
-      if(previewJob.status!=='completed')throw Error(previewJob.error||'预览未完成，请重试。');
-      $('mosaicTrackStatus').textContent='预览已生成';
-      $('mosaicTrackVideo').src=appUrl(endpoint+'/render/'+previewJob.id+'/video?v='+encodeURIComponent(previewJob.completed_at||''));
+      if(!previewCurrent(op))return;
+      if(op.job.status!=='completed')throw Error(op.job.error||'预览未完成，请重试。');
+      $('mosaicTrackStatus').textContent=kind==='track'?clock(body.target.start)+'–'+clock(body.target.end-1)+' · 预览已生成。':'预览已生成';
+      $('mosaicTrackVideo').src=appUrl(op.endpoint+(kind==='track'?'/track/':'/render/')+op.job.id+(kind==='track'?'/preview':'/video')+'?v='+encodeURIComponent(op.job.completed_at||''));
       $('mosaicTrackVideo').hidden=false;
-    }catch(e){if(active(version)&&!previewClose)$('mosaicTrackStatus').textContent=e.message;}
-    finally{$('mosaicTrackDialog').classList.remove('is-loading');previewBusy=false;previewJob=null;if(context)paint();}
+    }catch(e){if(previewCurrent(op))$('mosaicTrackStatus').textContent=e.message;}
+    finally{
+      op.busy=false;
+      if(previewOperation===op){$('mosaicTrackDialog').classList.remove('is-loading');if(active(op.version))paint();}
+    }
+  }
+  $('mosaicEffectPreview').onclick=()=>{
+    if(editLocked()||!effectDraft||!effectEditKey)return;
+    const selectedTargets=targets.filter(t=>t.adopted!==false&&clipKey(t)===effectEditKey).map(t=>({...renderTarget(t),effect:{...effectDraft}}));
+    if(selectedTargets.length)return runPreview('clip',{targets:selectedTargets,effect:{...effectDraft},reset_at:context.session.reset_at||''});
   };
   $('mosaicTrackVideo').addEventListener('loadedmetadata',()=>{if(clipBounds)$('mosaicTrackVideo').currentTime=clipBounds.start;});
   $('mosaicTrackVideo').addEventListener('play',()=>{const p=$('mosaicTrackVideo');if(clipBounds&&(p.currentTime<clipBounds.start||p.currentTime>=clipBounds.end))p.currentTime=clipBounds.start;});
   $('mosaicTrackVideo').addEventListener('timeupdate',()=>{const p=$('mosaicTrackVideo');if(clipBounds&&p.currentTime>=clipBounds.end){p.pause();p.currentTime=clipBounds.start;}});
-  $('mosaicTrackClose').onclick=()=>$('mosaicTrackDialog').close();
-  $('mosaicTrackDialog').addEventListener('close',()=>{if(previewBusy)stopClipPreview();$('mosaicTrackClose').textContent='返回检查';trackToken++;clipBounds=null;$('mosaicTrackVideo').pause();$('mosaicTrackVideo').removeAttribute('src');$('mosaicTrackVideo').load();});
-  $('mosaicTrack').onclick=async()=>{
-    clipBounds=null;$('mosaicTrackTitle').textContent='动态打码预览';$('mosaicTrackHint').textContent='仅预览当前区域、当前片段。';
+  $('mosaicTrackClose').onclick=()=>{stopClipPreview();$('mosaicTrackDialog').close();};
+  $('mosaicTrackDialog').addEventListener('close',()=>{
+    if($('mosaicTrackDialog').open)return;
+    stopClipPreview();if(context)paint();$('mosaicTrackClose').textContent='返回检查';trackToken++;clipBounds=null;
+    $('mosaicTrackVideo').pause();$('mosaicTrackVideo').removeAttribute('src');$('mosaicTrackVideo').load();
+  });
+  $('mosaicTrack').onclick=()=>{
+    if(editLocked())return;
     const saved=targets[editing],c=selectedBox();if(!saved||saved.adopted===false)return;
     try{const r=range();if(!c||['x','y','w','h'].some(k=>c[k]!==saved[k])||r.start!==saved.start||r.end!==saved.end)throw Error('请先保存区域调整，再开始跟踪。');}catch(e){status(e.message,true);return;}
-    const request=++trackToken,version=epoch,endpoint=base(),valid=()=>active(version)&&request===trackToken&&$('mosaicTrackDialog').open;
-    $('mosaicTrackVideo').hidden=true;$('mosaicTrackStatus').textContent='SAM 2 正在跟踪当前区域。首次加载模型可能需要稍等。';$('mosaicTrackDialog').classList.add('is-loading');$('mosaicTrackDialog').showModal();
-    try{
-      const target=Object.fromEntries(['start','end','seed_frame','x','y','w','h'].map(k=>[k,saved[k]]));
-      let job=await api(endpoint+'/track',{target,effect:effectFor(saved),reset_at:context.session.reset_at||''});
-      while(valid()&&job.status==='running'){
-        $('mosaicTrackStatus').textContent=job.progress||'正在跟踪并生成预览…';
-        await new Promise(r=>setTimeout(r,1200));if(!valid())return;
-        job=await api(endpoint+'/track/'+job.id);
-      }
-      if(!valid())return;
-      if(job.status!=='completed')throw Error(job.error||'跟踪未完成，请重试。');
-      $('mosaicTrackStatus').textContent=`${clock(target.start)}–${clock(target.end-1)} · 预览已生成。`;
-      $('mosaicTrackVideo').src=appUrl(endpoint+'/track/'+job.id+'/preview?v='+encodeURIComponent(job.completed_at||''));$('mosaicTrackVideo').hidden=false;
-    }catch(e){if(valid())$('mosaicTrackStatus').textContent=e.message;}
-    finally{if(valid())$('mosaicTrackDialog').classList.remove('is-loading');}
+    const target=Object.fromEntries(['start','end','seed_frame','x','y','w','h'].map(k=>[k,saved[k]]));
+    return runPreview('track',{target,effect:effectFor(saved),reset_at:context.session.reset_at||''});
   };
   $('mosaicClear').onclick=()=>{if(window.confirm('取消全部处理选择？区域调整会保留。')){deletions=[];targets.forEach(t=>t.adopted=false);if(save())paint();}};
   $('mosaicAddRegion').onclick=()=>{

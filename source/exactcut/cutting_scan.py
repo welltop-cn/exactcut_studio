@@ -11,7 +11,7 @@ import time
 from fractions import Fraction
 from pathlib import Path
 
-from . import cutting, ai_rate, diagnostics
+from . import cutting, ai_rate, diagnostics, editor_resources, processing_cancel, cutting_access, workflow
 from .runtime import protect_path
 from .stage_results import ResourceDeferred
 from .util import load_config, file_sha256, json_sha256, read_json, write_json_atomic, now_iso
@@ -160,8 +160,9 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
                     parts=[]
                     for stamp in stamps:
                         if time.monotonic()+30>deadline:raise cutting.CutError('复查超时')
-                        jpeg=cutting.run(['ffmpeg','-v','error','-ss',f'{stamp/1000:.6f}','-i',str(source),
-                            '-frames:v','1','-vf',"scale=w='min(720,iw)':h=-2",'-f','image2pipe','-vcodec','mjpeg','-'],30)
+                        with cutting.frame_lease(cutting.lock_root()/'frame.lock'):
+                            jpeg=cutting.run(['ffmpeg','-v','error','-ss',f'{stamp/1000:.6f}','-i',str(source),
+                                '-frames:v','1','-vf',"scale=w='min(720,iw)':h=-2",'-f','image2pipe','-vcodec','mjpeg','-'],30)
                         if not jpeg:raise cutting.CutError('抽样画面为空')
                         parts.extend([types.Part.from_text(text=f'原成片时间 {stamp} ms'),types.Part.from_bytes(data=jpeg,mime_type='image/jpeg')])
                     findings=ask(parts,f'\n离散抽帧复查，只报告 {left}～{end} 毫秒范围内的可见内容。边界为估计，供人工确认。')
@@ -196,7 +197,7 @@ def recover(path):
         try:lease=cutting.lock_file(path.with_suffix('.worker.lock'))
         except cutting.CutError:return report
         lease.close()
-        report.update(status='failed',error='上次识别已中断，请重新识别')
+        processing_cancel.recover_interrupted(report,'上次识别已中断，请重新识别')
         write_json_atomic(path,report)
     return report
 
@@ -207,7 +208,7 @@ def state(bid,sid,policy):
         return {'enabled':enabled(),'report':recover(path),'notice':NOTICE}
 
 
-def start(bid,sid,policy,*,force=False):
+def start(bid,sid,policy,*,force=False,actor='admin'):
     if type(force) is not bool:raise cutting.CutError('重新识别参数必须为布尔值')
     session=cutting.read_session(bid,sid);cfg=settings();identifier=identity(session,policy,cfg)
     if not enabled():raise cutting.CutError('自动识别未启用；请使用本机识别启动参数',503)
@@ -217,33 +218,45 @@ def start(bid,sid,policy,*,force=False):
         if previous and (previous['status']=='running' or (previous['status']=='completed' and not force)):return previous
         leases=[]
         try:
-            for target,shared,resource in [(cutting.lock_root()/'scan.lock',False,'scan'),
-                                  (path.with_suffix('.worker.lock'),False,None),
-                                  (cutting.lock_root()/f'{bid}.lock',True,None),
-                                  (cutting.lock_root()/'compute.lock',False,'compute')]:
-                leases.append(cutting.lock_file(target,shared=shared,resource=resource))
+            leases.append(editor_resources.acquire('scan',actor))
+            for target,shared in [(path.with_suffix('.worker.lock'),False),(cutting.lock_root()/f'{bid}.lock',True)]:
+                leases.append(cutting.lock_file(target,shared=shared))
+            leases.append(editor_resources.acquire('preprocess',actor))
             from .storage import require_space
             require_space(path.parent,512*1024**2)
-            report={'schema_version':1,'id':identifier,'source_sha256':session['source_sha256'],
+            report={'schema_version':1,'id':identifier,'source_sha256':session['source_sha256'],'actor':actor,'reset_at':session.get('reset_at',''),
                     'policy':policy,'model':cfg['model'],'status':'running','progress':'识别已提交',
                     'risk_events':[],'warnings':[],'created_at':now_iso(),'notice':NOTICE,
                     'sampling':{'coarse_fps':cfg['coarse_fps'],'refine_max_frames':48,'max_refine_events':cfg['max_refine_events']}}
             write_json_atomic(path,report)
-            threading.Thread(target=_work,args=(path,session,report,cfg,key,leases),daemon=True).start()
+            permit=cutting_access.InteractiveReadPermit.issue(session,report)
+            threading.Thread(target=_work,args=(path,session,report,cfg,key,leases,permit),daemon=True).start()
             return report
         except Exception:
             for lease in leases:lease.close()
             raise
 
 
-def _work(path,session,report,cfg,key,leases):
+def _work(path,session,report,cfg,key,leases,permit=None):
+    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases), editor_resources.encoding():
+        _work_scoped(path,session,report,cfg,key,leases,permit)
+
+
+def _work_scoped(path,session,report,cfg,key,leases,permit=None):
+    def current():
+        live=cutting.read_session(session['batch_id'],session['id'])
+        if permit is not None:permit.require(live,report)
+        cutting.require_reset(live,report.get('reset_at',''))
+        cutting_access.require_editable(workflow.folder(session['batch_id']),session['request_id'],source_sha=session['source_sha256'],readonly=permit is not None)
     def update(**fields):
         with cutting.lock_file(path.parent/'scan-state.lock',blocking=True):
             current=read_json(path);current.update(fields);write_json_atomic(path,current)
     try:
+        current()
         source=path.parent/'source.mp4'
         if file_sha256(source)!=session['source_sha256']:raise cutting.CutError('原片校验失败，未进行识别')
         result=detect(source,session['metadata'],cfg,report['policy'],key,lambda message:update(progress=message),leases[-1])
+        current()
         update(**result,status='completed',completed_at=now_iso(),progress='识别完成，请复核疑似区间')
     except Exception as exc:
         update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '自动识别失败，请重试；未修改剪切标记')

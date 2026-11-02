@@ -274,8 +274,9 @@ def frame_lease(path, *, timeout=2.0):
                 raise ResourceBusy('frame') from exc
             time.sleep(min(.05, remaining))
     diagnostics.event('editor.frame_wait', duration_ms=round((time.monotonic()-started)*1000), admitted=True)
+    from . import processing_cancel
     try:
-        yield
+        with processing_cancel.retain([stream]):yield
     finally:
         stream.close()
 
@@ -383,7 +384,7 @@ def open_session(batch_id, request_id, source_sha256):
         path = session_path(batch_id, sid)
         if (path/'session.json').is_file():
             return get_session(batch_id, sid)
-        with lock_file(lock_root()/'compute.lock', resource='compute'):
+        with lock_file(lock_root()/'cut-prepare.lock', resource='compute'):
             if (path/'session.json').is_file():
                 return get_session(batch_id, sid)
             if source.stat().st_size > settings().get('max_source_bytes', 512*1024**2):

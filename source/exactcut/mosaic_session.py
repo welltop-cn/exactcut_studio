@@ -116,6 +116,11 @@ def discard(bid,sid,reset_at):
                 if job.get('status')=='running' and job.get('reset_at','')==reset_at and job.get('source_sha256')==session['source_sha256']:
                     job.update(cancel_requested=True,progress='正在停止生成…')
                     write_json_atomic(path,job)
+            with lock_file(root/'track-state.lock',blocking=True):
+                for path in root.glob('track-*.json'):
+                    job=read_json(path)
+                    if job.get('status')=='running' and job.get('reset_at','')==reset_at and job.get('source_sha256')==session['source_sha256']:
+                        job.update(cancel_requested=True,progress='正在停止预览…');write_json_atomic(path,job)
             session['reset_at']=now_iso()
             write_json_atomic(root/'session.json',session)
             if scan:

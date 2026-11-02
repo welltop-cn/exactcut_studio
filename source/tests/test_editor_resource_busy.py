@@ -1,8 +1,9 @@
 """Resource busy is an explicit admission contract, never a generic 429."""
 import io
 import json
+from contextlib import ExitStack
 import pytest
-from exactcut import cutting, cutting_http, mosaic_http, webserver
+from exactcut import cutting, cutting_http, mosaic_http, webserver, editor_resources
 
 
 @pytest.mark.parametrize('resource', ['compute', 'scan', 'frame'])
@@ -94,7 +95,9 @@ def test_scan_admission_failure_has_no_job_and_releases_earlier_locks(configured
         start = lambda: cutting_scan.start(bid, sid, 'standard')
     def unexpected(*a, **k): pytest.fail('no worker may start after admission rejection')
     monkeypatch.setattr(cutting_scan.threading.Thread, 'start', unexpected)
-    with cutting.lock_file(cutting.lock_root() / (resource + '.lock')):
+    with ExitStack() as leases:
+        role='scan' if resource=='scan' else 'preprocess'
+        for actor in ('busy-alpha','busy-beta'):leases.enter_context(editor_resources.acquire(role,actor))
         with pytest.raises(cutting.ResourceBusy) as error:
             start()
         assert error.value.resource == resource
@@ -102,7 +105,7 @@ def test_scan_admission_failure_has_no_job_and_releases_earlier_locks(configured
         with cutting.lock_file(path.with_suffix('.worker.lock')):
             pass
         if resource == 'compute':
-            with cutting.lock_file(cutting.lock_root() / 'scan.lock'):
+            with editor_resources.acquire('scan','admin'):
                 pass
 
 
@@ -178,7 +181,7 @@ def test_non_capacity_scan_admission_never_retryable(configured, monkeypatch, ki
             start()
         assert type(error.value) is cutting.CutError and error.value.status == 429
         assert not path.exists()
-        with cutting.lock_file(cutting.lock_root() / 'scan.lock'):
+        with editor_resources.acquire('scan','admin'):
             pass
 
 

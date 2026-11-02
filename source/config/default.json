@@ -72,6 +72,15 @@
   "mosaic_queue": {
     "max_active_tasks": 1
   },
+  "editor_resources": {
+    "preview_tasks": 2,
+    "preview_per_user": 1,
+    "scan_tasks": 2,
+    "scan_per_user": 1,
+    "preprocess_tasks": 2,
+    "preprocess_per_user": 1,
+    "encoder_threads": 2
+  },
   "preview_subtitles": {
     "enabled": false,
     "model": "gemini-3.8-flash",

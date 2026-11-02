@@ -43,14 +43,14 @@ def handle(handler, batch_id, suffix, method):
                 sid, policy = scan_route.groups()
                 from . import cutting_access, workflow
                 scan_session = cutting.read_session(batch_id, sid)
-                cutting_access.require_editable(workflow.folder(batch_id), scan_session['request_id'], source_sha=scan_session['source_sha256'])
+                cutting_access.require_editable(workflow.folder(batch_id), scan_session['request_id'], source_sha=scan_session['source_sha256'], readonly=method == 'GET')
                 if method == 'GET' and policy:
                     return handler.respond(200, cutting_scan.state(batch_id, sid, policy))
                 if method == 'POST' and policy is None:
                     with cutting_access.gate(workflow.folder(batch_id), scan_session['request_id']):
                         cutting_access.require_editable(workflow.folder(batch_id), scan_session['request_id'], source_sha=scan_session['source_sha256'])
                         cutting.require_reset(cutting.read_session(batch_id, sid), data.get('reset_at', ''))
-                        return handler.respond(202, cutting_scan.start(batch_id, sid, data.get('policy', 'standard'), force=data.get('force', False)))
+                        return handler.respond(202, cutting_scan.start(batch_id, sid, data.get('policy', 'standard'), force=data.get('force', False), actor=handler.user['username']))
                 raise cutting.CutError('识别入口不存在', 404)
             match = re.fullmatch(r'([0-9a-f]{32})(?:/(source|source-url|frame/[0-9]+|output/[0-9a-f]{32}|render|save|replace|discard))?', suffix)
             if not match:

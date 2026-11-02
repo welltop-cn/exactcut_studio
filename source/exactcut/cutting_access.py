@@ -1,8 +1,40 @@
 """Shared admission rules for pre-delivery edits and current-media changes."""
 from contextlib import contextmanager
+from dataclasses import dataclass
 from hashlib import sha256
 
 from .util import read_json
+
+
+@dataclass(frozen=True)
+class InteractiveReadPermit:
+    """Internal admission identity, never reconstructed from a client request."""
+    batch_id:str
+    session_id:str
+    request_id:str
+    job_id:str
+    source_sha256:str
+    reset_at:str
+    actor:str
+
+    @classmethod
+    def issue(cls,session,job):
+        from .cutting import CutError
+        if job.get('queued_task') or job.get('status')!='running':raise CutError('交互只读许可仅用于已准入任务',503)
+        return cls(session['batch_id'],session['id'],session['request_id'],job['id'],session['source_sha256'],session.get('reset_at',''),job.get('actor','admin'))
+
+    def require(self,session,job):
+        from . import processing_cancel,accounts,workflow
+        from .cutting import CutError
+        processing_cancel.check()
+        actual=(session['batch_id'],session['id'],session['request_id'],job['id'],job['source_sha256'],job.get('reset_at',''),job.get('actor','admin'))
+        expected=(self.batch_id,self.session_id,self.request_id,self.job_id,self.source_sha256,self.reset_at,self.actor)
+        if actual!=expected or job.get('queued_task') or session['source_sha256']!=self.source_sha256 or session.get('reset_at','')!=self.reset_at:
+            raise CutError('交互任务的来源或许可已失效',409)
+        db=workflow.BATCHES.parent/'accounts.sqlite3'
+        if db.is_file():
+            user=accounts.get(db,self.actor)
+            if not user or not user.get('enabled') or not accounts.allowed(workflow.folder(self.batch_id),user):raise CutError('交互任务账号已停用或无权访问项目',403)
 
 
 @contextmanager
