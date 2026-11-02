@@ -1,5 +1,14 @@
 # 本地 dev 服务与专项测试交接
 
+## 2026-11-02：资源调度固定候选独立验收（已退出）
+
+- 工作树`cut-mosaic-resource-scheduling`，源码候选`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`；实际入口`exactcut.webserver.main`，私有启动器`source/.dev-state/resource-scheduling-20261102/launch_dev.py`。
+- 独立数据根`source/.dev-state/resource-scheduling-20261102/c3ef0f13/data`，同一根跨真实核心、补验及边界阶段保留；没有合并用户账号/草稿/媒体，也没有重置限流域。实际core浏览器入口曾为`resource-scheduling.localhost:62209/home/`，仅历史记录，当前不提供活链接。
+- 候选有效普通2/3/2/4总11、final1、字幕2+30、media5+final1及线程配置已比较。真实核心4次Gemini、7次六帧CPU SAM、普通FFmpeg3、完整A/B编码和独立Chromium恢复/播放；边界明确使用provider替身，不证明真实字幕/远端发布结果。
+- 所有本会话启动的临时dev已退出；最后服务PID59835已确认不存在，14个执行锁文件均可获取，交互pending/active均空。保留私有脚本、输入和全部证据，不靠重跑setup恢复旧实例。
+- 18883、旧只读viewer及其他会话服务未更新或停止。新候选仍待父最终review，media5+1不能当作Linux生产容量核定。
+- 证据：[固定候选验收](verification/frontend-background-resource-scheduling-2026-11-02.md)及JSON；源码全量2049 passed/1 skipped/10既有警告。
+
 ## 2026-11-02：交互并发实证与用户只读围观
 
 - 实现工作树：`/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources`；`feat/cut-mosaic-interactive-resources`。父review后，用户18883在空闲时一次正常SIGTERM升级到该已提交代码树c93dc49，新PID59032；原工作树clean、原数据根不变。334个保护文件在真实登录前SHA完全一致，详见 `docs/verification/cut-mosaic-interactive-user-upgrade-2026-11-02.json`。
