@@ -1952,11 +1952,12 @@ def main():
         if not server.subtitle_dispatcher.start():
             diag.event('preview_subtitles.dispatcher_owned_elsewhere', level='warning')
         server.mosaic_dispatcher.start()
+        # Interactive HTTP admission is independent of the ordinary production worker switch.
+        server.interactive_dispatcher.start()
         for path in workflow.BATCHES.glob('*/draft.json'):
             if not (path.parent / 'access.json').exists():
                 workflow.write_json_atomic(path.parent / 'access.json', {'owner':'admin'})
         if worker_enabled:
-            server.interactive_dispatcher.start()
             recover_jobs(enqueue=True, scheduler=True)
             server.worker_thread = threading.Thread(target=worker, daemon=True)
             server.worker_thread.start()
