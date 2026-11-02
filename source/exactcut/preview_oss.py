@@ -1,7 +1,5 @@
 """Private preview copies. Never delete objects or modify bucket-wide settings."""
 from pathlib import Path
-import hashlib
-import threading
 import shutil
 import tempfile
 import re
@@ -9,12 +7,10 @@ from urllib.parse import quote
 
 from .runtime import environment
 from .util import file_sha256, load_config, env
-from . import diagnostics as diag
+from . import diagnostics as diag, resource_locks, editor_resources
 
 # Restricted namespaces: configuration cannot redirect writes into delivery keys.
 PREFIX = 'exactcut-previews/production'
-_LOCKS = [threading.Lock() for _ in range(64)]
-_UPLOADS = threading.BoundedSemaphore(2)
 
 
 def object_prefix():
@@ -126,49 +122,38 @@ def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, rec
             receipt.get('identity') == identity and receipt.get('bytes') == identity[2] and
             receipt.get('bucket') == bucket.bucket_name and receipt.get('endpoint') == bucket.endpoint):
         return receipt
-    lock = _LOCKS[int(hashlib.sha256(prefix.encode()).hexdigest(), 16) % len(_LOCKS)]
-    # Duplicate waiters never hold an upload slot needed by another project.
-    if not lock.acquire(timeout=10):
-        raise ValueError('该预览正在准备，请稍后重试')
-    try:
-        if not _UPLOADS.acquire(timeout=10):
-            raise ValueError('预览准备繁忙，请稍后重试')
-        try:
-            before = _identity(video)
-            with tempfile.TemporaryDirectory(prefix='.oss-preview-', dir=video.parent) as directory:
-                snapshot = Path(directory) / 'preview.mp4'
-                shutil.copyfile(video, snapshot)
-                if _identity(video) != before:
-                    raise ValueError('成片正在更新，请稍后重试')
-                digest = file_sha256(snapshot)
-                key = prefix + digest + '.mp4'
-                if not bucket.object_exists(key):
-                    try:
-                        result = bucket.put_object_from_file(key, str(snapshot), headers={
-                            'Content-Type': 'video/mp4', 'Content-Disposition': 'inline',
-                            'Cache-Control': 'private, max-age=900',
-                            'x-oss-object-acl': 'private', 'x-oss-meta-sha256': digest,
-                            'x-oss-forbid-overwrite': 'true',
-                        })
-                        if result.status not in (200, 201):
-                            raise ValueError('预览上传失败')
-                    except Exception as exc:
-                        if getattr(exc, 'code', None) != 'FileAlreadyExists':
-                            raise
-                # Some Linux filesystems coalesce timestamps for rapid writes.
-                # A same-size in-place change may therefore retain stat identity.
-                # Cold uploads verify bytes too; immutable published files retain
-                # the receipt-only hot path.
-                if _identity(video) != before or file_sha256(video) != digest:
-                    raise ValueError('成片正在更新，请稍后重试')
-                meta = bucket.head_object(key)
-                remote_hash = meta.headers.get('x-oss-meta-sha256') or meta.headers.get('X-Oss-Meta-Sha256')
-                if (meta.content_length != before[2] or remote_hash != digest or
-                        bucket.get_object_acl(key).acl != 'private'):
-                    raise ValueError('预览对象校验失败，未修改已有文件')
-                return {'key': key, 'sha256': digest, 'bytes': before[2], 'identity': before,
-                        'bucket': bucket.bucket_name, 'endpoint': bucket.endpoint}
-        finally:
-            _UPLOADS.release()
-    finally:
-        lock.release()
+    before = _identity(video)
+    with tempfile.TemporaryDirectory(prefix='.oss-preview-', dir=video.parent) as directory:
+        snapshot = Path(directory) / 'preview.mp4'
+        with editor_resources.stage('transfer'):
+            shutil.copyfile(video, snapshot)
+            if _identity(video) != before:
+                raise ValueError('成片正在更新，请稍后重试')
+            digest = file_sha256(snapshot)
+        key = prefix + digest + '.mp4'
+        # The complete remote identity avoids fixed shards and same-prefix
+        # collisions. A second process rechecks existence after the first put.
+        with resource_locks.hold('oss-object',[bucket.endpoint,bucket.bucket_name,key]), editor_resources.stage('transfer'):
+            if not bucket.object_exists(key):
+                try:
+                    result = bucket.put_object_from_file(key, str(snapshot), headers={
+                        'Content-Type': 'video/mp4', 'Content-Disposition': 'inline',
+                        'Cache-Control': 'private, max-age=900',
+                        'x-oss-object-acl': 'private', 'x-oss-meta-sha256': digest,
+                        'x-oss-forbid-overwrite': 'true',
+                    })
+                    if result.status not in (200, 201):
+                        raise ValueError('预览上传失败')
+                except Exception as exc:
+                    if getattr(exc, 'code', None) != 'FileAlreadyExists':
+                        raise
+            # Stat identity and content are both checked before publishing a receipt.
+            if _identity(video) != before or file_sha256(video) != digest:
+                raise ValueError('成片正在更新，请稍后重试')
+            meta = bucket.head_object(key)
+            remote_hash = meta.headers.get('x-oss-meta-sha256') or meta.headers.get('X-Oss-Meta-Sha256')
+            if (meta.content_length != before[2] or remote_hash != digest or
+                    bucket.get_object_acl(key).acl != 'private'):
+                raise ValueError('预览对象校验失败，未修改已有文件')
+            return {'key': key, 'sha256': digest, 'bytes': before[2], 'identity': before,
+                    'bucket': bucket.bucket_name, 'endpoint': bucket.endpoint}

@@ -13,7 +13,8 @@ def test_ffmpeg_caps_each_input_and_output_without_changing_source_command(monke
     command = ['ffmpeg', '-y', '-i', 'one.mp4', '-loop', '1', '-i', 'overlay.png',
                '-filter_complex', '[0:v][1:v]overlay[v]', '-map', '[v]', '-c:v', 'libx264', 'out.mp4']
     captured = []
-    monkeypatch.setattr(media.subprocess, 'run', lambda cmd, **kw: captured.append(cmd) or Mock(returncode=0))
+    from exactcut import processing_cancel
+    monkeypatch.setattr(processing_cancel,'run',lambda cmd,**kw:captured.append(cmd) or Mock(returncode=0))
     media.run_checked(command)
     emitted = captured[0]
     assert command.count('-threads') == 0

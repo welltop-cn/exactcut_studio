@@ -2,6 +2,7 @@
 import re
 import shutil
 import tempfile
+import os
 from fractions import Fraction
 from pathlib import Path
 from . import diagnostics, cutting, cutting_scan, cutting_access, workflow, storage
@@ -35,17 +36,20 @@ def open_session(bid,rid,sha):
             cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha,readonly=True)
             sid=json_sha256([bid,rid,sha])[:32];path=session_path(bid,sid)
             if (path/'session.json').is_file():return get_session(bid,sid)
-            with lock_file(lock_root()/'mosaic-prepare.lock', resource='compute'):
+            from . import editor_resources
+            with lock_file(lock_root()/('mosaic-prepare-'+sid+'.lock'),blocking=True):
+                if (path/'session.json').is_file():return get_session(bid,sid)
                 source,_=workflow.preview_file(bid,rid)
                 if source.stat().st_size>cutting.settings().get('max_source_bytes',512*1024**2):raise CutError('本机支持 512 MB 以内的成片')
                 storage.require_space(source.parent,source.stat().st_size*3)
                 path.mkdir(parents=True,exist_ok=True)
                 try:
                     temporary=path/'source.partial.mp4'
-                    with diagnostics.span('editor.prepare.copy', private_error=True):
-                        shutil.copyfile(source,temporary)
-                    with diagnostics.span('editor.prepare.hash', private_error=True):
-                        copied_sha=file_sha256(temporary)
+                    with editor_resources.stage('transfer'):
+                        with diagnostics.span('editor.prepare.copy', private_error=True):
+                            shutil.copyfile(source,temporary)
+                        with diagnostics.span('editor.prepare.hash', private_error=True):
+                            copied_sha=file_sha256(temporary)
                     if copied_sha!=sha:raise CutError('原成片内容已变化，请重新打开',409)
                     meta=cutting.probe_source(temporary)
                     cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha,readonly=True)
@@ -65,13 +69,17 @@ def frame_file(batch_id, session_id, index):
     cache = path/'frames'
     output = cache/f'{index}.jpg'
     if output.is_file():
-        diagnostics.event('editor.frame_cache_hit', editor='mosaics', after_wait=False)
-        output.touch()
-        return output
-    with frame_lease(lock_root()/'frame.lock'):
+        try:
+            os.utime(output,None)
+            diagnostics.event('editor.frame_cache_hit',editor='mosaics',after_wait=False)
+            return output
+        except FileNotFoundError:pass
+    existed = output.is_file()
+    # One cache owns its window publication and LRU; unrelated caches never wait.
+    with frame_lease(lock_root()/('frame-'+json_sha256(str(cache.resolve()))+'.lock')):
         cache.mkdir(exist_ok=True)
         if output.is_file():
-            diagnostics.event('editor.frame_cache_hit', editor='mosaics', after_wait=True)
+            diagnostics.event('editor.frame_cache_hit', editor='mosaics', after_wait=not existed)
             output.touch()
             return output
         meta = data['metadata']

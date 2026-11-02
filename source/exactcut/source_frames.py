@@ -3,26 +3,10 @@ import json
 from bisect import bisect_left
 import math
 import re
-import threading
-from contextlib import contextmanager
 from fractions import Fraction
 
-from . import media, source_prefetch, workflow
+from . import media, source_prefetch, workflow, resource_locks
 from .util import json_sha256, read_json, write_json_atomic
-
-# Bound background indexing; never probe under the durable mutation lock.
-_SLOTS = threading.BoundedSemaphore(2)
-
-
-@contextmanager
-def _slot():
-    if not _SLOTS.acquire(blocking=False):
-        raise ValueError('准确帧资源繁忙，请稍后重试')
-    try:
-        yield
-    finally:
-        _SLOTS.release()
-
 
 def _video(drama, episode):
     try:
@@ -50,8 +34,20 @@ def prepare(path, draft, episode):
     key = json_sha256({'version': 1, 'drama': drama, 'episode': episode, 'signature': signature})
     target = path / 'source-picker' / key / 'index.json'
     if target.is_file():
-        return _public(read_json(target))
-    with _slot():
+        return _public(_load(path,key)[0])
+    with resource_locks.hold('source-index',key):
+        if target.is_file():return _public(_load(path,key)[0])
+        # Projects retain their existing index.json layout. Reuse a validated
+        # same-video index already published by another project under this key.
+        for cached in workflow.BATCHES.glob('*/source-picker/'+key+'/index.json'):
+            if any(part.is_symlink() for part in (cached,cached.parent,cached.parent.parent)):continue
+            try:
+                doc,_,_=_load(cached.parents[2],key)
+                if doc.get('key')!=key or doc.get('signature')!=signature:continue
+            except (OSError,ValueError,KeyError,TypeError):continue
+            source_prefetch.ensure_editable(path)
+            if _fingerprint(video)!=signature:raise ValueError('正片已变化，请重新准备帧索引')
+            write_json_atomic(target,doc);return _public(doc)
         try:
             result = media.run_checked(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
                 '-show_frames', '-show_streams', '-show_format', '-show_entries',

@@ -55,7 +55,11 @@ def run_checked(command: list[str], *, capture: bool = True, timeout: int = 3600
     tool = Path(command[0]).name
     diag.event('media.started', tool=tool, timeout_seconds=timeout)
     try:
-        result = subprocess.run(command, text=True, capture_output=capture, timeout=timeout)
+        from . import editor_resources,processing_cancel
+        # Full-frame indexing is long media; metadata probes use the short pool.
+        resource=editor_resources.stage('frame') if tool=='ffprobe' and '-show_frames' not in command else editor_resources.media_stage()
+        with resource:
+            result = processing_cancel.run(command, text=True, capture_output=capture, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         diag.event('media.timeout', level='error', tool=tool, timeout_seconds=timeout,
                    duration_ms=round((time.monotonic()-started)*1000))

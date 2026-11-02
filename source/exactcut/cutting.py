@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import subprocess
 import tempfile
+import os
 from fractions import Fraction
 from pathlib import Path
 
@@ -50,8 +51,9 @@ def enabled():
 
 def run(command, timeout=600):
     try:
-        from . import processing_cancel
-        result = processing_cancel.run(bounded_ffmpeg(command), capture_output=True, timeout=timeout)
+        from . import processing_cancel,editor_resources
+        with editor_resources.media_stage():
+            result = processing_cancel.run(bounded_ffmpeg(command), capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise CutError('视频处理超时，请重试；原成片保留') from exc
     if result.returncode:
@@ -276,7 +278,8 @@ def frame_lease(path, *, timeout=2.0):
     diagnostics.event('editor.frame_wait', duration_ms=round((time.monotonic()-started)*1000), admitted=True)
     from . import processing_cancel
     try:
-        with processing_cancel.retain([stream]):yield
+        from . import editor_resources
+        with processing_cancel.retain([stream]),editor_resources.stage('frame'):yield
     finally:
         stream.close()
 
@@ -384,7 +387,8 @@ def open_session(batch_id, request_id, source_sha256):
         path = session_path(batch_id, sid)
         if (path/'session.json').is_file():
             return get_session(batch_id, sid)
-        with lock_file(lock_root()/'cut-prepare.lock', resource='compute'):
+        from . import editor_resources
+        with lock_file(lock_root()/('cut-prepare-'+sid+'.lock'),blocking=True):
             if (path/'session.json').is_file():
                 return get_session(batch_id, sid)
             if source.stat().st_size > settings().get('max_source_bytes', 512*1024**2):
@@ -393,10 +397,11 @@ def open_session(batch_id, request_id, source_sha256):
             path.mkdir(parents=True, exist_ok=True)
             temporary = path/'source.partial.mp4'
             try:
-                with diagnostics.span('editor.prepare.copy', private_error=True):
-                    shutil.copyfile(source, temporary)
-                with diagnostics.span('editor.prepare.hash', private_error=True):
-                    copied_sha = file_sha256(temporary)
+                with editor_resources.stage('transfer'):
+                    with diagnostics.span('editor.prepare.copy', private_error=True):
+                        shutil.copyfile(source, temporary)
+                    with diagnostics.span('editor.prepare.hash', private_error=True):
+                        copied_sha = file_sha256(temporary)
                 if copied_sha != source_sha256:
                     raise CutError('原成片内容已变化，请重新打开剪切', 409)
                 meta = probe_source(temporary)
@@ -472,7 +477,9 @@ def _render_job(path, data, job, compute, worker_lease, batch_lock):
     try:
         if file_sha256(path/'source.mp4') != data['source_sha256']:
             raise CutError('剪切原片校验失败，请重新打开成片')
-        result = render_video(path/'source.mp4', output, job['ranges'], data['metadata'], job.get('mosaics') or [])
+        from . import editor_resources
+        with editor_resources.final_group():
+            result = render_video(path/'source.mp4', output, job['ranges'], data['metadata'], job.get('mosaics') or [])
         outcome = {'status': 'ready', 'output_sha256': result['sha256'], 'completed_at': now_iso()}
     except Exception as exc:
         output.unlink(missing_ok=True)
@@ -538,13 +545,17 @@ def frame_file(batch_id, session_id, index):
     cache = path/'frames'
     output = cache/f'{index}.jpg'
     if output.is_file():
-        diagnostics.event('editor.frame_cache_hit', editor='cuts', after_wait=False)
-        output.touch()
-        return output
-    with frame_lease(lock_root()/'frame.lock'):
+        try:
+            os.utime(output,None)
+            diagnostics.event('editor.frame_cache_hit',editor='cuts',after_wait=False)
+            return output
+        except FileNotFoundError:pass
+    existed = output.is_file()
+    # One cache owns its window publication and LRU; unrelated caches never wait.
+    with frame_lease(lock_root()/('frame-'+json_sha256(str(cache.resolve()))+'.lock')):
         cache.mkdir(exist_ok=True)
         if output.is_file():
-            diagnostics.event('editor.frame_cache_hit', editor='cuts', after_wait=True)
+            diagnostics.event('editor.frame_cache_hit', editor='cuts', after_wait=not existed)
             output.touch()
             return output
         meta = data['metadata']

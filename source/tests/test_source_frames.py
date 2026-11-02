@@ -82,17 +82,21 @@ def test_index_requires_current_source_and_draft_episode(source):
     with pytest.raises(ValueError, match='准备正片'):
         source_frames.prepare(path, draft_with('EP1'), 'EP1')
 
-def test_index_rejects_non_draft_and_bounds_probe_work(source):
+def test_index_rejects_non_draft_and_waits_without_starting_probe_when_media_is_full(source):
+    from contextlib import ExitStack
+    from concurrent.futures import ThreadPoolExecutor
+    import time
+    from exactcut import editor_resources
     _, item, _, _ = source
-    path = w.folder(item['id'])
-    source_frames._SLOTS.acquire()
-    source_frames._SLOTS.acquire()
-    try:
-        with pytest.raises(ValueError, match='繁忙'):
-            source_frames.prepare(path, draft_with('EP1'), 'EP1')
-    finally:
-        source_frames._SLOTS.release()
-        source_frames._SLOTS.release()
+    path=w.folder(item['id'])
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with ExitStack() as held:
+            for _ in range(editor_resources.settings()['media_tasks']):held.enter_context(editor_resources.acquire('media'))
+            future=pool.submit(source_frames.prepare,path,draft_with('EP1'),'EP1')
+            time.sleep(.1)
+            assert not future.done() and not list((path/'source-picker').glob('*/index.json'))
+        result=future.result(timeout=5)
+        assert result['times_ms'] and result['duration_ms']>0
     w.update(path, 'queued', '等待制作')
     with pytest.raises(ValueError):
         source_frames.prepare(path, draft_with('EP1'), 'EP1')

@@ -4,8 +4,10 @@ import sys
 import time
 from pathlib import Path
 from .cutting import run
-from . import mosaic_effects as effects
+from . import mosaic_effects as effects,editor_resources
 from .util import write_json_atomic, file_sha256
+
+CPU_THREADS=4
 
 
 def binary_mask(raw):
@@ -44,6 +46,11 @@ def render_preview(source,output,meta,target,effect,masks):
 
 
 def track(request):
+    with editor_resources.inherited_media(request.get('execution_lease')):
+        return _track(request)
+
+
+def _track(request):
     import numpy as np
     import torch
     from PIL import Image, ImageFilter
@@ -63,7 +70,7 @@ def track(request):
     with Image.open(files[0]) as frame:width,height=frame.size
     if cfg.get('checkpoint_sha256') and file_sha256(Path(cfg['checkpoint']))!=cfg['checkpoint_sha256']:raise ValueError('Checkpoint hash mismatch')
     device=cfg.get('device','mps')
-    torch.set_num_threads(4)
+    torch.set_num_threads(CPU_THREADS)
     predictor=build_sam2_video_predictor(cfg.get('model_config','configs/sam2.1/sam2.1_hiera_t.yaml'),cfg['checkpoint'],device=device,apply_postprocessing=False,hydra_overrides_extra=model_overrides(cfg))
     box=np.array([target['x']*width/meta['width'],target['y']*height/meta['height'],(target['x']+target['w'])*width/meta['width'],(target['y']+target['h'])*height/meta['height']],dtype=np.float32)
     seed=target['seed_frame']-target['start'];records={}
