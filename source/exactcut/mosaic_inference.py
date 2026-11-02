@@ -4,7 +4,7 @@ import time
 import uuid
 from contextlib import contextmanager
 from PIL import Image
-from . import cutting,mosaic_tracking as tracking,processing_cancel
+from . import cutting,mosaic_tracking as tracking,processing_cancel,mosaic_mps
 from .util import read_json,write_json_atomic
 
 
@@ -43,6 +43,9 @@ def _key_lease(root,key,validate):
 
 
 def _legacy(root,session,target,cfg,directory):
+    # Pre-fix MPS offload could publish finite but wrong masks as well as NaNs.
+    # Keep CPU/CUDA compatibility; affected MPS caches must be recomputed.
+    if mosaic_mps.fingerprint(cfg):return
     geometry={k:target[k] for k in ('start','end','seed_frame','x','y','w','h')}
     for key in tracking.legacy_inference_identities(session,geometry,cfg):yield root/f'inference-{key}'
     jid=tracking.identity(session,target,cfg);report=root/f'track-{jid}.json'

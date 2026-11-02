@@ -387,16 +387,16 @@ def test_legacy_render_masks_require_matching_source_reset_and_config(ready,monk
     target={'start':0,'end':3,'seed_frame':0,'x':0,'y':0,'w':20,'h':20}
     make_track(directory,target,session['metadata'])
     write_json_atomic(root/'render-old.json',{'source_sha256':sha,'reset_at':''})
-    write_json_atomic(directory/'request.json',{'source':str(root/'source.mp4'),'metadata':session['metadata'],'target':target,'config':{'device':'mps'}})
+    write_json_atomic(directory/'request.json',{'source':str(root/'source.mp4'),'metadata':session['metadata'],'target':target,'config':{'device':'cpu'}})
     calls=[]
     def infer(source,directory,meta,target,cfg):
         calls.append(cfg);assert cfg['masks_only'];return make_track(directory,target,meta)['result']
     monkeypatch.setattr(tracking,'run_tracker',infer)
-    track=render.prepare_track(bid,session['id'],session,{**target,'effect':{'style':'solid'}},{'device':'mps'},root/'new')
+    track=render.prepare_track(bid,session['id'],session,{**target,'effect':{'style':'solid'}},{'device':'cpu'},root/'new')
     assert track['directory']==directory and not calls
-    render.prepare_track(bid,session['id'],session,target,{'device':'cpu'},root/'new')
+    render.prepare_track(bid,session['id'],session,target,{'device':'mps'},root/'new')
     assert len(calls)==1
-    render.prepare_track(bid,session['id'],{**session,'reset_at':'changed'},target,{'device':'mps'},root/'new')
+    render.prepare_track(bid,session['id'],{**session,'reset_at':'changed'},target,{'device':'cpu'},root/'new')
     assert len(calls)==2
 
 

@@ -67,7 +67,9 @@ def track(request):
     predictor=build_sam2_video_predictor(cfg.get('model_config','configs/sam2.1/sam2.1_hiera_t.yaml'),cfg['checkpoint'],device=device,apply_postprocessing=False,hydra_overrides_extra=model_overrides(cfg))
     box=np.array([target['x']*width/meta['width'],target['y']*height/meta['height'],(target['x']+target['w'])*width/meta['width'],(target['y']+target['h'])*height/meta['height']],dtype=np.float32)
     seed=target['seed_frame']-target['start'];records={}
-    with torch.inference_mode():
+    from .mosaic_mps import blocking_transfers
+    from contextlib import nullcontext
+    with torch.inference_mode(),blocking_transfers(torch) if device=='mps' else nullcontext():
         state=predictor.init_state(video_path=str(frames),offload_video_to_cpu=True,offload_state_to_cpu=True)
         predictor.add_new_points_or_box(state,frame_idx=seed,obj_id=1,box=box)
         for reverse in (False,True):

@@ -7,7 +7,7 @@ import time
 import threading
 from pathlib import Path
 from . import cutting, mosaic_session as sessions, mosaic_locate, cutting_access, workflow, storage
-from . import mosaic_effects as effects, processing_cancel, editor_resources, diagnostics
+from . import mosaic_effects as effects, processing_cancel, editor_resources, diagnostics, mosaic_mps
 from .util import load_config, read_json, write_json_atomic, json_sha256, file_sha256, now_iso
 
 
@@ -102,7 +102,7 @@ def preview_file(bid,sid,jid):
 def inference_identity(session,target,cfg):
     """Raw SAM masks: change this version only when inference semantics change."""
     geometry={k:target[k] for k in ('start','end','seed_frame','x','y','w','h')}
-    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':geometry,'config':cfg,'inference_engine':1})[:32]
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':geometry,'config':cfg,'inference_engine':1,**mosaic_mps.fingerprint(cfg)})[:32]
 
 
 def legacy_inference_identities(session,geometry,cfg):
@@ -111,7 +111,7 @@ def legacy_inference_identities(session,geometry,cfg):
 
 
 def identity(session,target,cfg,effect=None):
-    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':6,'effect':effects.validate(effect)})[:32]
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':6,'effect':effects.validate(effect),**mosaic_mps.fingerprint(cfg)})[:32]
 
 
 def start(bid,sid,target,reset_at,effect=None,*,actor='admin'):
