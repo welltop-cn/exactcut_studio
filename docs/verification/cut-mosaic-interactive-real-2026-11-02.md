@@ -1,6 +1,6 @@
 # 剪切打码交互并发真实验收（2026-11-02）
 
-实现位于 `feat/cut-mosaic-interactive-resources` 隔离树，基于 `1a8d7c0`。用户 18883 的进程、配置、项目、草稿和原工作树均未更新。整体功能完成后交父实现 review；本记录不授权更新用户服务。
+实现位于 `feat/cut-mosaic-interactive-resources` 隔离树，基于 `1a8d7c0`。下述真实验收期间用户18883未更新。随后父独立review通过，按空闲屏障正常重启完成本地交付；见 [父review与用户升级记录](cut-mosaic-interactive-parent-review-2026-11-02.md)，原URL与数据不变。
 
 **部署目标为无GPU的CPU服务器。** 主线资源隔离提交 `504359c` 与设备无关；Mac MPS兼容修复单独提交 `10e4782`，不作为CPU服务器交付前置。下述完整A/B是在本地Mac/MPS实证；另已用明确device=cpu作有界认证并发冒烟。尚无Linux服务器等价的完整A/B、最大工作量或容量认证，不能将M2Max显存/驱动预算套到服务器CPU。
 

@@ -8,4 +8,12 @@
 
 更新前后以持久JSON/媒体与账号数据库摘要核对。真实登录会建立新的认证session，因此先在登录前核对数据库字节哈希，再核对用户/密码逻辑行摘要；用户素材session不改。验证GET能力/四素材/旧任务与视频Range，浏览器不触发识别、预览或生成POST。回退使用旧启动器与配置字节，不覆盖用户数据。
 
-实际revision、PID、哈希及检查结果将在私有交付证据中记录，并另提供公开脱敏摘要；本文件只是review批准及交付约束记录，不提前宣称升级完成。
+## 本地18883实际交付
+
+已在空闲审计通过后仅进行一次正常SIGTERM重启：70585 → **59032**。旧运行版本 `1a8d7c0`；新运行版本 **c93dc49047f4c636a445ccd289f472b18c5fbdff**。先停旧服务，再将私有start.py指向隔离已提交树 `cut-mosaic-interactive-resources/source`；原数据ROOT、URL、账号、项目和模型启用状态不变。原工作树未快进、仍clean；可通过私有备份的启动器和配置回退，不覆盖数据。
+
+公开脱敏证据：[cut-mosaic-interactive-user-upgrade-2026-11-02.json](cut-mosaic-interactive-user-upgrade-2026-11-02.json)。334个持久文件在重启后、真实登录前字节SHA完全一致。登录后仅认证session数据库发生预期变化，用户/密码逻辑行摘要不变，其余333个保护文件仍一致，包括媒体、素材session、草稿、任务结果、凭据和原AI桶。初次验证遇到历史cancelled任务409，已确认属于旧reset轮次，错误与旧版保护一致；没有重写该任务。当前completed任务和结果视频可读。
+
+真实独立浏览器登录通过；用户项目4条入口、4个source Range206、已有完成结果Range206均通过。全部4素材tracking/region_recognition/scan.enabled为true。健康release匹配c93dc49、maintenance=false。真实页面仅执行登录、同项目workspace导航和诊断POST，未打开会自动识别的编辑器，没有识别/预览/生成POST，未操作用户原tab或localStorage。集中配置最终1，交互各2/每用户1、encoder2；其他lane显式保留1、max_active_children1，AI6RPM/burst2复用原桶。
+
+可刷新试用：`http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5`。这是本地dev交付，不是生产发布或Linux CPU容量认证。当前Mac原有device=mps保持未改；服务器CPU主线与Mac兼容修复仍为独立提交。后续仅记录本交付的文档提交不改变已运行的代码文件，health运行release仍为c93dc49。
