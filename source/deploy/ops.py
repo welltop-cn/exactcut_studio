@@ -270,7 +270,8 @@ def build(version,ref):
     # No webserver main is launched here; the worker-lock test uses its own temp data.
     env['EXACTCUT_WORKER_ENABLED']='1'
     try:
-        result=run(release/'.venv/bin/python','-m','pytest',cwd=release,env=env)
+        # Release gate runs the full suite (all layers), same as linux_ops.
+        result=run(release/'.venv/bin/python','-m','pytest','-o','addopts=','-q',cwd=release,env=env)
     except subprocess.CalledProcessError as exc:
         write(OPS/'test-results'/f'{version}-failed.json',{'commit':commit,'stdout':exc.stdout,'stderr':exc.stderr,'at':stamp()})
         raise RuntimeError('Candidate tests failed; details saved privately in ops/test-results') from exc
