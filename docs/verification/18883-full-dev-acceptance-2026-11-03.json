@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "status": "partial_acceptance_A_final_failed_deferred_by_user",
+  "date": "2026-11-03",
+  "live_source_revision": "05b2faf74e37e611f5b0a59065fb199e08786bae",
+  "test_only_revision": "bbfa4f7",
+  "entry_port": 18883,
+  "live_pid_at_audit": 97825,
+  "environment": "development",
+  "flags": {"worker": true, "ai": true, "material_fetch": false, "external_writes": false, "publish": false, "preview_oss": false},
+  "protected_original_existing_files": {"count": 422, "all_sha256_unchanged": true, "draft_revision": 68},
+  "sources": {"drama_id": 101682, "episodes": [1,2,3,4,5,6,7], "bytes": 1418033103, "real_indexes": 7, "hardlinks": false, "original_errors": 0},
+  "ordinary_outputs": {"AI0_real_qc_passed": 20, "AI1_real_qc_passed": 1, "global_render_peak": 3, "multi_project_materials_admitted": 16, "same_account_projects": 3, "independent_producer_accounts": 2, "duplicate_tokens_reused": true},
+  "actual_resource_peaks": {"media": 5, "final_media": 1, "frame": 2, "transfer": 1, "preview": 2, "scan": 2, "preprocess": 2, "render3_media5_simultaneous_samples": 116},
+  "real_models": {"gemini_full_video_reports_completed": 2, "positive_risk_events": 0, "initial_real_sam_previews": 3, "initial_sam_frames_each": 30, "two_account_subtitle_cues": [98,99], "all_caption_cues_have_original_and_translation": true, "caption_recognition_and_master_video_sha_verified": true, "caption_output_kind": "cue_report_and_playback_overlay_not_new_burned_video", "gemini_preserved_openai_bucket_sha": true, "hook_emphasis_source": "ai_semantic", "hook_cache_reused": false, "hook_model": "gpt-5.6-sol", "hook_visual_placement": "blocked_by_existing_production_only_policy"},
+  "finals": {
+    "A": {"id": "2a567ce0a14642728cbc4458640b256c", "status": "failed", "stage": "composing", "error": "video processing timeout", "source_frames": 6187, "mask_source_frames": [60,90], "deleted_source_frames": [120,150], "timeout_seconds": 600, "acceptance": "FAIL"},
+    "B": {"id": "9e2eb593cde7426ea32b8ada3aeb7f71", "status": "completed", "frames": 6399, "audio": true, "sha_verified": true, "range206": true, "browser_playback_after_restart": true, "automatic_replacement": false, "acceptance": "PASS"}
+  },
+  "prefix_diagnosis_only": {"full_A_still_failed": true, "source_seconds": 20, "source_frames": 600, "output_frames": 570, "baseline_seconds": 67.43268141709268, "guarded_command_seconds": 18.40844991710037, "all_decoded_video_frames_identical": true, "decoded_audio_identical": true, "application_optimization_implemented": false, "timeout_changed": false, "user_decision": "record_for_final_review_no_implementation"},
+  "regression": {"passed": 2073, "skipped": 1, "existing_warnings": 10, "seconds": 693.90, "log": "/tmp/d1-full-bbfa4f7-source05b2faf.log", "prior_failure_preserved_log": "/tmp/d1-18883-full-05b2faf.log"},
+  "final_idle": {"interactive_pending": 0, "interactive_active": 0, "subtitle_pending": 0, "subtitle_active": 0, "execution_locks_held": 0, "service_children": 0},
+  "external_FBBM": {"upload_jobs": 0, "poll_jobs": 0, "publication_files": 0, "real_upload_or_publish_calls": 0},
+  "not_covered": ["A complete mask+delete output remains failed", "production-only Hook visual placement", "real upload/publish intentionally prohibited", "Linux maximum capacity and long-mask maximum concurrency"],
+  "necessary_product_diff_files_since_prior_concurrency_source": ["source/exactcut/originals.py", "source/exactcut/web/app.js", "source/exactcut/webserver.py"],
+  "test_only_fix": "source/tests/test_mosaic_ui.py: initialize tracking before UI open; original three business assertions retained",
+  "private_evidence_relative_to_trial": "actual-e2e-20261103-123501/final-summary.json",
+  "coverage_document": "18883-full-dev-acceptance-2026-11-03.md",
+  "production_deployed": false,
+  "main_merged": false
+}

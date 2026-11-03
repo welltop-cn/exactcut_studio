@@ -1,5 +1,15 @@
 # 本地 dev 服务与专项测试交接
 
+## 2026-11-03：18883实际验收收尾，A最终FAIL待用户统一看
+
+- 当前PID97825（操作前实核），应用源码`05b2faf74e37e611f5b0a59065fb199e08786bae`，cwd为`cut-mosaic-18883-source-delivery/source`。原URL和data root不变，development/worker1/AI1、fetch0/外写0/PUBLISH0、OSS预览关闭、原MPS不变。此前PID15988/worker0记录为历史。
+- 用户授权仅下载101682 EP1–EP7并生成真实帧索引，七集共1,418,033,103字节、无hardlink。本地原片列表200/七集、原四条引用错误已消除；原项目revision68和422既有文件SHA保留，未自动替换。
+- 20条AI0普通真实输出QC/SHA/帧音频通过；双账号、同账号3项目及16待处理素材真实接收/完成，global render峰3。另1条AI1真实Hook语义输出`ai_semantic`且QC通过；自动画面检查仍被原production-only策略阻止，保留warning。
+- 双账号真实Gemini字幕98/99条cue completed，SAM/预览恢复播放通过；Gemini不消费原OpenAI桶，其他OpenAI6RPM/burst1仍生效。字幕路由和开发OpenAI两字段在全面idle、备份和屏障内一次正常维护，仅改已授权配置，runtime.json字节及源码不变。
+- B最终`9e2eb593cde7426ea32b8ada3aeb7f71`completed、6399帧/音频/SHA/Range/刷新后实际播放。A`2a567ce0a14642728cbc4458640b256c`删除30帧＋blur完整合成600秒超时；queue done只是调度终态，A仍FAIL，完整交付未完成。
+- 同源20秒候选命令诊断67.43→18.41秒、570解码帧及音频一致；没有改gblur应用代码/timeout/效果或重跑长片。用户决定“先记着，最后再看”，见[范围外项](verification/concurrency-followups-awaiting-approval.md)。
+- 夹具唯一修正`bbfa4f7`后固定全量2073passed/1skip/10既有警告693.90秒，原2072/1fail保留；live应用仍05。当前所有队列idle、执行槽全空、服务子进程0；FBBM upload/poll/publication全0，未发布或合并main。完整[逐变更覆盖矩阵](verification/18883-full-dev-acceptance-2026-11-03.md)明确区分实际18883、隔离dev、替身及未覆盖项。
+
 ## 2026-11-03：18883资源调度候选已按授权更新
 
 - 父最终review通过后，确认全部用户active/queued及子进程为空，维护屏障内复查，再正常SIGTERM更新。当前PID15988（操作前仍须实核），加载`e2cbcc0`、应用源码`96c1aa5`，cwd为`cut-mosaic-resource-scheduling/source`。
