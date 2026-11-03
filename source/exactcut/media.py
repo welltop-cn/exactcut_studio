@@ -49,16 +49,20 @@ def bounded_ffmpeg(command: list[str]) -> list[str]:
     return [*bounded, '-threads', str(encoder_threads), command[-1]]
 
 
-def run_checked(command: list[str], *, capture: bool = True, timeout: int = 3600) -> subprocess.CompletedProcess[str]:
+def run_checked(command: list[str], *, capture: bool = True, timeout: int = 3600,
+                light: bool = False) -> subprocess.CompletedProcess[str]:
+    """light=True marks short ffmpeg work (single frames, stream copy, mux) that takes no slot."""
     command = bounded_ffmpeg(command)
     started = time.monotonic()
     tool = Path(command[0]).name
     diag.event('media.started', tool=tool, timeout_seconds=timeout)
     try:
+        from contextlib import nullcontext
         from . import editor_resources,processing_cancel
-        # Full-frame indexing is long media; metadata probes use the short pool.
-        resource=editor_resources.stage('frame') if tool=='ffprobe' and '-show_frames' not in command else editor_resources.media_stage()
-        with resource:
+        # Metadata probes and light ffmpeg are sub-second; only long CPU work
+        # (encodes, full-frame -show_frames indexing) waits for a media slot.
+        short=light or (tool=='ffprobe' and '-show_frames' not in command)
+        with nullcontext() if short else editor_resources.media_stage():
             result = processing_cancel.run(command, text=True, capture_output=capture, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         diag.event('media.timeout', level='error', tool=tool, timeout_seconds=timeout,

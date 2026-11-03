@@ -96,7 +96,7 @@ def frame_file(batch_id, session_id, index):
             with diagnostics.span('editor.frame_generate', private_error=True, editor='mosaics'):
                 run(command + ['-i', str(path/'source.mp4'), '-an', '-vf', "scale=w='min(540,iw)':h=-2",
                      '-frames:v', str(size), '-fps_mode', 'passthrough', '-q:v', '2',
-                     '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60)
+                     '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60, light=True)
             files = [Path(directory)/f'{n}.jpg' for n in range(start, start+size)]
             if not all(f.is_file() and f.stat().st_size for f in files):
                 raise CutError('准确帧窗口不完整，请重试')

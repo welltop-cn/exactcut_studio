@@ -38,7 +38,7 @@ def render_preview(source,output,meta,target,effect,masks):
             with Image.open(masks/f'{index:06d}.png') as mask:
                 effects.prepare_mask(mask,effect).save(rendered/f'{index:06d}.png')
         run(['ffmpeg','-y','-v','error','-i',str(source),'-framerate',rate,'-i',str(rendered/'%06d.png'),'-filter_complex',effects.graph(meta,effect,target['start'],target['end']),'-map','[out]','-an','-r',rate,'-fps_mode','cfr','-c:v','libx264','-pix_fmt','yuv420p','-crf','18','-preset','fast',str(output/'silent.mp4')],120)
-        run(['ffmpeg','-y','-v','error','-i',str(output/'silent.mp4'),'-ss',str(start),'-i',str(source),'-map','0:v:0','-map','1:a:0?','-t',str(duration),'-c:v','copy','-c:a','aac','-movflags','+faststart',str(output/'preview.mp4')],120)
+        run(['ffmpeg','-y','-v','error','-i',str(output/'silent.mp4'),'-ss',str(start),'-i',str(source),'-map','0:v:0','-map','1:a:0?','-t',str(duration),'-c:v','copy','-c:a','aac','-movflags','+faststart',str(output/'preview.mp4')],120,light=True)
     finally:
         (output/'silent.mp4').unlink(missing_ok=True)
         for file in rendered.glob('*'):file.unlink()

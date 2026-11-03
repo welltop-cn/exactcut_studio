@@ -49,10 +49,12 @@ def enabled():
     return settings().get('enabled') is True
 
 
-def run(command, timeout=600):
+def run(command, timeout=600, *, light=False):
+    """light=True marks short ffmpeg work (single frames, PCM, mux) that takes no slot."""
     try:
+        from contextlib import nullcontext
         from . import processing_cancel,editor_resources
-        with editor_resources.media_stage():
+        with nullcontext() if light else editor_resources.media_stage():
             result = processing_cancel.run(bounded_ffmpeg(command), capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         raise CutError('视频处理超时，请重试；原成片保留') from exc
@@ -196,7 +198,7 @@ def render_video(source, output, ranges, meta, mosaics=None, *, video_graph=None
             raw, cut = work/'source.pcm', work/'cut.pcm'
             run(['ffmpeg', '-y', '-v', 'error', '-i', str(source), '-vn', '-af',
                  f'aresample={audio_rate}:async=1:first_pts=0,apad=whole_len={total_samples},atrim=end_sample={total_samples}',
-                 '-ar', str(audio_rate), '-ac', str(channels), '-f', 's16le', str(raw)])
+                 '-ar', str(audio_rate), '-ac', str(channels), '-f', 's16le', str(raw)], light=True)
             with raw.open('rb') as incoming, cut.open('wb') as outgoing:
                 for a, b in kept:
                     start = round(Fraction(a*audio_rate, 1)/rate)
@@ -212,7 +214,7 @@ def render_video(source, output, ranges, meta, mosaics=None, *, video_graph=None
             final = work/'final.mp4'
             run(['ffmpeg', '-y', '-v', 'error', '-i', str(video_only), '-f', 's16le',
                  '-ar', str(audio_rate), '-ac', str(channels), '-i', str(cut), '-map', '0:v:0',
-                 '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', str(final)])
+                 '-map', '1:a:0', '-c:v', 'copy', '-c:a', 'aac', '-movflags', '+faststart', str(final)], light=True)
         result = probe_source(final)
         if any(result[k] != meta[k] for k in ('fps_num', 'fps_den', 'width', 'height', 'has_audio')) or result['frame_count'] != expected:
             raise CutError('剪切帧数或格式校验失败，结果未保存')
@@ -284,8 +286,8 @@ def frame_lease(path, *, timeout=2.0):
             time.sleep(min(.05, remaining))
     diagnostics.event('editor.frame_wait', duration_ms=round((time.monotonic()-started)*1000), admitted=True)
     try:
-        from . import editor_resources
-        with processing_cancel.retain([stream]),editor_resources.stage('frame'):yield
+        # The per-key lock is the only limit; short extraction takes no shared slot.
+        with processing_cancel.retain([stream]):yield
     finally:
         stream.close()
 
@@ -578,7 +580,7 @@ def frame_file(batch_id, session_id, index):
             with diagnostics.span('editor.frame_generate', private_error=True, editor='cuts'):
                 run(command + ['-i', str(path/'source.mp4'), '-an', '-vf', "scale=w='min(540,iw)':h=-2",
                      '-frames:v', str(size), '-fps_mode', 'passthrough', '-q:v', '2',
-                     '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60)
+                     '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60, light=True)
             files = [Path(directory)/f'{n}.jpg' for n in range(start, start+size)]
             if not all(f.is_file() and f.stat().st_size for f in files):
                 raise CutError('准确帧窗口不完整，请重试')

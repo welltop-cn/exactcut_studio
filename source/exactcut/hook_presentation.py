@@ -48,7 +48,7 @@ def sample_frames(video: Path, work: Path, *, start_ms=0, end_ms=None, width=108
         output = work / f'placement-{index}.jpg'
         run_checked(['ffmpeg','-y','-v','error','-ss',f'{stamp/1000:.3f}','-i',str(video),
                      '-frames:v','1','-vf',f'scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},scale=360:640',
-                     '-q:v','3',str(output)], timeout=30)
+                     '-q:v','3',str(output)], timeout=30, light=True)
         if output.exists():
             frames.append(output.read_bytes())
     return frames
@@ -98,7 +98,7 @@ def sample_timeline_frames(project, timeline, work, visible_ms, *, width=1080, h
             protect_path(video)
             run_checked(['ffmpeg','-y','-v','error','-ss',f'{source_ms/1000:.3f}','-i',str(video),
                          '-frames:v','1','-vf',f'scale={width}:{height}:force_original_aspect_ratio=increase,crop={width}:{height},scale=360:640',
-                         '-q:v','3',str(output)],timeout=15)
+                         '-q:v','3',str(output)],timeout=15,light=True)
         else:
             _make_card_png(output,item['text'],width,height)
             with Image.open(output) as image:image.resize((360,640)).convert('RGB').save(output,format='JPEG')

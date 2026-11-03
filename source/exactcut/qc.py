@@ -55,7 +55,7 @@ def inspect_output(video: Path, expected_duration_ms: int, config: dict[str, Any
     card_coverage = None
     with tempfile.TemporaryDirectory(prefix="exactcut-qc-") as temporary:
         frame = Path(temporary) / "first.jpg"
-        run_checked(["ffmpeg", "-y", "-v", "error", "-ss", "0.10", "-i", str(video), "-frames:v", "1", str(frame)])
+        run_checked(["ffmpeg", "-y", "-v", "error", "-ss", "0.10", "-i", str(video), "-frames:v", "1", str(frame)], light=True)
         if not frame.exists():
             errors.append("cannot extract first frame")
             mean_luma = 0.0

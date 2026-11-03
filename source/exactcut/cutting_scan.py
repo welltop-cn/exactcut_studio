@@ -162,7 +162,7 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
                         frame_key=json_sha256([str(source.resolve()),source.stat().st_mtime_ns,stamp,'refine720'])
                         with cutting.frame_lease(cutting.lock_root()/('refine-'+frame_key+'.lock')):
                             jpeg=cutting.run(['ffmpeg','-v','error','-ss',f'{stamp/1000:.6f}','-i',str(source),
-                                '-frames:v','1','-vf',"scale=w='min(720,iw)':h=-2",'-f','image2pipe','-vcodec','mjpeg','-'],30)
+                                '-frames:v','1','-vf',"scale=w='min(720,iw)':h=-2",'-f','image2pipe','-vcodec','mjpeg','-'],30,light=True)
                         if not jpeg:raise cutting.CutError('抽样画面为空')
                         parts.extend([types.Part.from_text(text=f'原成片时间 {stamp} ms'),types.Part.from_bytes(data=jpeg,mime_type='image/jpeg')])
                     findings=ask(parts,f'\n离散抽帧复查，只报告 {left}～{end} 毫秒范围内的可见内容。边界为估计，供人工确认。')

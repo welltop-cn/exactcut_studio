@@ -115,7 +115,7 @@ def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any], expe
         for index, (item, length) in enumerate(zip(inputs, lengths)):
             video_only = Path(directory) / f'{index}.mp4'
             run_checked(['ffmpeg', '-y', '-v', 'error', '-i', str(item),
-                         '-map', '0:v:0', '-c:v', 'copy', '-an', str(video_only)])
+                         '-map', '0:v:0', '-c:v', 'copy', '-an', str(video_only)], light=True)
             item = video_only
             quoted = str(item.resolve()).replace("'", "'\\''")
             lines += [f"file '{quoted}'", f'duration {float(length):.9f}']
@@ -133,7 +133,7 @@ def _concat_units(inputs: list[Path], output: Path, render: dict[str, Any], expe
                     # across independent GOPs (including one-frame cuts).
                     '-c:v', 'copy', '-bsf:v', f'setts=pts=PTS:dts=(N-2)/({render["fps"]}*TB)', '-c:a', render['audio_codec'], '-ar', str(render['audio_rate']),
                     '-ac', str(render['audio_channels']), '-movflags', '+faststart', str(output)]
-        run_checked(command)
+        run_checked(command, light=True)
 
 
 def _concat_units_encoded(inputs: list[Path], output: Path, render: dict[str, Any], expected_ms: int,
