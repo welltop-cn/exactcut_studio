@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 from PIL import Image
 from exactcut import cutting, mosaic_render as render
-from test_cutting import make_video, frame_numbers
+from test_cutting import make_video, frame_numbers, checker_video, gray_frames, block_span
 from test_cutting_api import ready, call
 from test_phase2_preview_api import fixture, serve
 from exactcut import mosaic_session as sessions, mosaic_tracking as tracking
@@ -556,3 +556,88 @@ def test_live_tracking_progress_is_scoped_and_tolerates_missing_file(tmp_path):
     assert render.tracking_progress(tmp_path,job)==job
 
 from interactive_test_support import interactive_dispatcher
+
+
+def test_active_intervals_union_exclusive_bounds_and_failed_tracks():
+    def track(start,end,failed=False):return {'target':{'start':start,'end':end},'failed':failed}
+    assert render.active_intervals([])==[]
+    assert render.active_intervals([track(0,2),track(2,5)])==[[0,5]]
+    assert render.active_intervals([track(2,6),track(4,8)])==[[2,8]]
+    assert render.active_intervals([track(2,4),track(6,8)])==[[2,4],[6,8]]
+    assert render.active_intervals([track(0,9,True),track(3,4)])==[[3,4]]
+    assert render.active_intervals([track(0,9,True)])==[]
+
+
+def blurred_mask_at(box,meta,**effect):
+    target={'motion':'fixed','start':box['start'],'end':box['end'],'seed_frame':box['start'],
+            'x':box.get('x',0),'y':box.get('y',0),'w':box.get('w',meta['width']),'h':box.get('h',meta['height']),
+            'effect':{'style':'blur','strength':'heavy','expansion':'none',**effect}}
+    return target
+
+
+def test_blur_uses_source_frame_indexes_before_deletion_and_keeps_audio(tmp_path):
+    source=checker_video(tmp_path/'source.mp4',frames=30,audio=True,fps='30000/1001')
+    meta=cutting.probe_source(source)
+    target=blurred_mask_at({'start':8,'end':16},meta)
+    track=render.prepare_track('unused','unused',{'metadata':meta},target,{},tmp_path)
+    output=tmp_path/'out.mp4'
+    render.compose(source,output,meta,[track],ranges=[[0,8]])
+    result=cutting.probe_source(output)
+    assert result['frame_count']==22 and result['has_audio']
+    assert (result['fps_num'],result['fps_den'])==(meta['fps_num'],meta['fps_den'])
+    assert (result['width'],result['height'])==(meta['width'],meta['height'])
+    frames=gray_frames(output)
+    assert len(frames)==22
+    for index,frame in enumerate(frames):
+        if 8<=8+index<16:assert block_span(frame,24,24)<90
+        else:assert block_span(frame,24,24)>150
+    reference=tmp_path/'reference.mp4';cutting.render_video(source,reference,[[0,8]],meta)
+    pcm=lambda path:cutting.run(['ffmpeg','-v','error','-i',str(path),'-f','s16le','-ac','2','-ar','44100','-'])
+    assert pcm(output)==pcm(reference)
+
+
+@pytest.mark.parametrize('start,end',[(0,2),(28,30)])
+def test_blur_interval_covers_first_frame_and_excludes_end(tmp_path,start,end):
+    source=checker_video(tmp_path/'source.mp4',frames=30)
+    meta=cutting.probe_source(source)
+    track=render.prepare_track('unused','unused',{'metadata':meta},
+                               blurred_mask_at({'start':start,'end':end},meta),{},tmp_path)
+    output=tmp_path/'out.mp4'
+    render.compose(source,output,meta,[track])
+    frames=gray_frames(output)
+    assert len(frames)==meta['frame_count']
+    for index,frame in enumerate(frames):
+        if start<=index<end:assert block_span(frame,24,24)<90
+        else:assert block_span(frame,24,24)>150
+
+
+def test_overlapping_groups_use_their_own_intervals_and_effects(tmp_path):
+    source=checker_video(tmp_path/'source.mp4',frames=30)
+    meta=cutting.probe_source(source)
+    solid={**blurred_mask_at({'start':4,'end':8},meta),'effect':{'style':'solid','expansion':'none'}}
+    blur=blurred_mask_at({'start':6,'end':10},meta)
+    tracks=[render.prepare_track('unused','unused',{'metadata':meta},target,{},tmp_path)
+            for target in (solid,blur)]
+    output=tmp_path/'out.mp4'
+    render.compose(source,output,meta,tracks)
+    frames=gray_frames(output)
+    for index,frame in enumerate(frames):
+        if 4<=index<6:assert max(frame)<5
+        elif 6<=index<10:assert block_span(frame,24,24)<90
+        else:assert block_span(frame,24,24)>150
+
+
+def test_compose_passes_source_frame_intervals_with_deletion(tmp_path,monkeypatch):
+    source=make_video(tmp_path/'source.mp4',frames=12);meta=cutting.probe_source(source)
+    track=render.prepare_track('unused','unused',{'metadata':meta},
+                               blurred_mask_at({'start':4,'end':8},meta),{},tmp_path)
+    captured={};original=render.effects.layered_graph
+    def capture(meta,appearances,intervals=None):
+        captured['intervals']=intervals
+        return original(meta,appearances,intervals)
+    monkeypatch.setattr(render.effects,'layered_graph',capture)
+    output=tmp_path/'out.mp4'
+    render.compose(source,output,meta,[track],ranges=[[0,4]])
+    assert cutting.probe_source(output)['frame_count']==8
+    # The graph sees pre-deletion source frames, never the 8-frame output index.
+    assert captured['intervals']==[[[4,8]]]

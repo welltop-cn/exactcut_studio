@@ -50,6 +50,16 @@ def union_mask(frame,tracks,size):
     return mask
 
 
+def active_intervals(tracks):
+    # Union of source-frame spans that can carry a mask; failed tracks never do.
+    spans=sorted((t['target']['start'],t['target']['end']) for t in tracks if not t.get('failed'))
+    merged=[]
+    for start,end in spans:
+        if merged and start<=merged[-1][1]:merged[-1][1]=max(merged[-1][1],end)
+        else:merged.append([start,end])
+    return merged
+
+
 def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,ranges=None):
     effect=effects.validate(effect)
     output=Path(output);output.parent.mkdir(parents=True,exist_ok=True)
@@ -63,15 +73,15 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,rang
         if key not in groups:groups[key]=(appearance,[])
         groups[key][1].append(track)
     if not groups:groups[tuple(effect.values())]=(effect,[])
-    masks=[];appearances=[]
+    masks=[];appearances=[];intervals=[]
     for index,(appearance,group) in enumerate(groups.values()):
         mask_video=output.parent/f'combined-mask-{index}.mkv'
         encode_mask(mask_video,meta,group,size,rate,appearance,progress)
-        masks.append(mask_video);appearances.append(appearance)
+        masks.append(mask_video);appearances.append(appearance);intervals.append(active_intervals(group))
     progress('正在合成完整视频并保留原音频…')
     w,h=meta['width'],meta['height']
     # RGB planar masks avoid limited-range luma turning white masks into partial blends.
-    graph=effects.layered_graph(meta,appearances)
+    graph=effects.layered_graph(meta,appearances,intervals)
     if ranges:
         progress('正在一次合成打码与删除片段…')
         actual=cutting.render_video(source,partial,ranges,meta,video_graph=graph,video_inputs=masks)

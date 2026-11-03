@@ -108,7 +108,7 @@ def test_fast_frame_window_matches_sequential_decode(tmp_path, monkeypatch, fps)
     assert cutting.frame_file('batch', 'session', 201).is_file()
 
 
-def checker_video(path, frames=30, audio=False):
+def checker_video(path, frames=30, audio=False, fps='30'):
     width, height = 160, 96
     raw = bytearray()
     for n in range(frames):
@@ -117,9 +117,10 @@ def checker_video(path, frames=30, audio=False):
                 bit = ((x // 8) + (y // 8) + (n % 2)) & 1
                 raw.append(235 if bit else 16)
     cmd = ['ffmpeg', '-y', '-v', 'error', '-f', 'rawvideo', '-pix_fmt', 'gray',
-           '-s', f'{width}x{height}', '-r', '30', '-i', 'pipe:0']
+           '-s', f'{width}x{height}', '-r', fps, '-i', 'pipe:0']
     if audio:
-        cmd += ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100', '-t', str(frames / 30), '-c:a', 'aac']
+        cmd += ['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100',
+                '-t', str(float(Fraction(frames) / Fraction(fps))), '-c:a', 'aac']
     cmd += ['-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '18', '-pix_fmt', 'yuv420p', str(path)]
     subprocess.run(bounded_ffmpeg(cmd), input=bytes(raw), capture_output=True, check=True)
     return path
