@@ -45,6 +45,8 @@ def test_runtime_banner_and_toast_do_not_expose_details(frame_page):
     assert RAW in page.locator('#runtimeError details').text_content()
 
 
+@pytest.mark.skip(reason='制作助手入口 #helpNav 按设计隐藏（9860f90），页面上没有其他入口，用户无法打开助手；'
+                  '重新开放助手入口时再启用本用例')
 def test_helper_network_error_is_friendly(frame_page):
     from pathlib import Path
     page = frame_page
