@@ -125,3 +125,49 @@ def test_preview_plays_real_video_after_cached_project_switch(page, tmp_path):
     page.wait_for_function("document.querySelector('video').currentTime>0.1")
     assert page.evaluate("previewCalls") == ['http://fixture.test/api/batches/b/preview-url/RB']
     assert page.evaluate("document.querySelector('video').error") is None
+
+
+def test_download_link_waits_for_background_oss_copy_then_downloads(page):
+    page.evaluate('''() => {
+      b.assets[0].original='/api/batches/b/download/RB';
+      let calls=0;
+      window.fetch=async url=>{
+        if(String(url).includes('?status=1')){
+          calls++;window.__statusCalls=calls;
+          return {ok:true,status:200,json:async()=>calls===1?{status:'preparing',retry_after_ms:300}:{status:'ready'}};
+        }
+        return {ok:true,status:200,json:async()=>({url:'https://media.invalid/preview.mp4',expires_in:900})};
+      };
+      displayBatch(b);setTab('review');renderAssets();
+    }''')
+    page.route('**/api/batches/b/download/RB', lambda route: route.fulfill(
+        status=200, body=b'downloaded-bytes', content_type='video/mp4',
+        headers={'Content-Disposition': 'attachment; filename="RB.mp4"'}))
+    with page.expect_download(timeout=15000) as info:
+        page.click('[data-download-original]')
+        page.click('[data-download-original]')
+    download = info.value
+    assert download.suggested_filename == 'RB.mp4'
+    assert page.evaluate('window.__statusCalls') == 2
+    assert page.locator('.download-status').inner_text() in ('', '正在准备下载，就绪后会自动开始…')
+
+
+def test_download_wait_stops_when_project_switches(page):
+    page.evaluate('''() => {
+      b.assets[0].original='/api/batches/b/download/RB';
+      window.__statusCalls=0;
+      window.fetch=async url=>{
+        if(String(url).includes('?status=1')){
+          window.__statusCalls++;
+          return {ok:true,status:200,json:async()=>({status:'preparing',retry_after_ms:500})};
+        }
+        return {ok:true,status:200,json:async()=>({url:'https://media.invalid/preview.mp4',expires_in:900})};
+      };
+      displayBatch(b);setTab('review');renderAssets();
+    }''')
+    page.click('[data-download-original]')
+    page.wait_for_function("document.querySelector('.download-status').textContent.includes('正在准备下载')")
+    calls = page.evaluate('window.__statusCalls')
+    page.evaluate('displayBatch(a)')
+    page.wait_for_timeout(700)
+    assert page.evaluate('window.__statusCalls') == calls

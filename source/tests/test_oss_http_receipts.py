@@ -293,3 +293,79 @@ def test_unauthenticated_or_foreign_client_cannot_prepare(app, tmp_path, monkeyp
 def snapshot():
     from exactcut import interactive_queue
     return interactive_queue.snapshot()
+
+
+def test_download_status_is_ready_for_a_valid_receipt(app, tmp_path, monkeypatch):
+    bucket = SigningBucket(); bucket.release = threading.Event(); bucket.entered = threading.Event()
+    headers, batch_id, directory, video, digest, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    _seed_receipt(batch_id, directory, video, bucket, original=True)
+    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1', headers=headers)
+    assert status == 200 and json.loads(body) == {'status': 'ready'}
+    status, response_headers, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1', headers=headers)
+    assert status == 302 and response_headers['Location'].startswith('https://fixture.invalid/')
+
+
+def test_download_status_queues_then_becomes_ready(app, tmp_path, monkeypatch):
+    bucket = ControlledBucket(); bucket.release.set()
+    headers, batch_id, _, _, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    with _dispatcher():
+        status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1&retry=1', headers=headers)
+        assert status == 202 and json.loads(body)['status'] == 'preparing'
+        status, _, body = _poll_download_status(app, headers, batch_id)
+        assert status == 200 and json.loads(body) == {'status': 'ready'}
+    status, response_headers, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1', headers=headers)
+    assert status == 302 and response_headers['Location'].startswith('https://fixture.invalid/')
+
+
+def test_download_status_failure_stops_polling_and_can_be_retried(app, tmp_path, monkeypatch):
+    bucket = ControlledBucket(); bucket.release.set(); bucket.failures = 1
+    headers, batch_id, _, _, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    with _dispatcher():
+        status, _, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1&retry=1', headers=headers)
+        assert status == 202
+        deadline = __import__('time').monotonic() + 10
+        while True:
+            status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1', headers=headers)
+            if status == 503: break
+            assert status == 202 and __import__('time').monotonic() < deadline, body
+            __import__('time').sleep(.05)
+        failed = json.loads(body)
+        assert failed['retryable'] is True and failed['code'] == 'preview_prepare_failed'
+        status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1&retry=1', headers=headers)
+        assert status == 202 and json.loads(body)['status'] == 'preparing'
+        status, _, body = _poll_download_status(app, headers, batch_id)
+        assert status == 200 and json.loads(body) == {'status': 'ready'}
+    status, response_headers, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1', headers=headers)
+    assert status == 302 and response_headers['Location'].startswith('https://fixture.invalid/')
+
+
+def test_download_status_keeps_local_dev_behaviour_when_oss_disabled(app, tmp_path, monkeypatch):
+    headers, batch_id, _, video, _, bucket = _preview_fixture(app, tmp_path, monkeypatch)
+    monkeypatch.setattr(preview_oss, 'enabled', lambda: False)
+    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1', headers=headers)
+    assert status == 200 and json.loads(body) == {'status': 'ready'}
+    status, _, data = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1', headers=headers)
+    assert status == 200 and data == video.read_bytes()
+
+
+def test_download_status_requires_batch_permission(app, tmp_path, monkeypatch):
+    from exactcut import accounts
+    bucket = ControlledBucket(); bucket.release.set()
+    headers, batch_id, _, _, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    assert request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1', headers={})[0] == 401
+    accounts.manage(app.auth_db, 'admin', {'action': 'create', 'username': 'bob', 'name': 'Bob', 'password': 'bob-password-123'})
+    status, response_headers, _ = request(app, 'POST', '/home/api/login', {'username': 'bob', 'password': 'bob-password-123'}, {'X-Exactcut-Request': '1'})
+    bob = {'Cookie': response_headers['Set-Cookie'].split(';')[0], 'X-Exactcut-Request': '1'}
+    assert request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1', headers=bob)[0] == 404
+
+
+def _poll_download_status(app, headers, batch_id, timeout=15):
+    import time
+    deadline = time.monotonic() + timeout
+    while True:
+        status, response_headers, body = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1?status=1', headers=headers)
+        if status in (200, 503):
+            return status, response_headers, body
+        assert status == 202 and json.loads(body)['status'] == 'preparing', (status, body)
+        assert time.monotonic() < deadline, body
+        time.sleep(.05)

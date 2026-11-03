@@ -49,24 +49,49 @@ def enabled():
     return environment() == 'production' and load_config().get('preview', {}).get('oss_enabled', True)
 
 
+def _preparation_id(batch_id, request_id, video, record, original):
+    return json_sha256({'batch_id': batch_id, 'request_id': request_id, 'original': bool(original),
+                        'identity': _identity(video), 'output_sha256': record.get('output_sha256'),
+                        'preview_sha256': (record.get('preview') or {}).get('sha256')})[:32]
+
+
+def _preparation_path(jid):
+    return data_root() / '.web-state/preview-oss' / (jid + '.json')
+
+
+def preparation_status(batch_id, request_id, video, record, *, original):
+    """Read-only readiness for an existing OSS copy; no copy, upload or wait."""
+    receipt = record.get('original_oss') if original else (record.get('preview') or {}).get('oss')
+    try:
+        bucket = _connect()
+        prefix = _prefix(batch_id, request_id)
+        if _valid_receipt(video, receipt, prefix, bucket_name=bucket.bucket_name, endpoint=bucket.endpoint):
+            return 'ready'
+    except Exception:
+        pass
+    path = _preparation_path(_preparation_id(batch_id, request_id, video, record, original))
+    job = read_json(path) if path.is_file() else None
+    if job and job.get('status') in {'failed', 'cancelled'}:
+        return 'failed'
+    return 'preparing'
+
+
 def prepare_async(batch_id, request_id, video, record, *, original, actor):
     """Queue one bounded, persistent OSS copy; never copy/upload on the request."""
     from . import cutting, interactive_queue
     identity = _identity(video)
     preview_sha = (record.get('preview') or {}).get('sha256')
-    jid = json_sha256({'batch_id': batch_id, 'request_id': request_id, 'original': bool(original),
-                       'identity': identity, 'output_sha256': record.get('output_sha256'),
-                       'preview_sha256': preview_sha})[:32]
-    root = data_root() / '.web-state/preview-oss'; root.mkdir(parents=True, exist_ok=True)
-    path = root / (jid + '.json')
+    jid = _preparation_id(batch_id, request_id, video, record, original)
+    path = _preparation_path(jid)
+    path.parent.mkdir(parents=True, exist_ok=True)
     session = {'batch_id': batch_id, 'id': request_id, 'request_id': request_id,
                'source_sha256': record.get('output_sha256', '')}
     job = {'schema_version': 1, 'id': jid, 'status': 'queued', 'actor': actor,
            'batch_id': batch_id, 'request_id': request_id, 'original': bool(original),
            'identity': identity, 'output_sha256': record.get('output_sha256'),
            'preview_sha256': preview_sha, 'created_at': now_iso(), 'progress': '正在准备 OSS 预览'}
-    with cutting.lock_file(root / 'state.lock', blocking=True):
-        interactive_queue.enqueue('preview_oss', session, path, job, {}, state_lock=root / 'state.lock')
+    with cutting.lock_file(path.parent / 'state.lock', blocking=True):
+        interactive_queue.enqueue('preview_oss', session, path, job, {}, state_lock=path.parent / 'state.lock')
         return read_json(path)
 
 

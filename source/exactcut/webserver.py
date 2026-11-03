@@ -1311,10 +1311,23 @@ class Handler(BaseHTTPRequestHandler):
                     original = suffix.startswith('download/')
                     request_id = unquote(suffix.split('/', 1)[1])
                     output, record = workflow.preview_file(batch_id, request_id, lightweight=not original)
+                    status_query = str((getattr(self, 'query', {}) or {}).get('status', [''])[0]) == '1'
                     if not preview_oss.enabled():
+                        if original and status_query: return self.respond(200, {'status': 'ready'})
                         if original: return self.stream_video(output)
                         from urllib.parse import quote
                         return self.respond(200, {'url': f'/api/batches/{batch_id}/preview/{quote(request_id, safe="")}', 'expires_in': 0})
+                    if original and status_query:
+                        state = preview_oss.preparation_status(batch_id, request_id, output, record, original=True)
+                        if state == 'ready': return self.respond(200, {'status': 'ready'})
+                        retry = str((getattr(self, 'query', {}) or {}).get('retry', [''])[0]) == '1'
+                        if state == 'failed' and not retry:
+                            return self.respond(503, {'error': '下载准备失败，请重试',
+                                                      'code': 'preview_prepare_failed', 'retryable': True})
+                        job = preview_oss.prepare_async(batch_id, request_id, output, record,
+                                                        original=True, actor=self.user['username'])
+                        return self.respond(202, {'status': 'preparing', 'retry_after_ms': 1500,
+                                                  'job_id': job.get('id')}, retry_after=2)
                     try:
                         receipt = record.get('original_oss') if original else (record.get('preview') or {}).get('oss')
                         options = {'receipt': receipt} if receipt else {}
