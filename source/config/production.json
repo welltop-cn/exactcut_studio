@@ -19,8 +19,8 @@
     "poll": 4,
     "hook_previews": 3,
     "ai": {
-      "requests_per_minute": 6,
-      "burst": 1
+      "requests_per_minute": 60,
+      "burst": 5
     }
   }
 }

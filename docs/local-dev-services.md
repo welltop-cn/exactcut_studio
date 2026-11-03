@@ -219,3 +219,11 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 真实 HTTP/Playwright 验证登录、六条素材、正确卡片/字段高亮、保存后聚焦、点击顶部提示定位、逐项纠正清除红色提示及刷新后保留初始错误。发现纳管保存期间输入框禁用导致过早聚焦失败，已改为操作恢复编辑状态后再聚焦；旧版/纳管两种回归及相关测试共18项通过。测试项目最终仍保留两处初始错误，未启动制作。已按用户要求用系统浏览器打开入口，服务保留供验收。
 
 用户要求扩大测试后，最终完整回归为1770 passed、1 skipped（既有 mosaic-only 比较条件），无失败；专项77项通过。补充修复特殊字符集号、空帧字段误判时间先后，以及复制纳管项目时持久化临时校验投影的问题，提交 `db4c684`。确认无活动任务/子进程后，8793 从已核验 PID 62449 重启为 PID 25659（操作前仍须重新核验），沿用原配置；healthz=ok/development、worker_alive=true，release `development-material-validation-db4c684`。重启前后测试项目 media-state.json SHA-256 一致；HTTP复核仍为6条素材、素材8的两处初始错误。用户编辑数据未重置，其他服务未动。
+
+2026-10-30 友好提示语：修复 Pydantic 校验异常全文直接进入表单的问题。缺失图片改为「素材 2 · 结尾画面：请上传结尾图片，或将结尾画面改为“不添加”」，并标红/定位实际结尾控件；时长、文案和字号等错误提供中文说明。旧版/纳管真实浏览器上传图片或取消结尾、保存刷新均验证，相关117项通过。提交 `5980929`。确认无活动任务和子进程后，8793 从核验 PID 25659 重启为 PID 11167，沿用原配置，healthz=ok/development、worker_alive=true、release `development-material-validation-5980929`。验收项目状态文件重启前后 SHA 一致；没有重置用户项目。其他端口未动。
+
+## 2026-11-02 用户可见错误提示排查（8793 保留运行）
+
+用户要求检查其他入口。提交 `3f2ef04` 统一公共 HTTP 主提示与前端错误格式化，避免弹窗拼入技术详情；制作横幅、剪切/打码、字幕、登录和制作小助手补齐底层/历史异常显示保护。状态码、诊断编号、脱敏详情和显式资源重试契约保留。完整回归1929通过、1个既有条件跳过；最后的文件/连接错误分类另有98项专项通过。
+
+通过私有 reload.py 核验原 PID 11167 的 cwd/监听、无活动任务/子进程后，8793 重启为 PID 86115（后续操作须重查），沿用原开发配置；release `development-material-validation-3f2ef04`，healthz=ok/development、worker_alive=true。原测试项目 media-state.json 重启前后 SHA 一致。真实 HTTP/Chromium 复核健康、非法请求提示和含技术异常的 toast，页面无 JS 错误；没有重置用户项目或启动制作。其他端口未动。详见 `docs/verification/public-error-copy-audit-2026-11-02.md`。
