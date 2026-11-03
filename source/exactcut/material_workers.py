@@ -108,11 +108,17 @@ def recover_outbox():
     """Called outside old locks. A replay never repairs or replays external intent."""
     from . import workflow as w
     jobs = w.ROOT / '.web-state/jobs'
+    snapshot = []
+    for file in jobs.glob('*.json'):
+        try:
+            snapshot.append((file, read_json(file)))
+        except (OSError, ValueError):
+            continue
     for marker in (w.BATCHES.parent / 'media-registry').glob('*.json'):
         parent = w.BATCHES / marker.stem
         try:
-            cancel_invalid_children(parent)
-            reconcile_candidates(parent, jobs)
+            cancel_invalid_children(parent, snapshot=snapshot)
+            reconcile_candidates(parent, jobs, snapshot=snapshot)
             state = m.read(parent)
             for event in list(state['outbox'].values()):
                 if event['kind'] == 'media-upload':
@@ -333,11 +339,11 @@ def stage_finish(job, code):
         state['revision'] += 1; m._write(parent, state)
 
 
-def reconcile_candidates(parent, jobs):
+def reconcile_candidates(parent, jobs, snapshot=None):
     """Fence a replacement before it can enter the legacy scheduler."""
     state = m.read(parent)
-    for file in jobs.glob('*.json'):
-        job = read_json(file)
+    entries = ((file, read_json(file)) for file in jobs.glob('*.json')) if snapshot is None else snapshot
+    for file, job in entries:
         child_id = job.get('batch_id'); event = state['outbox'].get(child_id)
         if not event or event['kind'] != 'candidate': continue
         if job.get('status') == 'queued' and job.get('phase') == 'render' and job.get('attempt'):
@@ -458,7 +464,7 @@ def retry_media_upload(batch_id, rid):
     return 0
 
 
-def cancel_invalid_children(parent):
+def cancel_invalid_children(parent, snapshot=None):
     """Best-effort resource release follows the authoritative invalidation."""
     import signal
     from . import batch_control as control, workflow as w
@@ -474,8 +480,9 @@ def cancel_invalid_children(parent):
         if (child / 'draft.json').exists():
             if jobs_by_child is None:
                 jobs_by_child = {}
-                for file in (w.ROOT / '.web-state/jobs').glob('*.json'):
-                    jobs_by_child.setdefault(read_json(file).get('batch_id'), []).append(file)
+                entries = ((file, read_json(file)) for file in (w.ROOT / '.web-state/jobs').glob('*.json')) if snapshot is None else snapshot
+                for file, job in entries:
+                    jobs_by_child.setdefault(job.get('batch_id'), []).append(file)
             control.signal_children(child, signal.SIGKILL)
             cancel_queued_candidate(parent, event, child, job_files=jobs_by_child.get(child.name, []))
 
