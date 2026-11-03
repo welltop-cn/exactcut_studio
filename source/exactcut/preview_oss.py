@@ -1,5 +1,4 @@
 """Private preview copies. Never delete objects or modify bucket-wide settings."""
-from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import tempfile
@@ -8,36 +7,35 @@ from urllib.parse import quote
 
 from .runtime import environment
 from .util import file_sha256, load_config, env
-from . import cutting, diagnostics as diag, resource_locks, editor_resources
+from . import diagnostics as diag, resource_locks, editor_resources
 
 # Restricted namespaces: configuration cannot redirect writes into delivery keys.
 PREFIX = 'exactcut-previews/production'
-HTTP_OBJECT_LOCK_TIMEOUT = 2.0
 
 
 class PreviewBusy(RuntimeError):
-    """Existing local playback must not wait for a transfer slot or object lock."""
+    """Playback of an existing local result must not prepare or upload an OSS copy."""
 
 
-@contextmanager
-def _transfer_stage(wait):
-    if wait:
-        with editor_resources.stage('transfer'): yield
-        return
-    try: lease = editor_resources.acquire('transfer')
-    except cutting.ResourceBusy:
-        raise PreviewBusy('预览上传正在等待传输资源') from None
-    with lease: yield
+def _prefix(batch_id, request_id):
+    if not re.fullmatch(r'[0-9a-f]{32}', batch_id):
+        raise ValueError('无效项目编号')
+    request_key = quote(request_id, safe='')
+    if not request_key or request_key in {'.', '..'}:
+        raise ValueError('无效素材编号')
+    return f'{object_prefix()}/{batch_id}/{request_key}/'
 
 
-@contextmanager
-def _object_lock(keys, wait):
-    try:
-        with resource_locks.hold('oss-object', keys, timeout=180 if wait else HTTP_OBJECT_LOCK_TIMEOUT):
-            yield
-    except TimeoutError:
-        if not wait: raise PreviewBusy('预览对象正在准备') from None
-        raise
+def _valid_receipt(video, receipt, prefix, *, bucket_name, endpoint):
+    if not isinstance(receipt, dict):
+        return False
+    identity = _identity(video)
+    return (re.fullmatch(r'[0-9a-f]{64}', str(receipt.get('sha256', ''))) and
+            receipt.get('key') == prefix + receipt['sha256'] + '.mp4' and
+            receipt.get('identity') == identity and
+            receipt.get('bytes') == identity[2] and
+            receipt.get('bucket') == bucket_name and
+            receipt.get('endpoint') == endpoint)
 
 
 def object_prefix():
@@ -64,8 +62,22 @@ def _connect():
 
 
 def signed_preview(video: Path, batch_id: str, request_id: str, *, bucket=None, receipt=None, download_name=None, save_receipt=None, wait=True):
-    bucket = bucket if bucket is not None else _connect()
-    verified = _ensure_uploaded(video, batch_id, request_id, bucket=bucket, receipt=receipt, wait=wait)
+    prefix = _prefix(batch_id, request_id)
+    if wait:
+        bucket = bucket if bucket is not None else _connect()
+        verified = _ensure_uploaded(video, batch_id, request_id, bucket=bucket, receipt=receipt)
+    else:
+        # Playback only validates an existing receipt; it never copies, hashes,
+        # uploads or waits for a transfer slot/object lock in the request.
+        if not isinstance(receipt, dict):
+            raise PreviewBusy('OSS 预览尚未准备')
+        try:
+            bucket = bucket if bucket is not None else _connect()
+        except Exception:
+            raise PreviewBusy('OSS 预览暂不可用') from None
+        if not _valid_receipt(video, receipt, prefix, bucket_name=bucket.bucket_name, endpoint=bucket.endpoint):
+            raise PreviewBusy('OSS 预览尚未准备')
+        verified = receipt
     if save_receipt:
         save_receipt(verified)
     options = {}
@@ -136,23 +148,14 @@ def _identity(video):
     return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
 
 
-def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, receipt=None, wait=True):
-    if not re.fullmatch(r'[0-9a-f]{32}', batch_id):
-        raise ValueError('无效项目编号')
-    request_key = quote(request_id, safe='')
-    if not request_key or request_key in {'.', '..'}:
-        raise ValueError('无效素材编号')
-    prefix = f'{object_prefix()}/{batch_id}/{request_key}/'
-    identity = _identity(video)
-    if (isinstance(receipt, dict) and re.fullmatch(r'[0-9a-f]{64}', str(receipt.get('sha256', ''))) and
-            receipt.get('key') == prefix + receipt['sha256'] + '.mp4' and
-            receipt.get('identity') == identity and receipt.get('bytes') == identity[2] and
-            receipt.get('bucket') == bucket.bucket_name and receipt.get('endpoint') == bucket.endpoint):
+def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, receipt=None):
+    prefix = _prefix(batch_id, request_id)
+    if _valid_receipt(video, receipt, prefix, bucket_name=bucket.bucket_name, endpoint=bucket.endpoint):
         return receipt
     before = _identity(video)
     with tempfile.TemporaryDirectory(prefix='.oss-preview-', dir=video.parent) as directory:
         snapshot = Path(directory) / 'preview.mp4'
-        with _transfer_stage(wait):
+        with editor_resources.stage('transfer'):
             shutil.copyfile(video, snapshot)
             if _identity(video) != before:
                 raise ValueError('成片正在更新，请稍后重试')
@@ -160,7 +163,7 @@ def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, rec
         key = prefix + digest + '.mp4'
         # The complete remote identity avoids fixed shards and same-prefix
         # collisions. A second process rechecks existence after the first put.
-        with _object_lock([bucket.endpoint,bucket.bucket_name,key],wait), _transfer_stage(wait):
+        with resource_locks.hold('oss-object',[bucket.endpoint,bucket.bucket_name,key]), editor_resources.stage('transfer'):
             if not bucket.object_exists(key):
                 try:
                     result = bucket.put_object_from_file(key, str(snapshot), headers={

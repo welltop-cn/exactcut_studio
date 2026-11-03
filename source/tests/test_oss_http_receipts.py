@@ -16,7 +16,7 @@ class SigningBucket(Bucket):
 
 
 @pytest.mark.parametrize('original', [False, True])
-def test_authenticated_http_persists_real_oss_receipt_before_returning_url(app, tmp_path, monkeypatch, original):
+def test_generation_upload_persists_real_oss_receipt_before_signing(app, tmp_path, monkeypatch, original):
     headers = login(app)
     _, _, body = request(app, 'POST', '/home/api/batches/blank', {}, headers)
     batch_id = json.loads(body)['id']
@@ -28,30 +28,28 @@ def test_authenticated_http_persists_real_oss_receipt_before_returning_url(app, 
               'preview': {'sha256': digest, 'master_sha256': digest},
               'preserve_me': 'existing metadata'}
     result_store.put(directory, 'R1', record)
-    monkeypatch.setattr(workflow, 'preview_file', lambda *a, **kw: (video, result_store.read(directory)['requests']['R1']))
     monkeypatch.setattr(preview_oss, 'enabled', lambda: True)
     bucket = SigningBucket()
     monkeypatch.setattr(preview_oss, '_connect', lambda: bucket)
-    suffix = 'download' if original else 'preview-url'
-    endpoint = f'/home/api/batches/{batch_id}/{suffix}/R1'
-    status, response_headers, body = request(app, 'GET', endpoint, headers=headers)
-    assert status == (302 if original else 200), body
-    assert response_headers['Cache-Control'] == 'no-store'
+    receipt = preview_oss._ensure_uploaded(video, batch_id, 'R1', bucket=bucket)
+    preview_oss.save_media_receipt(directory, 'R1', record, video, receipt, original=original)
     updated = result_store.read(directory)['requests']['R1']
-    receipt = updated['original_oss'] if original else updated['preview']['oss']
-    assert receipt['sha256'] == digest
-    assert receipt['identity'] == preview_oss._identity(video)
+    saved = updated['original_oss'] if original else updated['preview']['oss']
+    assert saved['sha256'] == digest
+    assert saved['identity'] == preview_oss._identity(video)
     assert updated['preserve_me'] == 'existing metadata'
     assert len(bucket.puts) == 1
     assert bucket.objects[receipt['key']][1]['x-oss-object-acl'] == 'private'
     if original:
-        assert body == b''
+        result = preview_oss.signed_preview(video, batch_id, 'R1', bucket=bucket, receipt=saved,
+                                            download_name='download.mp4')
+        assert result['expires_in'] == 900
         assert bucket.signs[0][3]['response-content-disposition'].startswith('attachment;')
     else:
-        assert json.loads(body)['expires_in'] == 900
+        assert preview_oss.signed_preview(video, batch_id, 'R1', bucket=bucket, receipt=saved)['expires_in'] == 900
 
 
-def test_changed_result_during_upload_refuses_url_and_preserves_new_result(app, tmp_path, monkeypatch):
+def test_changed_result_during_generation_upload_refuses_url_and_preserves_new_result(app, tmp_path, monkeypatch):
     headers = login(app)
     _, _, body = request(app, 'POST', '/home/api/batches/blank', {}, headers)
     batch_id = json.loads(body)['id']
@@ -61,7 +59,6 @@ def test_changed_result_during_upload_refuses_url_and_preserves_new_result(app, 
     old = {'status': 'qc_passed', 'output_sha256': 'old-master',
            'preview': {'sha256': hashlib.sha256(video.read_bytes()).hexdigest()}}
     result_store.put(directory, 'R1', old)
-    monkeypatch.setattr(workflow, 'preview_file', lambda *a, **kw: (video, old))
     monkeypatch.setattr(preview_oss, 'enabled', lambda: True)
     bucket = SigningBucket()
     put = bucket.put_object_from_file
@@ -72,12 +69,25 @@ def test_changed_result_during_upload_refuses_url_and_preserves_new_result(app, 
         return result
     bucket.put_object_from_file = upload_and_advance
     monkeypatch.setattr(preview_oss, '_connect', lambda: bucket)
-    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-    assert status == 503
+    import pytest
+    with pytest.raises(ValueError):
+        preview_oss.signed_preview(video, batch_id, 'R1', bucket=bucket,
+                                   save_receipt=lambda receipt: preview_oss.save_media_receipt(
+                                       directory, 'R1', old, video, receipt))
     assert result_store.read(directory)['requests']['R1'] == new
     assert len(bucket.objects) == 1  # The uploaded immutable object is retained.
     assert bucket.signs == []
-    assert b'fixture.invalid' not in body
+
+
+def _seed_receipt(batch_id, directory, video, bucket, *, original=False):
+    receipt = preview_oss._ensure_uploaded(video, batch_id, 'R1', bucket=bucket)
+    record = result_store.read(directory)['requests']['R1']
+    if original:
+        record['original_oss'] = receipt
+    else:
+        record['preview']['oss'] = receipt
+    result_store.put(directory, 'R1', record)
+    return receipt
 
 
 def _preview_fixture(app, tmp_path, monkeypatch, *, receipt=None):
@@ -139,10 +149,8 @@ def test_busy_transfer_download_falls_back_to_local_stream(app, tmp_path, monkey
 
 
 def test_valid_receipt_still_signs_fast_while_transfer_is_busy(app, tmp_path, monkeypatch):
-    headers, batch_id, _, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-    assert status == 200 and len(bucket.puts) == 1
-    receipt = result_store.read(workflow.folder(batch_id) / 'production')['requests']['R1']['preview']['oss']
+    headers, batch_id, directory, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
+    receipt = _seed_receipt(batch_id, directory, video, bucket)
     signs = len(bucket.signs)
     with _held_transfers():
         status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
@@ -153,8 +161,7 @@ def test_valid_receipt_still_signs_fast_while_transfer_is_busy(app, tmp_path, mo
 
 def test_changed_identity_with_busy_transfer_falls_back_instead_of_uploading(app, tmp_path, monkeypatch):
     headers, batch_id, directory, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    status, _, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-    assert status == 200 and len(bucket.puts) == 1
+    _seed_receipt(batch_id, directory, video, bucket)
     video.write_bytes(b'replaced after the receipt')
     puts = len(bucket.puts)
     with _held_transfers():
@@ -164,14 +171,56 @@ def test_changed_identity_with_busy_transfer_falls_back_instead_of_uploading(app
     assert result_store.read(directory)['requests']['R1']['preview']['oss']['sha256'] == digest
 
 
-def test_busy_object_lock_falls_back_without_waiting_for_upload(app, tmp_path, monkeypatch):
+def test_missing_receipt_with_empty_transfer_never_starts_an_upload(app, tmp_path, monkeypatch):
+    import threading, time
+    headers, batch_id, _, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
+    entered = threading.Event()
+    def slow_upload(*a, **kw):
+        entered.set()
+        time.sleep(3)
+        raise AssertionError('playback must not start an upload')
+    bucket.put_object_from_file = slow_upload
+    bucket.object_exists = slow_upload
+    started = time.monotonic()
+    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+    elapsed = time.monotonic() - started
+    assert status == 200 and elapsed < 1.5, (status, elapsed, body)
+    assert json.loads(body) == {'url': f'/api/batches/{batch_id}/preview/R1', 'expires_in': 0}
+    assert not entered.is_set() and bucket.puts == [] and bucket.signs == []
+    status, _, data = request(app, 'GET', json.loads(body)['url'], headers={**headers, 'Range': 'bytes=0-9'})
+    assert status == 206 and data == video.read_bytes()[:10]
+
+
+def test_stale_receipt_with_empty_transfer_never_starts_an_upload(app, tmp_path, monkeypatch):
+    import threading, time
+    headers, batch_id, directory, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
+    stale = {'key': f'{preview_oss.object_prefix()}/{batch_id}/R1/{"0"*64}.mp4', 'sha256': '0'*64,
+             'bytes': 0, 'identity': [], 'bucket': bucket.bucket_name, 'endpoint': bucket.endpoint}
+    record = result_store.read(directory)['requests']['R1']
+    record['preview']['oss'] = stale
+    result_store.put(directory, 'R1', record)
+    entered = threading.Event()
+    def slow_upload(*a, **kw):
+        entered.set()
+        time.sleep(3)
+        raise AssertionError('playback must not start an upload')
+    bucket.put_object_from_file = slow_upload
+    bucket.object_exists = slow_upload
+    started = time.monotonic()
+    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+    assert status == 200 and time.monotonic() - started < 1.5, (status, body)
+    assert json.loads(body) == {'url': f'/api/batches/{batch_id}/preview/R1', 'expires_in': 0}
+    assert not entered.is_set() and bucket.puts == [] and bucket.signs == []
+
+
+def test_missing_receipt_never_takes_object_lock_or_network(app, tmp_path, monkeypatch):
     import time
     headers, batch_id, _, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    from exactcut import resource_locks
-    key = f'{preview_oss.object_prefix()}/{batch_id}/R1/{digest}.mp4'
-    with resource_locks.hold('oss-object', [bucket.endpoint, bucket.bucket_name, key]):
-        started = time.monotonic()
-        status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-    assert status == 200 and time.monotonic() - started < 5
+    def forbidden(*a, **kw):
+        raise AssertionError('wait=False must not take the object lock or upload')
+    monkeypatch.setattr(preview_oss.resource_locks, 'hold', forbidden)
+    monkeypatch.setattr(preview_oss.shutil, 'copyfile', forbidden)
+    started = time.monotonic()
+    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+    assert status == 200 and time.monotonic() - started < 1.5
     assert json.loads(body) == {'url': f'/api/batches/{batch_id}/preview/R1', 'expires_in': 0}
-    assert bucket.puts == [] and bucket.signs == []
