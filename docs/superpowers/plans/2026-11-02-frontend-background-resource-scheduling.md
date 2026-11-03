@@ -1,6 +1,6 @@
 # 前台接收、后台受控执行：实施分步与本地验收
 
-基线9b4b2bb；隔离树`cut-mosaic-resource-scheduling`，分支`feat/frontend-background-resource-scheduling`。唯一业务依据：[统一方案](/Users/matao/code/exact-cut-fbbm-handoff/docs/design/frontend-background-task-policy.md)；[调查附件](/Users/matao/code/exact-cut-fbbm-handoff/docs/design/interactive-admission-resource-scheduling.md)只作路径证据。18883保持PID59032和原interactive-resources代码/数据，不热改、不部署生产。
+基线9b4b2bb；隔离树`cut-mosaic-resource-scheduling`，分支`feat/frontend-background-resource-scheduling`。唯一业务依据：[统一方案](../../design/frontend-background-task-policy.md)；[调查附件](../../design/interactive-admission-resource-scheduling.md)只作路径证据。18883保持PID59032和原interactive-resources代码/数据，不热改、不部署生产。
 
 ## 固定候选执行结果
 

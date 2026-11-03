@@ -32,6 +32,6 @@
 
 ## 私有证据与回退
 
-本地证据目录：`/Users/matao/.config/superpowers/release-prep/subtitle-incident-abfa-20261031/bottom-only/`；服务器：`/srv/exactcut/preparation/bottom-subtitles-8216c27/`。包含封存清单、完整日志、发布回执、真实输入样本、线上脚本哈希及最终源文件校验；原始业务画面和响应仅留私有目录，不入Git。
+本地证据目录：`~/.config/superpowers/release-prep/subtitle-incident-abfa-20261031/bottom-only/`；服务器：`/srv/exactcut/preparation/bottom-subtitles-8216c27/`。包含封存清单、完整日志、发布回执、真实输入样本、线上脚本哈希及最终源文件校验；原始业务画面和响应仅留私有目录，不入Git。
 
 如需回退，先重新检查活动任务与兼容性，再用已升级管理器回退到ea3db64。保持当前数据和全部策略版本缓存，不还原数据库；旧代码的识别范围为全画面，不能将回退解释为保持新下方识别行为。未执行实际回退。

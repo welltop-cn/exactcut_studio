@@ -6,7 +6,7 @@
 
 **Architecture:** 独立实验页面与后台任务，读取开发样片的普通复制件。复用项目集中配置、Google GenAI 客户端模式和已有开发凭据入口；结果按视频 SHA、模型和提示词版本缓存于忽略目录。
 
-**Tech Stack:** Python 3.12、现有 google-genai、FFmpeg、HTML/JS。Python 必须使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。
+**Tech Stack:** Python 3.12、现有 google-genai、FFmpeg、HTML/JS。Python 必须使用 `~/miniconda3/envs/py3.12/bin/python3.12`。
 
 ## 要回答的问题
 

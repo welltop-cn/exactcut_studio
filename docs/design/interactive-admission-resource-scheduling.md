@@ -4,7 +4,7 @@
 
 ## 1. 核实范围和证据边界
 
-实现基线：`/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources/source`，对应此前交付的运行代码。不是把 D1 未完成的 unlimited 工作树当现状。
+实现基线：`~/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources/source`，对应此前交付的运行代码。不是把 D1 未完成的 unlimited 工作树当现状。
 
 核对了普通请求分发/调度、交互识别/定位/预览、字幕及最终生成队列、FFmpeg/SAM入口、前端状态锁、帧索引和既有实测记录。生产值来自仓库 production.json 和历史验收；没有重新读取线上运行配置，没有执行生产命令。
 

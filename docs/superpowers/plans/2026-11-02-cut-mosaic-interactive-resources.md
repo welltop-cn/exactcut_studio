@@ -16,7 +16,7 @@
 4. queued/running 同素材冻结；先取消再修改；完成先确认替换或放弃结果。其他素材可编辑。
 5. 新能力先在独立实例验收，父 review 批准后才允许安排更新用户 18883。
 
-开发工作树：`/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources`，分支 `feat/cut-mosaic-interactive-resources`，基于 `1a8d7c0`。原运行工作树保持 clean；避免静态 JS 或新 SAM 子进程提前读到修复。
+开发工作树：`~/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources`，分支 `feat/cut-mosaic-interactive-resources`，基于 `1a8d7c0`。原运行工作树保持 clean；避免静态 JS 或新 SAM 子进程提前读到修复。
 
 ## 已确认根因及修复前路径
 

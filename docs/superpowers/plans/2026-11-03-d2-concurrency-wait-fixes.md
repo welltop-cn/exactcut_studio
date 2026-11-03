@@ -2,7 +2,7 @@
 
 目标：已接收的取帧/源索引工作不因执行资源暂忙转成失败；已有成片播放不在HTTP线程等待后台传输名额。用户已授权在前两项收尾后实施，父review后才更新dev。
 
-基线68713f89b1889295e18badff741350be45b8d2f6；D2既有树 /Users/matao/.paseo/worktrees/1kps4qs6/d2-mosaic-active-frame-blur 可继续唯一writer，禁止改当前运行的cut-mosaic-18883-source-delivery树。无需再建多余worktree。Python使用 /Users/matao/miniconda3/envs/py3.12/bin/python3.12。
+基线68713f89b1889295e18badff741350be45b8d2f6；D2既有树 ~/.paseo/worktrees/1kps4qs6/d2-mosaic-active-frame-blur 可继续唯一writer，禁止改当前运行的cut-mosaic-18883-source-delivery树。无需再建多余worktree。Python使用 ~/miniconda3/envs/py3.12/bin/python3.12。
 
 ## 约束和已核实事实
 

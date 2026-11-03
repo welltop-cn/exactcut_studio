@@ -15,7 +15,7 @@
 固定候选完整命令（工作目录`source`）：
 
 ```bash
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q -o faulthandler_timeout=45
+~/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q -o faulthandler_timeout=45
 ```
 
 基础abd089f结果：**2049 passed、1 skipped、10条既有multiprocessing fork警告，660.13秒**。日志`/tmp/d1-resource-scheduling-full-abd089f.log`。首轮中断不是全量通过：它暴露离线恢复已持非重入mutation锁而Excel内部再获取的问题；HTTP显式传短发布锁，离线默认由调用方保持事务。恢复/导入相关42项通过后才固定本候选重跑全量。

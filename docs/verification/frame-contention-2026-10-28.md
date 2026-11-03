@@ -8,7 +8,7 @@
 
 ## 验证
 
-使用 /Users/matao/miniconda3/envs/py3.12/bin/python3.12。
+使用 ~/miniconda3/envs/py3.12/bin/python3.12。
 
 - 新增竞争用例修复前 3 项失败：两条路径立即拒绝重叠请求，缺少有界等待助手。
 - test_frame_contention.py、test_cutting.py、test_cutting_api.py、test_editor_playback.py：54 passed in 29.38s。

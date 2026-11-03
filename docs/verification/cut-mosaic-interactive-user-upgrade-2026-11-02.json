@@ -140,7 +140,7 @@
   "schema_version": 1,
   "url": "http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5",
   "normal_restarts": 1,
-  "loaded_code_tree": "/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources/source",
+  "loaded_code_tree": "~/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources/source",
   "original_data_root_preserved": true,
   "configuration_changes": [
     "editor_resources: preview/scan/preprocess=2 global /1 user; encoder2",

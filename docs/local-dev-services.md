@@ -31,7 +31,7 @@
 
 ## 2026-11-02：交互并发实证与用户只读围观
 
-- 实现工作树：`/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources`；`feat/cut-mosaic-interactive-resources`。父review后，用户18883在空闲时一次正常SIGTERM升级到该已提交代码树c93dc49，新PID59032；原工作树clean、原数据根不变。334个保护文件在真实登录前SHA完全一致，详见 `docs/verification/cut-mosaic-interactive-user-upgrade-2026-11-02.json`。
+- 实现工作树：`~/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources`；`feat/cut-mosaic-interactive-resources`。父review后，用户18883在空闲时一次正常SIGTERM升级到该已提交代码树c93dc49，新PID59032；原工作树clean、原数据根不变。334个保护文件在真实登录前SHA完全一致，详见 `docs/verification/cut-mosaic-interactive-user-upgrade-2026-11-02.json`。
 - 新独立数据根：上述树的 `source/.dev-state/interactive-real-20261102/data`；原材料仅复制，没有硬链接用户素材。真实Gemini/SAM、2认证交互用户、A/B最终串行、取消重提与完整音视频输出已验收；7次Gemini共用该data root的6RPM/burst2持久桶，不重置限流。
 - 自动验收实例随脚本完成关闭。用户要求围观后，另开只读 viewer；只允许登录、读取和打开已准备会话，不提交模型/最终任务，不启动dispatcher。
 - Paseo可见工作区「剪切打码 · 只读围观」：`wks_7ae28b03ffe1bd96`，服务 `viewer`，管理端口59038；代理URL `http://viewer--feat-cut-mosaic-interactive-resources--intera--98f3aff8.localhost:6767`。另保留直连只读端口51837，避免旧围观链接失效。均绑定127.0.0.1，不是公网入口；远端设备不能把自己的localhost当作本机。
@@ -59,7 +59,7 @@
 | 8796 / 55419 | 整合版本飞书故障恢复模拟 | `release-all-20261012/source` worktree；`/tmp/exactcut-all-dev.py` | `/tmp/exactcut-all-dev-20261012`；按需复测，不并入主 dev |
 | 8797 / 66134 | 整合版本真实视频制作验收 | `release-all-20261012/source` worktree；`/tmp/exactcut-all-real-dev.py` | `/tmp/exactcut-all-real-dev-20261012`；保留测试成片及证据 |
 
-worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/`。主工作区为 `/Users/matao/code/exact-cut-fbbm-handoff`。上述 `/tmp` 和忽略目录为本机私有临时文件，不随 Git 分发，也不保证永久存在；复用前核对脚本，不能当作受版本管理的标准启动器。
+worktree 根为 `~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/`。主工作区为 `.`。上述 `/tmp` 和忽略目录为本机私有临时文件，不随 Git 分发，也不保证永久存在；复用前核对脚本，不能当作受版本管理的标准启动器。
 
 ## 真实处理与模拟边界
 
@@ -93,7 +93,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 5. 保留项目数据和测试证据；不要合并accounts、media-state、publication或伪造回执，不为清理服务删除数据目录。不要重跑会重新造项目或写配置的临时脚本来“恢复原实例”。
 6. 经协调收敛后更新本表，明确哪些服务已停、主dev何时从哪个提交重启、实际配置以及健康/任务检查结果。
 
-标准开发启动方式见 [source/README.md](../source/README.md)，使用指定Python `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。已有8793监听时不得直接启动第二实例。
+标准开发启动方式见 [source/README.md](../source/README.md)，使用指定Python `~/miniconda3/envs/py3.12/bin/python3.12`。已有8793监听时不得直接启动第二实例。
 
 浏览器Cookie按主机/路径隔离，**不按端口隔离**。多个127.0.0.1服务登录可能覆盖Cookie或造成401；临时测试应使用独立浏览器上下文或明确的主机隔离，不能据此误判业务失败。
 
@@ -123,7 +123,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 ## Source frame picker temporary preview (2026-10-13)
 
 - `http://localhost:8799/home/#95f99b49174e4cbb80dbbe381abde05c`: new explicit frame-format interaction demo; original millisecond copy `bb380fdda28544e98ed8839a2dfa1972` remains unchanged.
-- Owner: source-frame-picker feature session, worktree `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/source-frame-picker`. Private launcher `/tmp/exactcut-source-picker-dev-20261013/start.py`, data sibling `data`; recheck listener and command before any service action.
+- Owner: source-frame-picker feature session, worktree `~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/source-frame-picker`. Private launcher `/tmp/exactcut-source-picker-dev-20261013/start.py`, data sibling `data`; recheck listener and command before any service action.
 - Worker, source fetching, AI, external writes and publishing disabled. The user explicitly requested readonly copies of the production project's configuration and video for local testing. No production mutation; no shared 8793 restart.
 - User requested a live preview, so leave this dedicated instance available until inspection is complete. Do not remove its data or treat it as production. Code is uncommitted and not released.
 
@@ -162,7 +162,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 等待用户任务 render-b63091de29500d5e2d16a26dd2d79a2f 自然 completed，取得 compute/scan 锁后从已验证 PID 78076 重启为 PID 14916（历史记录，操作前核验）。release development-stop-0f09503，healthz ok/development；用户本次结果完整保留，未替换成片或变更选择。8793/8800 未动。
 ## 2026-10-16 马赛克 Gemini 独立验收（8801 保留运行）
 
-用户要求启动本地 dev 测试。专用入口 `http://localhost:8801/home/#2cf132715d8e47719f5c275f0f6f2d13`，owner 为 mosaic-gemini 会话。PID 52609（操作前重新核验），cwd `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/mosaic-gemini/source`，提交 `0b2748b`。healthz 已确认 development/ok、release `development-mosaic-0b2748b`。
+用户要求启动本地 dev 测试。专用入口 `http://localhost:8801/home/#2cf132715d8e47719f5c275f0f6f2d13`，owner 为 mosaic-gemini 会话。PID 52609（操作前重新核验），cwd `~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/mosaic-gemini/source`，提交 `0b2748b`。healthz 已确认 development/ok、release `development-mosaic-0b2748b`。
 
 私有启动器 `source/.dev-state/mosaic-gemini-20261016/start.py`，日志同目录 `server.log`。复用 8800 的开发配置 `development-cutting.json`、本地 Gemini 配置路径和开发数据 `source/.dev-state/data`，Python 使用指定 py3.12；worker、发布、外部写入关闭。8793/8800 未重启。此入口共享开发数据，避免在多个入口同时编辑同一成片。浏览器已打开，留给用户验收；本次只验证服务健康，未发起真实 Gemini 扫描。验收完成后可停止此会话的专用实例。
 
@@ -227,7 +227,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 ## 2026-10-30 Gemini 双语字幕实验（8810 保留运行）
 
 - 入口 http://localhost:8810/ （监听127.0.0.1:8810），owner：preview-subtitle-demo / 主程GPT；用户要求留给观看。PID 41347 为本次快照，操作前重新确认。
-- cwd `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/preview-subtitle-demo/source`，分支 `experiment/preview-subtitle-demo`。启动：指定Python `-m exactcut.subtitle_demo --ai-env /Users/matao/code/exact-cut-fbbm-handoff/source/.env --port 8810`；使用 `config/development-cutting.json` 集中配置。
+- cwd `~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/preview-subtitle-demo/source`，分支 `experiment/preview-subtitle-demo`。启动：指定Python `-m exactcut.subtitle_demo --ai-env source/.env --port 8810`；使用 `config/development-cutting.json` 集中配置。
 - 私有数据/缓存/日志：上述cwd的 `.dev-state/subtitle-demo/`，项目配置副本为其 `project/`，独立限流状态在其 `runtime/`。`server.log`/`server.pid` 记录运行信息。
 - 用户授权只读下载指定batch 91f0aaa0aae54aceb28093ea8206b7d2 当前版本成片及项目配置；当前version c7a295a6b8f54689a1f9f1a775218011，完整60.1秒视频SHA f2d7b2ce954b87313d661087bd879e43f45f195ce62a0e7db1e885a7ea84d683。未复制全局生产凭据/账号或激活生产任务。
 - Gemini实际整片识别38.762秒/21条；5次seek、字幕间隙及播放同步验证，7项解析检查通过。完整抽查记录在该worktree的 `docs/verification/preview-subtitle-demo-2026-10-30.md`。8793/8800/8801未变更。
@@ -242,7 +242,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 
 ## 2026-10-30 发布候选本地联测（8822）
 
-独立工作树 `release-20261030` / `release/review-20261030` 合并当前 main 校验定位、`fix/editor-busy-retry` 和中文字幕，并补充字幕发布排空门禁及静态资源打包修复。入口 `http://release-review.localhost:8822/home/#0d6fdddb468348ad92e0cbd8f5de1db5`，数据/账号位于该工作树 `source/.dev-state/release-review/`，创建启动脚本和测试证据在 `/Users/matao/.config/superpowers/release-prep/exactcut-20261030-1802/`。PID68828为历史快照，操作前重新核验。
+独立工作树 `release-20261030` / `release/review-20261030` 合并当前 main 校验定位、`fix/editor-busy-retry` 和中文字幕，并补充字幕发布排空门禁及静态资源打包修复。入口 `http://release-review.localhost:8822/home/#0d6fdddb468348ad92e0cbd8f5de1db5`，数据/账号位于该工作树 `source/.dev-state/release-review/`，创建启动脚本和测试证据在 `~/.config/superpowers/release-prep/exactcut-20261030-1802/`。PID68828为历史快照，操作前重新核验。
 
 用户要求多测本地dev：四素材独立副本移除交付状态供编辑测试，原片/预览文件均为副本，8821和线上状态不变。真实Chromium+HTTP/FFmpeg完成四次计算锁重试恢复、四次抽帧锁重试恢复、快速多次seek、八轮关闭重开及两轮受控visibility恢复，无页面JS异常；四条字幕缓存正常。风险识别、跟踪、正式worker、下载和外部发布/写入关闭，未调用付费风险扫描。1891项完整回归通过/1跳过，打包声明后续修正另有10项相关回归通过；详见 `docs/verification/reviewed-integration-2026-10-30.md`。保留该独立实例供复查；不重启8793/8800/8801/8810/8820/8821。
 
@@ -262,7 +262,7 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 
 ## 2026-10-31 剪切打码后台队列（18883 临时实例已停止）
 
-D1 独立工作树 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue`，分支 `feat/cut-mosaic-background-queue`。使用指定 Python 3.12、独立合成视频/账号/配置，正式 worker、Gemini、外部写入与发布全部关闭；没有操作共享 8793/8801/8810/8821/8822。
+D1 独立工作树 `~/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue`，分支 `feat/cut-mosaic-background-queue`。使用指定 Python 3.12、独立合成视频/账号/配置，正式 worker、Gemini、外部写入与发布全部关闭；没有操作共享 8793/8801/8810/8821/8822。
 
 - 实际浏览器入口 `http://127.0.0.1:18883/home/#44856f4afe564766b8cc8ea8d5350a71`，启动器 `source/.dev-state/d1-mosaic-verified/start.py`，数据同目录 `data/`；历史 PID 15106。核验无 active/pending 后正常停止，端口已无监听，数据和私有登录信息保留。
 - `source/.dev-state/d1-mosaic-restart/` 为另一组独立合成数据；`restart_acceptance.py` 只管理自己 Popen 的服务。验证 queued 正常停服重启与 running/composing kill-9 重启，同 ID 继续处理且原片不变；结束后 wait 自有服务退出，再次核验18883无监听。
@@ -272,7 +272,7 @@ D1 独立工作树 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background
 
 ## 2026-10-31 四素材真实项目队列试用（18883 保留运行）
 
-用户明确要求现在开启本地dev并保留试用，优先使用此前已下载的真实项目。独立工作树仍为 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue`，加载父 review 已通过的代码 `bfeab190d039aaef69278bd8afd76745146efb8e`；没有修改实现代码。
+用户明确要求现在开启本地dev并保留试用，优先使用此前已下载的真实项目。独立工作树仍为 `~/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue`，加载父 review 已通过的代码 `bfeab190d039aaef69278bd8afd76745146efb8e`；没有修改实现代码。
 
 - 用户入口：`http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5`，名称「剪切打码后台队列测试 · 101682 · 四条真实素材（独立可编辑副本）」；账号 `mosaic_trial`，密码在私有0600 `source/.dev-state/cut-mosaic-user-trial-20261031/credentials.json`，不提交Git。
 - 当前 PID `71555`（后续操作前重新核验），指定Python3.12，cwd为本工作树source；启动器同私有目录 `start.py`，数据同目录 `data/`，日志 `server.log`。用户正在试用，不自动停止、重启或重新运行prepare覆盖数据。

@@ -142,7 +142,7 @@
     "rollback": "normal SIGTERM, exact previous launcher/runtime restored, no DB restore; old PID14277 healthy",
     "retry": "fresh idle and maintenance checks, authenticated static verification, then successful upgrade"
   },
-  "private_evidence_directory": "/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue/source/.dev-state/cut-mosaic-user-trial-20261031/resource-upgrade-20261103-005744",
+  "private_evidence_directory": "~/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue/source/.dev-state/cut-mosaic-user-trial-20261031/resource-upgrade-20261103-005744",
   "source_tests": {
     "passed": 2057,
     "skipped": 1,

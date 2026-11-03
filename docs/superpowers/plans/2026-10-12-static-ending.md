@@ -12,4 +12,4 @@
 - [x] Add editor controls to both ordinary and structured rows in `source/exactcut/web/app.js`, including immediate timing updates and preview of uploaded image. Persist ordinary ending fields without creating a composition.
 - [x] Verify browser interactions, real FFmpeg output (last frame matches, image is contained, text visible, audio silent), version/clone behavior and regression suite. Document behavior in `source/README.md`.
 
-Run focused tests from `source` with `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_static_ending.py`; first expect missing-feature failures, then all passing. Run the existing suite after integration. Work remains in the isolated development repository; deployment is outside this change.
+Run focused tests from `source` with `~/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_static_ending.py`; first expect missing-feature failures, then all passing. Run the existing suite after integration. Work remains in the isolated development repository; deployment is outside this change.

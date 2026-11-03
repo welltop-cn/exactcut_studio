@@ -41,7 +41,7 @@
 验证命令（source目录）：
 
 ```sh
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_hook_preview_capacity.py tests/test_step3_resources.py tests/test_round3_preview.py tests/test_phase2_preview_api.py tests/test_concurrency.py tests/test_round1_scheduler.py tests/test_intra_project_scheduler.py -o addopts='' -q --tb=short
+~/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_hook_preview_capacity.py tests/test_step3_resources.py tests/test_round3_preview.py tests/test_phase2_preview_api.py tests/test_concurrency.py tests/test_round1_scheduler.py tests/test_intra_project_scheduler.py -o addopts='' -q --tb=short
 ```
 
 最终结果：166 passed in 16.37s；git diff --check 通过。

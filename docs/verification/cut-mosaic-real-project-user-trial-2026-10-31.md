@@ -16,7 +16,7 @@
 
 优先检查了已有的 preview-subtitles 与 release-review 两份数据和准备/导入脚本。最终使用可编辑且无交付关联的本地 release-review 副本：
 
-`/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/release-20261030/source/.dev-state/release-review/data/.web-state/batches/0d6fdddb468348ad92e0cbd8f5de1db5`
+`~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/release-20261030/source/.dev-state/release-review/data/.web-state/batches/0d6fdddb468348ad92e0cbd8f5de1db5`
 
 只复制四条当前原片、四条轻量预览、一个必要结尾图片、当前版本/项目配置及四份身份和源 SHA 匹配的 completed 字幕报告。总计8个视频744300069字节，另结尾图片204724字节。逐一验证文件 SHA、独立 inode、link count=1；采用 `shutil.copyfile`，没有 hardlink。来源清单与校验值在私有 `provenance.json`，包括源配置前后 SHA。
 

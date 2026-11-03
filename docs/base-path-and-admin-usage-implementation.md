@@ -24,14 +24,14 @@
 - 实现后专项：58 passed，含路径、Cookie、视频 Range、nginx、环境隔离及现有存储清理回归。
 - 补异常元数据、同用户多批次、繁忙 HTTP 的回归：2 failed / 10 passed；复现合法 JSON 数组/null 导致连接断开。加入对象类型校验后 12 passed；异常返回 503，忙请求不阻塞 `/api/me`。
 - Node 执行实际前端初始化、渲染和按钮处理器，验证管理员可见/制作人隐藏、三表排序、文本转义、空态及仅 GET 请求。Chrome 本地临时服务器复核三表显示、管理员可见、制作人隐藏及 403；无业务外部请求。
-- macOS 15.8.1 / Python 3.12.12；全量测试使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`，清除继承的 EXACTCUT/OPENAI/ALIYUN/FEISHU/CF_ADS/GEMINI/GOOGLE_API 环境，独立 TemporaryDirectory 数据根，不固定 SOURCE_ROOT。
+- macOS 15.8.1 / Python 3.12.12；全量测试使用 `~/miniconda3/envs/py3.12/bin/python3.12`，清除继承的 EXACTCUT/OPENAI/ALIYUN/FEISHU/CF_ADS/GEMINI/GOOGLE_API 环境，独立 TemporaryDirectory 数据根，不固定 SOURCE_ROOT。
 
 最终本机全量：**777 passed / 108.78s，退出 0**。从 `d53cdc20c7682159d4391cdb8771d10a476467d4` 经 `git clone --no-hardlinks` 创建独立干净 clone：**777 passed / 111.33s，退出 0**，无跳过；导入确实来自 clone/source，测试前后 `git status --porcelain` 均为空。两次验证的 source tree 均为 `78bee238a2184ff6daa4b6896e2d94e8ca1c02ed`。验证后仅补记本文并 amend 提交，source tree 不变；`git diff --check` 通过。
 
 复现命令：在 `source/` 下执行下列脚本；clone 验证还需显式将 PYTHONPATH 指向 clone/source、核对 exactcut 导入路径及测试前后 Git 状态为空。
 
 ```sh
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+~/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
 import os, subprocess, sys, tempfile
 from pathlib import Path
 with tempfile.TemporaryDirectory(prefix='home-usage-tests-') as root:

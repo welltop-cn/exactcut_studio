@@ -24,7 +24,7 @@ Run the complete suite from `source/` with a new empty temporary data directory:
 
 ```sh
 static_ending_test_root=$(mktemp -d /tmp/exactcut-ending-tests.XXXXXX)
-EXACTCUT_DATA_ROOT="$static_ending_test_root" /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest
+EXACTCUT_DATA_ROOT="$static_ending_test_root" ~/miniconda3/envs/py3.12/bin/python3.12 -m pytest
 ```
 
 The explicit data root avoids tests that temporarily use the production environment colliding with the development marker in the working source directory. Environment guards remain unchanged.

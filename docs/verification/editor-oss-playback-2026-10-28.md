@@ -21,7 +21,7 @@
 
 ## 测试与审查
 
-测试命令统一使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`，`PYTHONPATH=source`。
+测试命令统一使用 `~/miniconda3/envs/py3.12/bin/python3.12`，`PYTHONPATH=source`。
 
 第一轮完整回归仅因 `test_first_load` 的固定脚本清单漏掉新增脚本而失败，已补齐，并通过新脚本的压缩、私有缓存、未登录 401 检查。
 

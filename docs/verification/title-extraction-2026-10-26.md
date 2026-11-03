@@ -30,7 +30,7 @@ the process environment. Existing global upload/publish/AI flags remain unchange
 
 Local dev was configured through ignored
 `source/.dev-state/title-images/runtime.json` and a mode-0600 credential file.
-Start it with `EXACTCUT_PYTHON=/Users/matao/miniconda3/envs/py3.12/bin/python3.12
+Start it with `EXACTCUT_PYTHON=~/miniconda3/envs/py3.12/bin/python3.12
 ./bin/dev-web --title-images` from `source`. This enables only the scoped title
 query/editor capability. Do not commit or copy these local credentials to releases.
 

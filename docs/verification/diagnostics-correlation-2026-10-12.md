@@ -20,7 +20,7 @@ producer03 的字幕预览429可从线上日志证实，但需要手工对齐一
 - 专项诊断：18 passed in 3.84s。
 - 开发工作区全量：1115 passed、2 failed（188.31s）。失败位于test_external_flags和test_production_helper，测试切到production却访问工作区已有development目录；保留原有环境，不修改业务环境标记。
 - 独立验收目录：`/tmp/exactcut-diagnostics-acceptance-20261012`，基于76c8759，仅应用本轮诊断源码和测试补丁，不包含工作区另一项静态片尾改动。先验证原失败用例所在test_external_flags基线4项通过。
-- 独立候选全量：**1107 passed in 181.10s**。命令：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q --tb=short`，在候选source目录执行。
+- 独立候选全量：**1107 passed in 181.10s**。命令：`~/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q --tb=short`，在候选source目录执行。
 
 工作区1117项与独立候选1107项的数量不同，因为前者还包含另一项未提交功能的测试。未将其改动纳入本次补丁。
 

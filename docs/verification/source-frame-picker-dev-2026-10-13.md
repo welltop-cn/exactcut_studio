@@ -2,7 +2,7 @@
 
 ## Delivery and isolation
 
-- Worktree: `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/source-frame-picker`, branch `feat/source-frame-picker`, base `2217055`. Uncommitted; no merge, release, production mutation or shared dev restart.
+- Worktree: `~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/source-frame-picker`, branch `feat/source-frame-picker`, base `2217055`. Uncommitted; no merge, release, production mutation or shared dev restart.
 - Live new frame-format demo: `http://localhost:8799/home/#95f99b49174e4cbb80dbbe381abde05c`.
 - Original local millisecond copy: `bb380fdda28544e98ed8839a2dfa1972`. Its full draft was compared with the original copied draft and remains exactly equal. Existing projects are not migrated.
 - Private launcher `/tmp/exactcut-source-picker-dev-20261013/start.py`; independent data sibling `data`. Worker, source fetching, AI, publishing and external writes disabled. Only this session's verified 8799 process was restarted to load backend changes. Recheck current listener before later actions.

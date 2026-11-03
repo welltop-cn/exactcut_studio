@@ -22,7 +22,7 @@ Gemini 3.8 Flash High（Antigravity，审查 agent `975f3e3d-2adf-4019-817c-3ae5
 
 复查额外发现并修复剪切页缓存帧解码失败时沿用已取消 controller 的重读循环：合成测试在修复前 150ms 内解码 26 次，修复后只一次。清空无在途 fetch 的 controller，保留当前错误和手动重试入口；剪切 UI 23 项通过。Gemini 对此最终增量再次审查并独立运行 23 项测试，确认无新增问题，维持可以合并结论。
 
-首次全量仅出现两处旧浏览器测试遗漏新脚本依赖/静态资源清单的失败，补齐后相关 45 项通过。再次完整回归退出码 0，共 1776 项通过、1 项跳过；随后最终缓存帧修复及新增回归的剪切 UI 23 项通过。命令：`PYTHONPATH=source /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest source/tests -q --tb=short`。完整回归存在既有 multiprocessing fork 多线程弃用警告，无测试失败。
+首次全量仅出现两处旧浏览器测试遗漏新脚本依赖/静态资源清单的失败，补齐后相关 45 项通过。再次完整回归退出码 0，共 1776 项通过、1 项跳过；随后最终缓存帧修复及新增回归的剪切 UI 23 项通过。命令：`PYTHONPATH=source ~/miniconda3/envs/py3.12/bin/python3.12 -m pytest source/tests -q --tb=short`。完整回归存在既有 multiprocessing fork 多线程弃用警告，无测试失败。
 
 按用户最新要求，Paseo 配置“架构师”（Pi / third-party/gpt-6-astra / high）独立审查设计与实现；审查 agent `b5f319dd-1b86-4a7a-930b-a8954e70bac6`。此前“搬砖工”审查已取消，未形成结论。
 

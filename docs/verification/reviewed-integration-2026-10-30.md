@@ -4,7 +4,7 @@ Scope pinned at main `db4c684` on 2026-10-30, Asia/Shanghai. The previous calend
 
 ## Branch/worktree inventory
 
-All worktree records, local branch refs and six historical stashes were inspected. Dirty tracked patches and nonignored untracked files were backed up before integration at `/Users/matao/.config/superpowers/release-prep/exactcut-20261030-1802/`.
+All worktree records, local branch refs and six historical stashes were inspected. Dirty tracked patches and nonignored untracked files were backed up before integration at `~/.config/superpowers/release-prep/exactcut-20261030-1802/`.
 
 | Work | Disposition |
 |---|---|
@@ -44,7 +44,7 @@ No remaining merge blocker was found in either axis. The historical nonblocking 
 
 ## Complete and focused regressions
 
-Integrated code including release-drain fixes: **1891 passed, 1 skipped, 10 existing multiprocessing/fork deprecation warnings**, exit 0, 478.67 seconds. Command: `PYTHONPATH=source /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest source/tests -o addopts= -q --tb=short`.
+Integrated code including release-drain fixes: **1891 passed, 1 skipped, 10 existing multiprocessing/fork deprecation warnings**, exit 0, 478.67 seconds. Command: `PYTHONPATH=source ~/miniconda3/envs/py3.12/bin/python3.12 -m pytest source/tests -o addopts= -q --tb=short`.
 
 After that full run, the only application change was adding the missing JavaScript resource to package-data. The new packaging regression and first-load/release cases passed (**10 tests**), and the actual wheel was rebuilt/audited. No business/runtime logic changed after the full run. Final release-controller review additionally reproduced a queued-report drain deadlock: pending subtitle reports had been checked against the generic queued/running job set. Restricted subtitle reports to running status while retaining both durable claim checks; a real queued report now survives transition. **104 focused release/queue/first-load regressions passed** afterward. All eight shipped JS modules pass `node --check`; `git diff --check` passes. Linux image/build validation for the final exact revision is recorded separately in the release preparation manifest.
 

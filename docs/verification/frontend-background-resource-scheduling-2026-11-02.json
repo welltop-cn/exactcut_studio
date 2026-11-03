@@ -179,7 +179,7 @@
     },
     "real_gemini_call_count_unchanged": true
   },
-  "evidence_root": "/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-resource-scheduling/source/.dev-state/resource-scheduling-20261102/c3ef0f13",
+  "evidence_root": "~/.paseo/worktrees/1kps4qs6/cut-mosaic-resource-scheduling/source/.dev-state/resource-scheduling-20261102/c3ef0f13",
   "scenario_separation": {
     "core_first_attempt": "real mixed execution recorded; controller later sent wrong C SHA and received protected409",
     "completion_followup": "C correct-version open/save and natural A/B completion; controller awaited wrong legacy aggregate result path",

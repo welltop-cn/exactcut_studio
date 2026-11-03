@@ -62,15 +62,15 @@ UI 故障分支使用真实 Chromium 与确定性的 API 故障注入；receipt 
 
 ```sh
 cd source
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q
+~/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q
 ```
 
 父会话原始复现仍可直接复跑；仓库内正式测试不依赖该临时文件：
 
 ```sh
 cd source
-PYTHONPATH=.:tests /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' /tmp/test_parent_mosaic_review.py -q
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' tests/test_mosaic_render.py tests/test_mosaic_queue_ui.py tests/test_mosaic_queue_integration.py -q
+PYTHONPATH=.:tests ~/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' /tmp/test_parent_mosaic_review.py -q
+~/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' tests/test_mosaic_render.py tests/test_mosaic_queue_ui.py tests/test_mosaic_queue_integration.py -q
 ```
 
 本轮只使用测试临时/私有数据根、合成素材与测试账号，未重启 18883 或其他常驻 dev，未调用付费识别/生产数据/发布接口。SAM 和容量调查的边界仍按[首轮验证记录](cut-mosaic-background-queue-2026-10-31.md)执行。

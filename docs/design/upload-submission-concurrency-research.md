@@ -29,7 +29,7 @@
 从现有 test_workflow.workspace/imported/complete_asset fixture 建立两份成片，纳管后执行真实 queue_delivery、recover_outbox、_merge_delivery；交付开关与目标指纹使用隔离替身，没有运行任何外部交付进程。
 
 ```sh
-PYTHONPATH=source:source/tests /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -q -s /var/folders/mb/7rs6fvr50gvc8yc93d73bvn00000gp/T/exactcut-upload-research.y2GSEP1sWd/test_upload_research.py
+PYTHONPATH=source:source/tests ~/miniconda3/envs/py3.12/bin/python3.12 -m pytest -q -s /var/folders/mb/7rs6fvr50gvc8yc93d73bvn00000gp/T/exactcut-upload-research.y2GSEP1sWd/test_upload_research.py
 ```
 
 结果：`1 passed in 0.37s`。这里“通过”表示探针成功验证现有缺陷，非修复完成。

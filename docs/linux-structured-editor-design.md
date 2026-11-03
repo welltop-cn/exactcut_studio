@@ -9,7 +9,7 @@
 | 作者 | （待填写） |
 | 日期 | 2026-10-08 |
 | 状态 | Draft |
-| 基线 | 交接库 `main` @ `32c4360`（`/Users/matao/code/exact-cut-fbbm-handoff`） |
+| 基线 | 交接库 `main` @ `32c4360`（`.`） |
 | 现行生产身份 | `v0.3.3-phase4`，commit `23e303c`，`127.0.0.1:8791`，Cloudflare Tunnel。本设计不要求这台 Mac 继续开机 |
 | 数据 schema | 现为 `source/deploy/data-schema.json` 的 `{"version":1,"readable":[1]}`。本变更为 schema 2，`readable` 为 `[1, 2]` |
 | 负载 | 今天约 10 条成片/天；按 100 条/天、20 个同时登录的会话设计。不是多租户 SaaS |

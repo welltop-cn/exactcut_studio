@@ -15,7 +15,7 @@
 
 ## 隔离验证方法
 
-在 `source/` 下使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12` 运行完整 pytest。启动 pytest 前清除外部凭据及继承的 `EXACTCUT_*` 环境，使用独立临时 `EXACTCUT_DATA_ROOT`，环境为 development。
+在 `source/` 下使用 `~/miniconda3/envs/py3.12/bin/python3.12` 运行完整 pytest。启动 pytest 前清除外部凭据及继承的 `EXACTCUT_*` 环境，使用独立临时 `EXACTCUT_DATA_ROOT`，环境为 development。
 
 本轮实测开发环境为 macOS 15.8.1 arm64，conda-forge Python 3.12.12；未更换解释器或使用生产数据根。
 
@@ -26,7 +26,7 @@
 可复现的 macOS 完整测试命令（在仓库 `source/` 下执行）：
 
 ```sh
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+~/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
 import os, subprocess, tempfile
 with tempfile.TemporaryDirectory(prefix='exactcut-concurrency-tests-') as root:
     prefixes = ('EXACTCUT_', 'OPENAI_', 'ALIYUN_', 'FEISHU_',
@@ -35,7 +35,7 @@ with tempfile.TemporaryDirectory(prefix='exactcut-concurrency-tests-') as root:
            if not key.startswith(prefixes)}
     env.update(EXACTCUT_DATA_ROOT=root, EXACTCUT_ENVIRONMENT='development')
     raise SystemExit(subprocess.call([
-        '/Users/matao/miniconda3/envs/py3.12/bin/python3.12',
+        '~/miniconda3/envs/py3.12/bin/python3.12',
         '-m', 'pytest', '-o', 'addopts=', '-q'
     ], env=env))
 PY
@@ -194,7 +194,7 @@ TDD：初始发布守卫/额度用例 **22 failed / 5 existing passed**→GREEN�
 ```sh
 COMMIT='填写本轮最终完整提交 SHA'
 TASK_EXPORT="$(mktemp -d /tmp/exactcut-acceptance.XXXXXX)"
-git clone --no-hardlinks /Users/matao/code/exact-cut-fbbm-handoff "$TASK_EXPORT/engineering"
+git clone --no-hardlinks . "$TASK_EXPORT/engineering"
 git -C "$TASK_EXPORT/engineering" checkout --detach "$COMMIT"
 test -z "$(git -C "$TASK_EXPORT/engineering" status --porcelain)"
 git -C "$TASK_EXPORT/engineering" bundle create "$TASK_EXPORT/engineering.bundle" HEAD
@@ -401,7 +401,7 @@ fi
 
 TDD：先新增 `test_round2_storage.py`，红灯 2 failed（输出盘只有 budget/4 仍放行、同盘预算只有一份）；再修 `render_allocations`。输出盘完整预约 `render_budget()`；临时峰值另预约同样大小，project 基底缓存占临时预算 1/4、TMPDIR 切段/合并占 3/4。保守假设输出与临时可并存，同盘相加两份，scheduler 与 child 共用同一函数。旧同盘测试同步调整其预期，不缩减输出以满足旧断言。
 
-macOS 15.8.1 arm64 / conda Python 3.12.12，命令（source 下）：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`。脚本清理 EXACTCUT/OPENAI/ALIYUN/FEISHU/CF_ADS/GEMINI/GOOGLE_API 继承变量，以独立 TemporaryDirectory 数据根、development 环境执行 `python -m pytest -o addopts= -q`；无真实外部调用。完整 615 passed / 77.21s；`git diff --check` 通过。三设备输出不足拒绝、同盘第一份启动第二份拒绝、释放后再启动均可复现。
+macOS 15.8.1 arm64 / conda Python 3.12.12，命令（source 下）：`~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`。脚本清理 EXACTCUT/OPENAI/ALIYUN/FEISHU/CF_ADS/GEMINI/GOOGLE_API 继承变量，以独立 TemporaryDirectory 数据根、development 环境执行 `python -m pytest -o addopts= -q`；无真实外部调用。完整 615 passed / 77.21s；`git diff --check` 通过。三设备输出不足拒绝、同盘第一份启动第二份拒绝、释放后再启动均可复现。
 
 
 ### R2-B / P1-2：守护写请求不重放
@@ -460,10 +460,10 @@ TDD：`test_round2_evidence.py` 三条主回归先 3 failed：失败 future 永�
 干净clone复现命令（从开发仓库根执行；只操作本地临时目录）：
 
 ```sh
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+~/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
 import os, subprocess, tempfile
 from pathlib import Path
-python = '/Users/matao/miniconda3/envs/py3.12/bin/python3.12'
+python = '~/miniconda3/envs/py3.12/bin/python3.12'
 repository = Path.cwd()
 commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
 with tempfile.TemporaryDirectory(prefix='exactcut-round2-clean-') as folder:
@@ -490,7 +490,7 @@ PY
 
 测试先行：新增 `tests/test_round3_verification.py`，先观察 waiting_resource / 未知等待状态的 publication 被回滚，以及75等待后重入失败；queued/running 的重复请求原本返回已有job（200），测试保留这一幂等合同，不要求创建新job。修复把“匹配job已存在”作为交接提交证据，不以状态白名单判断落盘；只有真正缺job才补偿。持久 waiting_resource 恢复为queued并保留not_before；重复核实对其他未终结状态拒绝。退出75的阶段结果与持久job状态是两层：当前worker通常把前者转成queued，本回归同时覆盖持久waiting_resource的兼容窗口。
 
-独立临时数据根、假进程表与模拟客户端覆盖：75→资源等待、两次tick不回滚、不占执行位、固定时钟到期→原record/material只查询一次；期间新核实拒绝/已有queued请求复用原job。不存在OSS/飞书创建/ingest/resync。聚焦命令（source目录）：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py tests/test_round3_verification.py tests/test_round2_verification.py`：13 passed /6.89s。
+独立临时数据根、假进程表与模拟客户端覆盖：75→资源等待、两次tick不回滚、不占执行位、固定时钟到期→原record/material只查询一次；期间新核实拒绝/已有queued请求复用原job。不存在OSS/飞书创建/ingest/resync。聚焦命令（source目录）：`~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py tests/test_round3_verification.py tests/test_round2_verification.py`：13 passed /6.89s。
 
 R3-A完整pytest（同一清凭据、临时数据根隔离脚本，无固定SOURCE_ROOT）：654 passed /91.17s，退出0。macOS15.8.1 arm64、conda-forge Python3.12.12。`git diff --check`通过。
 
@@ -541,10 +541,10 @@ TDD新增`tests/test_round3_preview.py`，在发完首个响应后阻塞respond�
 
 ```sh
 cd source
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+~/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
 import os, subprocess, tempfile
 from datetime import datetime, timezone
-python = '/Users/matao/miniconda3/envs/py3.12/bin/python3.12'
+python = '~/miniconda3/envs/py3.12/bin/python3.12'
 prefixes = ('EXACTCUT_', 'OPENAI_', 'ALIYUN_', 'FEISHU_', 'CF_ADS_', 'GEMINI_', 'GOOGLE_API_')
 for index in range(1, 4):
     env = {key: value for key, value in os.environ.items() if not key.startswith(prefixes)}

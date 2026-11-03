@@ -13,7 +13,7 @@ Implemented locally; no production deployment or production data mutation.
 
 ## Verification
 
-From `source`, using `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest`:
+From `source`, using `~/miniconda3/envs/py3.12/bin/python3.12 -m pytest`:
 
 ```
 tests/test_validation_locations.py tests/test_validation_feedback_ui.py

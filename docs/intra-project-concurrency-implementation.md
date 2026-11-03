@@ -4,9 +4,9 @@
 
 ## 环境与隔离
 
-2026-10-10，macOS 15.8.1 arm64，Python 3.12.12（conda-forge）。全部 Python 使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。
+2026-10-10，macOS 15.8.1 arm64，Python 3.12.12（conda-forge）。全部 Python 使用 `~/miniconda3/envs/py3.12/bin/python3.12`。
 
-在 `source/` 执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`：包装器为每次运行建立独立 `TemporaryDirectory` 数据根，设置 `EXACTCUT_ENVIRONMENT=development`，清除 EXACTCUT/OPENAI/ALIYUN/FEISHU/CF_ADS/GEMINI/GOOGLE_API 凭据变量；调用 `python -m pytest -o addopts= -q`。外部客户端均模拟，无真实上传。基线 **676 passed，97.59s**。
+在 `source/` 执行 `~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`：包装器为每次运行建立独立 `TemporaryDirectory` 数据根，设置 `EXACTCUT_ENVIRONMENT=development`，清除 EXACTCUT/OPENAI/ALIYUN/FEISHU/CF_ADS/GEMINI/GOOGLE_API 凭据变量；调用 `python -m pytest -o addopts= -q`。外部客户端均模拟，无真实上传。基线 **676 passed，97.59s**。
 
 按组执行 RED → 最小实现 → GREEN → 审查，最后完整 pytest 与已提交版本干净 clone 验证。保留用户原有两个文档和三个前端文件的未提交改动；只按路径暂存自己文件。不部署、不触碰生产。
 
@@ -51,14 +51,14 @@
 在仓库 `source/` 下执行以下脚本；每次只使用新的临时数据根，不继承发布/下载/模型凭据。已有测试逐项使用 fixtures 模拟外部客户端。
 
 ```sh
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+~/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
 import os, subprocess, tempfile
 prefixes = ('EXACTCUT_', 'OPENAI_', 'ALIYUN_', 'FEISHU_', 'CF_ADS_', 'GEMINI_', 'GOOGLE_API_')
 with tempfile.TemporaryDirectory(prefix='exactcut-intra-tests-') as root:
     env = {k: v for k, v in os.environ.items() if not k.startswith(prefixes)}
     env.update(EXACTCUT_DATA_ROOT=root, EXACTCUT_ENVIRONMENT='development')
     raise SystemExit(subprocess.call([
-        '/Users/matao/miniconda3/envs/py3.12/bin/python3.12', '-m', 'pytest',
+        '~/miniconda3/envs/py3.12/bin/python3.12', '-m', 'pytest',
         '-o', 'addopts=', '-q'], env=env))
 PY
 ```
@@ -69,7 +69,7 @@ PY
 
 本机未执行 Linux 容器回归。按本轮 Grok 复审安排，由编排者在服务器 build 阶段执行同一套容器完整 pytest，使用生产 Python 3.11，并补录下方证据字段；本会话不连接服务器、不部署。下方保留隔离容器操作单供验收参考。
 
-本机 `/usr/local/bin/docker info --format '{{.ServerVersion}}'` 失败：`unix:///Users/matao/.docker/run/docker.sock` 不存在；未发现 colima/podman/container。未连接任何服务器补测，不能将 macOS 绿灯当成 Linux 证据。待本地 Docker daemon 可用后，以下命令仅在临时 clean clone 执行，容器无网络、无凭据、无生产挂载：
+本机 `/usr/local/bin/docker info --format '{{.ServerVersion}}'` 失败：`unix://~/.docker/run/docker.sock` 不存在；未发现 colima/podman/container。未连接任何服务器补测，不能将 macOS 绿灯当成 Linux 证据。待本地 Docker daemon 可用后，以下命令仅在临时 clean clone 执行，容器无网络、无凭据、无生产挂载：
 
 ```sh
 # 在已提交 clean clone 根目录，确认 git status --porcelain 无输出。
@@ -124,7 +124,7 @@ TDD 证据：
 定向验证（凭据清理、独立临时数据根，命令在 `source/`）：
 
 ```sh
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
+~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
   tests/test_batch_production_summary.py tests/test_intra_project_results.py \
   tests/test_intra_project_scheduler.py tests/test_round1_integration.py \
   tests/test_workflow.py tests/test_phase4_observations.py
@@ -132,9 +132,9 @@ TDD 证据：
 
 结果：**128 passed，14.21s，退出码 0**。完整本机与干净 clone 证据在下方补录；可复现隔离脚本见本文“可复现的本机全量命令”。环境仍为 macOS 15.8.1 arm64 / Python 3.12.12。三个前端文件及用户其他未提交改动保持原样，不进入本轮提交。
 
-本机全量：在 `source/` 执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`，**757 passed，106.66s，退出码 0**；每轮新临时数据根、清除凭据变量，外部客户端模拟。`git diff --check` 通过。
+本机全量：在 `source/` 执行 `~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`，**757 passed，106.66s，退出码 0**；每轮新临时数据根、清除凭据变量，外部客户端模拟。`git diff --check` 通过。
 
-干净 clone 全量：执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-clean-review.py`，**757 passed，104.33s，退出码 0**。验证提交 `c244be64f4d4b4864639f285b937ac508232ac91`，source tree `a891fd9c1d0f68675802f3477af88dfb1ccca4d7`；本地 `git clone --no-hardlinks` 后 detach 到该提交，核对导入来自 clone/source，运行前后 git status 均为空。命令内部使用本文全量命令所述的固定 Python、凭据清理、新临时数据根及 `-m pytest -o addopts= -q`。本次补录为纯文档提交，source tree 保持与已测版本一致。
+干净 clone 全量：执行 `~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-clean-review.py`，**757 passed，104.33s，退出码 0**。验证提交 `c244be64f4d4b4864639f285b937ac508232ac91`，source tree `a891fd9c1d0f68675802f3477af88dfb1ccca4d7`；本地 `git clone --no-hardlinks` 后 detach 到该提交，核对导入来自 clone/source，运行前后 git status 均为空。命令内部使用本文全量命令所述的固定 Python、凭据清理、新临时数据根及 `-m pytest -o addopts= -q`。本次补录为纯文档提交，source tree 保持与已测版本一致。
 
 回退：优先将 `per_project=1`，并排空已启动 render；不恢复旧数据。旧错误文案可由新代码读取及后续正常状态写入纠正。本轮不直接修写现有 `.web-state`，不部署；实现及测试交复审。
 
@@ -146,7 +146,7 @@ TDD 证据：
 
 ```sh
 # cwd: source/
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
+~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
   tests/test_intra_project_scheduler.py -k reconcile
 ```
 
@@ -157,7 +157,7 @@ RED：**5 failed，2 passed，30 deselected，0.52s**。上限2/3个T实际拉�
 GREEN 定向命令：
 
 ```sh
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
+~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py \
   tests/test_intra_project_scheduler.py tests/test_batch_control.py tests/test_concurrency.py \
   tests/test_round1_integration.py tests/test_step3_resources.py
 ```
@@ -166,9 +166,9 @@ GREEN 定向命令：
 
 环境及隔离沿用本文全量操作单：指定 Python 3.12.12 / macOS 15.8.1 arm64，每轮独立临时数据根，清除凭据，模拟外部操作。不部署，不改本机业务记录，三个前端和其他用户改动不暂存。完整本机及已提交版本的干净clone结果随后补录。
 
-本机完整 pytest：在 `source/` 执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`，**763 passed，104.45s，退出码0**；`git diff --check` 通过。
+本机完整 pytest：在 `source/` 执行 `~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-review-tests.py`，**763 passed，104.45s，退出码0**；`git diff --check` 通过。
 
-干净 clone 完整 pytest：执行 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-clean-review.py`，**763 passed，106.17s，退出码0**。验证提交 `62a7d1495a4c7ba92382010093cfda6cf318ef75`，source tree `f51ae8c79a6bb62df9f1598ee57b4f9d04c96ec9`；本地 `--no-hardlinks` clone、detached HEAD、独立临时数据根、凭据清理及 clone/source 导入检查均通过，运行前后 clone 的 git status 为空。最后补录为纯文档提交，source tree 与已测版本一致。
+干净 clone 完整 pytest：执行 `~/miniconda3/envs/py3.12/bin/python3.12 /tmp/exactcut-clean-review.py`，**763 passed，106.17s，退出码0**。验证提交 `62a7d1495a4c7ba92382010093cfda6cf318ef75`，source tree `f51ae8c79a6bb62df9f1598ee57b4f9d04c96ec9`；本地 `--no-hardlinks` clone、detached HEAD、独立临时数据根、凭据清理及 clone/source 导入检查均通过，运行前后 clone 的 git status 为空。最后补录为纯文档提交，source tree 与已测版本一致。
 
 本轮无已知未解决代码问题；Linux 容器全量/生产 Python 3.11 **由编排者在 build 阶段执行，本会话未执行**。只显式暂存本轮3个文件，不含三个前端文件或用户其他改动。未部署；完成后停止，等待复审/终验。
 

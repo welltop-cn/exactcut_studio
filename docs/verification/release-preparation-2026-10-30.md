@@ -16,7 +16,7 @@ Production root remains `/srv/exactcut`; public entry remains https://autocut.cr
 
 ## Candidate and artifacts
 
-The final commit, release ID, artifact paths and SHA256 values are recorded in the private `release-manifest.json` under `/Users/matao/.config/superpowers/release-prep/exactcut-20261030-1802/`. Source is built from a clean committed checkout, not the main working directory's unrelated historical untracked notes. Git bundle and source archive contain committed code/docs only. Experiment demo modules and all local credentials/video/task caches are excluded.
+The final commit, release ID, artifact paths and SHA256 values are recorded in the private `release-manifest.json` under `~/.config/superpowers/release-prep/exactcut-20261030-1802/`. Source is built from a clean committed checkout, not the main working directory's unrelated historical untracked notes. Git bundle and source archive contain committed code/docs only. Experiment demo modules and all local credentials/video/task caches are excluded.
 
 Local evidence: [integration review](reviewed-integration-2026-10-30.md). Dedicated dev entry: http://release-review.localhost:8822/home/#0d6fdddb468348ad92e0cbd8f5de1db5 . The latter is an independent local copy with deliveries removed for editor testing; it is not production delivery evidence.
 

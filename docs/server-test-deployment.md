@@ -34,7 +34,7 @@
 本地已配置SSH密钥，不在命令中放密码：
 
 ```sh
-ssh -o BatchMode=yes -i /Users/matao/.ssh/exactcut_8_221_122_75 root@8.221.122.75
+ssh -o BatchMode=yes -i ~/.ssh/exactcut_8_221_122_75 root@8.221.122.75
 ```
 
 以下在服务器执行，只操作测试实例：
@@ -52,7 +52,7 @@ ssh -o BatchMode=yes -i /Users/matao/.ssh/exactcut_8_221_122_75 root@8.221.122.7
 
 1. 阅读待部署仓库AGENTS.md，核实工作树及已有修改，不提交或合并他人的工作。
 2. 确认没有其他session在更新测试实例、没有用户正在编辑/跑测试。出现冲突先协调，不抢占。
-3. 保存待部署提交号、未提交diff说明和包SHA256。先完成对应本地验证。Python使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。
+3. 保存待部署提交号、未提交diff说明和包SHA256。先完成对应本地验证。Python使用 `~/miniconda3/envs/py3.12/bin/python3.12`。
 4. 在服务器记录正式服务健康及启动时间，之后对比：
 
 ```sh
@@ -76,10 +76,10 @@ df -h /srv/exactcut-test
 
 ```sh
 # 本地执行；仅使用干净、已审核的main。先 git status --porcelain，非空则停止。
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
+~/miniconda3/envs/py3.12/bin/python3.12 - <<'PY'
 import tarfile
 from pathlib import Path
-code = Path('/Users/matao/code/exact-cut-fbbm-handoff/source')
+code = Path('source')
 archive = Path('/tmp/exactcut-test-code-UNIQUE.tar.gz')  # 换成唯一批次名
 with tarfile.open(archive, 'x:gz') as bundle:
     for folder in ('exactcut', 'config', 'templates'):
@@ -91,7 +91,7 @@ with tarfile.open(archive, 'x:gz') as bundle:
 print(archive)
 PY
 shasum -a 256 /tmp/exactcut-test-code-UNIQUE.tar.gz
-scp -i /Users/matao/.ssh/exactcut_8_221_122_75 /tmp/exactcut-test-code-UNIQUE.tar.gz root@8.221.122.75:/srv/exactcut-test/
+scp -i ~/.ssh/exactcut_8_221_122_75 /tmp/exactcut-test-code-UNIQUE.tar.gz root@8.221.122.75:/srv/exactcut-test/
 ```
 
 依赖有变化时不能直接沿用旧镜像。先构建专用测试镜像并验证依赖，再更新测试专用 `base-image.txt`；不要从正式容器提取环境凭据，也不要改正式镜像/tag。集成脚本变化不在上述白名单内，须另行核对测试镜像内 `/app/integrations` 是否匹配。

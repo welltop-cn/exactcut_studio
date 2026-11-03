@@ -10,4 +10,4 @@
 - [x] Expose structured issues in both detail paths; render red cards and fields, clickable summary messages, and first-error focus after saving.
 - [x] Run focused backend and browser regressions, inspect the final diff, and record acceptance evidence. Commit only the task files.
 
-**Verification:** Use `/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest` from `source`, including new validation tests, source frame UI and source frame regressions. Local synthetic fixtures only; production deployment is a separate release operation.
+**Verification:** Use `~/miniconda3/envs/py3.12/bin/python3.12 -m pytest` from `source`, including new validation tests, source frame UI and source frame regressions. Local synthetic fixtures only; production deployment is a separate release operation.

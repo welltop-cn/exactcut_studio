@@ -93,5 +93,5 @@ fetch(batch) ─┬→ render(batch, 素材1) ─→ 确认1 → upload(1) → p
 - 单机、单数据根、持久 JSON；不引入新中间件。
 - **不改三个前端文件** `source/exactcut/web/{app.js,helper.js,index.html}`（保持不动、不提交）；只 `git add` 自己的文件。
 - 不部署、不碰生产、不调用真实上传；测试用临时数据根与模拟客户端。
-- 需要 Python 用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。
+- 需要 Python 用 `~/miniconda3/envs/py3.12/bin/python3.12`。
 - 完成后停下，等 grok 复审。

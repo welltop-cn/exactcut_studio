@@ -35,13 +35,13 @@
 
 ## 自动化验证
 
-固定解释器：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。全部测试使用独立临时数据；真实 FFmpeg 源为合成帧号条纹 / 音频脉冲或纯色视频，没有使用生产数据或生产凭据。
+固定解释器：`~/miniconda3/envs/py3.12/bin/python3.12`。全部测试使用独立临时数据；真实 FFmpeg 源为合成帧号条纹 / 音频脉冲或纯色视频，没有使用生产数据或生产凭据。
 
 首轮完整回归：**1921 passed / 1 skipped / 10 warnings，0 失败，475.11 秒**。10 个警告均为既有 multiprocessing 在多线程测试进程中调用 fork 的 DeprecationWarning（delivery observer 4、managed scheduler verification 3、material versions 3），没有隐藏失败。完整回归之后又执行了同 actor 跨项目场景加强后的 queue core：8 passed。
 
 ```sh
 cd source
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q
+~/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q
 ```
 
 已完成的集中验证：

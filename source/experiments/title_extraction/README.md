@@ -23,7 +23,7 @@ Manifest format (local test data, not an API response model):
 Inspect and package results with:
 
 ```sh
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 \
+~/miniconda3/envs/py3.12/bin/python3.12 \
   source/experiments/title_extraction/report.py /absolute/path/to/manifest.json
 ```
 

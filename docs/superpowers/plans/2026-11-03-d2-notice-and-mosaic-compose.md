@@ -8,15 +8,15 @@
 
 用户指定D2实施、父会话写方案并review。D1已取消，不恢复。D2不再委派。父review通过前不更新18883；不改运行树，不重启、不取消用户任务。两项独立提交，无顺手文案、重构、调度/配置改造。真实FBBM上传、发布、远端写入绝对禁止。
 
-基线：/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-18883-verification，固定6ab02457ab67a1b9820bde30a046ef17f01698f5；应用源码05b2faf，测试夹具修正bbfa4f7。新D2工作树从6ab0245分出。先只读检查D1取消时是否留下修改，不覆盖、删除或盲目继承。
+基线：~/.paseo/worktrees/1kps4qs6/cut-mosaic-18883-verification，固定6ab02457ab67a1b9820bde30a046ef17f01698f5；应用源码05b2faf，测试夹具修正bbfa4f7。新D2工作树从6ab0245分出。先只读检查D1取消时是否留下修改，不覆盖、删除或盲目继承。
 
-Python固定 /Users/matao/miniconda3/envs/py3.12/bin/python3.12。先读source/AGENTS.md、docs/local-dev-services.md和 /Users/matao/code/troubleshooting-runbooks/operations/exactcut-long-render-performance.md。
+Python固定 ~/miniconda3/envs/py3.12/bin/python3.12。先读source/AGENTS.md、docs/local-dev-services.md和 ~/code/troubleshooting-runbooks/operations/exactcut-long-render-performance.md。
 
 ## 事实及证据入口
 
 - 完整既有验收：基线docs/verification/18883-full-dev-acceptance-2026-11-03.md/.json。2073通过1跳过，原失败测试及test-only修正已记录，勿重写历史。
 - 18883当前加载cut-mosaic-18883-source-delivery/source，最后源码05b2faf；PID须实际查询。
-- trial根：/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue/source/.dev-state/cut-mosaic-user-trial-20261031。
+- trial根：~/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue/source/.dev-state/cut-mosaic-user-trial-20261031。
 - 私有证据：trial/actual-e2e-20261103-123501/compose-command-diagnosis/evidence.json、audio-and-boundaries.json、finals-verified.json；严禁把凭据/视频入Git。
 - A报告2a567ce0a14642728cbc4458640b256c：6187输入帧1080x1920/30fps，mask源帧[60,90)，删除[120,150)，预期6157输出帧。实际cut-path默认600秒超时。原报告保持failed，不改写成成功。
 - 同源20秒诊断：旧全段gblur67.4327秒、有效区间命令18.4084秒，570解码帧MD5和19秒音轨MD5一致。仅短诊断，不证明全部边界或完整A。

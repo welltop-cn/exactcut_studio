@@ -88,6 +88,6 @@ Docker 演练：pending 登记拒绝旧协议；兼容 A→B→A 保留状态；
 
 Docker 演练：`/srv/exactcut/acceptance/release-media-us-east-20261011-media-ee8267f/exercise-result.json`。
 
-本机私有证据：`/Users/matao/.codex/artifacts/exactcut-oss-grok-20261011/`，含上述报告副本及 `browser-performance-result.json`、`browser-performance-summary.json`、`browser-download-result.json`、`browser-renewal-result.json`、`grey-project-progress.png`。报告不包含 Cookie、密钥或签名 URL 查询参数。
+本机私有证据：`~/.codex/artifacts/exactcut-oss-grok-20261011/`，含上述报告副本及 `browser-performance-result.json`、`browser-performance-summary.json`、`browser-download-result.json`、`browser-renewal-result.json`、`grey-project-progress.png`。报告不包含 Cookie、密钥或签名 URL 查询参数。
 
 [验收矩阵](material-lifecycle-server-acceptance-plan.md)保留原计划，执行结果以本记录的环境、范围与限制为准。

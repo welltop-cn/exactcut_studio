@@ -190,7 +190,7 @@ Linux 的环境隔离、生产候选配置、字体与文档转换边界见 [Lin
 
 ```bash
 cp .env.development.example .env.development
-EXACTCUT_PYTHON=/Users/matao/miniconda3/envs/py3.12/bin/python3.12 ./bin/dev-web
+EXACTCUT_PYTHON=~/miniconda3/envs/py3.12/bin/python3.12 ./bin/dev-web
 ```
 
 实际生产凭据放在服务器 `<部署根>/config/production.env`，默认 `/srv/exactcut/config/production.env`。主机目录、后端端口、实例名和资源限制可指定，换机器不修改应用代码。外部检查与迁移顺序见 [Linux 部署与迁移](../docs/linux-migration.md)。开发和预发布仅使用独立夹具。上文 `.env` 与 Mac 安装命令属于历史流程，不用于 Linux 新部署。

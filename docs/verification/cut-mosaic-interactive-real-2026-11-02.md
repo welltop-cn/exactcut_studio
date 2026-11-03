@@ -62,7 +62,7 @@ A 的 SAM 300/300 非空 mask，模型 141.714 秒；A 从 running 至完整输�
 最终代码全量：**1995 passed, 1 skipped, 10 个原有多线程 fork DeprecationWarning，613.96 秒**。命令在隔离树 `source` 中执行：
 
 ```bash
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q
+~/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' -q
 ```
 
 包括账号/全局及跨进程预算、父进程死亡与真实子进程退出、阶段 FD 关闭复用、同 key 单次生产/不同 key 并行、完整临时缓存恢复/未完成重算、取消/reset/预准入 permit、旧 single-track stop、迟到回执/停止失败/最终排队 UI 隔离、跟踪不可用提示与显式 fixed 修改等。

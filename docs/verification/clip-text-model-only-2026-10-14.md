@@ -17,7 +17,7 @@
 
 ```sh
 cd source
-PYTHONPATH=. /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_clip_text_frames.py tests/test_clip_text.py tests/test_llm_intake.py tests/test_source_frame_render_integration.py tests/test_clip_text_ui.py
+PYTHONPATH=. ~/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_clip_text_frames.py tests/test_clip_text.py tests/test_llm_intake.py tests/test_source_frame_render_integration.py tests/test_clip_text_ui.py
 ```
 
 结果：63 passed in 16.57s。覆盖接口、失败释放并发槽、数值范围、倒序和单帧、段数、页面追加/替换/撤销及真实本地视频帧边界与渲染。

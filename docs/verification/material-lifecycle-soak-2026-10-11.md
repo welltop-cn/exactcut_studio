@@ -48,7 +48,7 @@ Grok 另确认两项手工改坏 media-state.json 的引用测试不是应用自
 
 ## 证据及限制
 
-- 本机脱敏验收数据：`/Users/matao/.codex/artifacts/exactcut-soak-20261011/`。
+- 本机脱敏验收数据：`~/.codex/artifacts/exactcut-soak-20261011/`。
 - 服务器：`/srv/exactcut/acceptance/soak-20261011/`，测试脚本位于 preparation，保留所有测试对象。
 - 浏览器第一次双窗口操作的收尾超时且丢失 receipt，没有计入通过；第二次独立获得 CAS 成功证据并恢复标题。最后关闭 scratch 标签亦触发工具超时；证据此前已导出，保留页重新附着确认视频暂停。按钮名称误用造成一次 locator timeout，纠正为页面实际“保存并校验”后测试通过。
 - 一次从仓库根运行 pytest collect 导致模块找不到，使用项目 source 工作目录后 7 项收集成功；不是应用运行失败。
@@ -100,5 +100,5 @@ d3b25c6：Linux 972 passed / 2 skipped，190.25 秒；最终镜像 network none 
 
 - 详情 API 中位 20 ms、最大 824 ms；render 最高 3；服务器内存使用峰值 3170.2 MiB（MemTotal−MemAvailable），CPU 采样峰值 70.65%。这些不是容器 RSS 或独占进程 CPU。
 - 真实网页在最后项目制作时显示每素材当前步骤、步骤耗时、总耗时及制作排队时长；归档卡片测试后项目已复原。浏览器标签已释放所有权并保留。
-- 最终证据目录：服务器 `/srv/exactcut/acceptance/soak-final-20261011/`；本机 `/Users/matao/.codex/artifacts/exactcut-soak-final-20261011/`。包括主报告、交错变更、媒体格式、产物对比、取消即时证据、最终健康与排空结果。
+- 最终证据目录：服务器 `/srv/exactcut/acceptance/soak-final-20261011/`；本机 `~/.codex/artifacts/exactcut-soak-final-20261011/`。包括主报告、交错变更、媒体格式、产物对比、取消即时证据、最终健康与排空结果。
 - 本轮未提交或核实真实 FBBM 交付，没有新建用户、删除 OSS 对象、手工改写生产 JSON 或绕过发布门槛。排空验收只证明本次覆盖的场景，不代表任意故障组合均已验证。

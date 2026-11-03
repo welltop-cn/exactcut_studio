@@ -7,4 +7,4 @@
 - 重新识别期间列表可查看、编辑与生成禁用；仅成功时合并，失败保留。人工片段和编辑过的 AI 片段保留。新建议与受保护原片段时间交集达到较短区间 50% 时不重复加入；该匹配是时间启发式。
 - 浏览器合成夹具检查菜单紧凑布局，未操作用户实际草稿。数据仍是本浏览器保存，不承诺跨设备同步。
 
-验证：`PYTHONPATH=source /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest source/tests/test_mosaic_ui.py -q`，52 项通过；`git diff --check` 通过。
+验证：`PYTHONPATH=source ~/miniconda3/envs/py3.12/bin/python3.12 -m pytest source/tests/test_mosaic_ui.py -q`，52 项通过；`git diff --check` 通过。

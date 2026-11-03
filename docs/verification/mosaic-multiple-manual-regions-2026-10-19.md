@@ -6,4 +6,4 @@
 
 移除手动框删除对应草稿记录。AI 框使用 removed/adopted=false 标记保留原始来源，避免重开时由 AI 建议重新出现；恢复识别结果可重新取回原始候选。删除最后一个区域不删除片段。生成期间新增/移除按钮使用已有编辑锁。
 
-验证：`PYTHONPATH=source /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest source/tests/test_mosaic_ui.py -q`，57 项通过。覆盖新建多框、已存片段追加、点击已有框调整、保存重开、移除单框/最后一框、未采用 AI 框移除、预览包含全部剩余区域。合成夹具截图 `/tmp/mosaic-multiple-regions.png` 已目视检查，预览尺寸保持不变。未修改用户真实草稿或生成视频。
+验证：`PYTHONPATH=source ~/miniconda3/envs/py3.12/bin/python3.12 -m pytest source/tests/test_mosaic_ui.py -q`，57 项通过。覆盖新建多框、已存片段追加、点击已有框调整、保存重开、移除单框/最后一框、未采用 AI 框移除、预览包含全部剩余区域。合成夹具截图 `/tmp/mosaic-multiple-regions.png` 已目视检查，预览尺寸保持不变。未修改用户真实草稿或生成视频。

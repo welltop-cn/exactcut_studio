@@ -20,7 +20,7 @@
 
 ## 验证证据
 
-指定 Python：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。
+指定 Python：`~/miniconda3/envs/py3.12/bin/python3.12`。
 
 ```sh
 python3.12 -m pytest tests/test_mosaic_locate.py tests/test_mosaic_ui.py tests/test_cutting.py tests/test_cutting_api.py tests/test_cutting_scan.py tests/test_cutting_replace.py tests/test_cutting_ui.py -q -ra

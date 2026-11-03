@@ -20,7 +20,7 @@
 
 ## 备份与移除条件
 
-私有恢复目录：`/Users/matao/.config/superpowers/cleanup-archives/exactcut-20261030-190609/`，权限 0700。包含：
+私有恢复目录：`~/.config/superpowers/cleanup-archives/exactcut-20261030-190609/`，权限 0700。包含：
 
 - 每个待清理 worktree 的原 HEAD、索引补丁、工作区补丁、未跟踪源码原件；
 - 非缓存忽略文件的 `private-data.tar.gz`，主要为历史日志、预留状态和锁文件；
@@ -40,7 +40,7 @@
 - `release-all-20261012`、`render-acceleration`
 - `restore-stash-1465454`、`review-all-20261013`
 
-全局工作树前缀为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-handoff/`。目录移除不删除分支或提交。
+全局工作树前缀为 `~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/`。目录移除不删除分支或提交。
 
 另清理一条已丢失目录的 diagnostics acceptance 登记：原 HEAD `76c8759bde364550eba67de47cf00a7bf9b41cbe` 已固定到 `archive/diagnostics-acceptance-20261012`。其索引没有额外暂存差异；先保存 Git 管理元数据并验证独立 bundle，再执行 worktree prune。未声称恢复本来已经不存在的目录数据。
 

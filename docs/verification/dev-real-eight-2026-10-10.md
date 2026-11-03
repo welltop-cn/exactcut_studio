@@ -6,8 +6,8 @@
 
 用户授权复用线上剧 101494 的四项目配置，完整制作 8 条，并明确把原配置的 Hook `mode=none` 改为 `ai`。其余时间线、文案和排版参数保持一致；新请求 ID 由 dev 生成，序号沿用应用正常分配。
 
-- 入口：`http://100.77.140.49:8793/home/`；Tailscale TCP Serve 转发到本机 127.0.0.1:8793。
-- 环境仍为 development；使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。
+- 入口：`http://<mac-tailscale-ip>:8793/home/`；Tailscale TCP Serve 转发到本机 127.0.0.1:8793。
+- 环境仍为 development；使用 `~/miniconda3/envs/py3.12/bin/python3.12`。
 - 独立测试目录：`source/.dev-state/runs/real-eight-20261010/`，不进入 Git。旧 `.dev-state/data` 原样保留。
 - 固定用户：hookqa212220a、hookqa212220b，各两个项目；未增加其他测试用户名。
 - 下载与 AI 显式开启；publish、external writes 关闭，不配置飞书或 FBBM 凭据。
@@ -33,7 +33,7 @@
 
 `start_dev.py`、`run_eight.py`、`verify_outputs.py`、原配置、API 采样、下载哈希和结果均在上述私有目录。`development.env` 和测试登录凭据仅保存在该权限受限目录，不进入报告或 Git。
 
-当前 dev 用该目录的 `start_dev.py` 启动；重启需先确认该实例没有运行任务。恢复原 dev 则使用 `EXACTCUT_PYTHON=/Users/matao/miniconda3/envs/py3.12/bin/python3.12 ./bin/dev-web`，原数据保留。
+当前 dev 用该目录的 `start_dev.py` 启动；重启需先确认该实例没有运行任务。恢复原 dev 则使用 `EXACTCUT_PYTHON=~/miniconda3/envs/py3.12/bin/python3.12 ./bin/dev-web`，原数据保留。
 
 ## 最终结果与限制
 

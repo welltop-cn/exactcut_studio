@@ -13,7 +13,7 @@
 - 修复前新用例复现：成功交付仍为 review，删除未交付素材后仍为 review，入库后确认框仍可见。
 - 覆盖单条/多条全部交付、部分交付、上传各阶段、失败、待核实、保存修改、候选排队/制作/失败、新版本晋升、删除素材和空项目，并检查详情与侧栏一致。
 - Chromium 使用实际页面样式与 renderAssets 验证状态轮询期间确认框隐藏、已入库按钮禁用、回到可预览状态需重新勾选。
-- 回归命令：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_managed_completion.py tests/test_material_versions.py tests/test_managed_editor_review.py tests/test_workflow.py -o addopts='' -q`
+- 回归命令：`~/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_managed_completion.py tests/test_material_versions.py tests/test_managed_editor_review.py tests/test_workflow.py -o addopts='' -q`
 - 回归结果：128 passed in 10.14s；另将暂存区独立导出，排除工作区其他改动后再次验证，128 passed in 10.87s。
 - JavaScript 语法：`node --check exactcut/web/app.js`。
 

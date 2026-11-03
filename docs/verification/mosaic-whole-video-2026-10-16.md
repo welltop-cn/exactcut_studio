@@ -23,7 +23,7 @@
 
 ## 验证
 
-指定 Python：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。
+指定 Python：`~/miniconda3/envs/py3.12/bin/python3.12`。
 
 106 项相关测试全部通过；`node --check` 与 `git diff --check` 通过。规格审查和代码质量审查未留下阻断问题。
 
