@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
-from .runtime import CODE_ROOT, environment, require_material_fetch
+from .runtime import CODE_ROOT, data_root, environment, protect_path, require_material_fetch, source_root
 from .source_cache import check_drama, check_episode
 
 CONTENT_ROOT = 'assets'
@@ -157,7 +157,55 @@ def assemble(drama_id, content_items, source_items, listed, *, source_gap=False)
     return result
 
 
+def local_only():
+    return environment() == 'development' and os.environ.get('EXACTCUT_ALLOW_MATERIAL_FETCH') != '1'
+
+
+def _local_files(drama_id):
+    check_drama(drama_id)
+    found = {}
+    for base, directory in (
+        (source_root(), source_root() / drama_id),
+        (data_root(), data_root() / 'projects' / drama_id / 'source' / 'videos'),
+    ):
+        # Reject links at every relative directory component, including a linked
+        # drama or project/source directory. The configured roots are protected.
+        cursor = directory
+        while cursor != base:
+            if cursor.is_symlink():
+                break
+            cursor = cursor.parent
+        else:
+            protect_path(directory)
+            for path in directory.glob('EP*.mp4'):
+                try:
+                    check_episode(path.stem)
+                except RuntimeError:
+                    continue
+                if not path.is_symlink() and path.is_file() and path.stat().st_size > 0:
+                    found.setdefault(path.stem, path)
+    return found
+
+
+def local_original(drama_id, episode):
+    check_drama(drama_id)
+    check_episode(episode)
+    path = _local_files(drama_id).get(episode)
+    if path is None:
+        raise OriginalsUnavailable(404, '本地正片尚未就绪')
+    return path
+
+
 def load_originals(drama_id, *, store=None, listed=None):
+    if local_only():
+        files = _local_files(drama_id)
+        result = {'drama_id': drama_id, 'episodes': [
+            {'episode': episode, 'listed': None, 'bytes': files[episode].stat().st_size}
+            for episode in sorted(files, key=lambda value: int(value[2:]))
+        ]}
+        if files:
+            result['notice'] = '仅显示本地正片，上架状态未查询。'
+        return result
     require_material_fetch()
     check_drama(drama_id)
     store = store or connect()

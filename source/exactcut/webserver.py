@@ -1408,6 +1408,11 @@ class Handler(BaseHTTPRequestHandler):
             episode, _, extra = rest.partition('/')
             if not episode or extra not in ('', 'file'):
                 return self.respond(400, {'error': '无效集号'})
+            if originals.local_only():
+                from .source_cache import shared_for
+                source = originals.local_original(drama_id, episode)
+                with shared_for(source):
+                    return self.stream_video(source, download_name=episode + '.mp4')
             if extra == 'file':
                 remote = originals.open_original(drama_id, episode)
             else:
@@ -1443,7 +1448,7 @@ class Handler(BaseHTTPRequestHandler):
         finally:
             remote.close()
 
-    def stream_video(self, path):
+    def stream_video(self, path, *, download_name=None):
         started = time.monotonic()
         size = path.stat().st_size
         start, end, code = 0, size - 1, 200
@@ -1471,6 +1476,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Type', 'video/mp4')
         self.send_header('Accept-Ranges', 'bytes')
         self.send_header('Cache-Control', 'private, no-store')
+        if download_name is not None:
+            self.send_header('Content-Disposition', f'attachment; filename="{download_name}"')
         self.send_header('Content-Length', str(end - start + 1))
         if code == 206:
             self.send_header('Content-Range', f'bytes {start}-{end}/{size}')
