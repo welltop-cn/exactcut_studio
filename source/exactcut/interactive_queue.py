@@ -10,7 +10,9 @@ from . import cutting,cutting_access,editor_resources,processing_cancel,diagnost
 from .runtime import data_root,mutation_lock,maintenance_file
 from .util import read_json,write_json_atomic,json_sha256,now_iso
 
-ROLES={'mosaic_scan':'scan','cut_scan':'scan','locate':'scan','track':'preview','clip':'preview','hook':'preview',
+# Hook previews (production) and single-frame locate each get their own role, so
+# they never wait behind SAM tracking/clip previews or whole-video scans.
+ROLES={'mosaic_scan':'scan','cut_scan':'scan','locate':'locate','track':'preview','clip':'preview','hook':'hook',
        'mosaic_prepare':'preprocess','cut_prepare':'preprocess','preview_oss':'preprocess','mosaic_frame':'frame','cut_frame':'frame'}
 TERMINAL={'completed','failed','cancelled','superseded'}
 
@@ -197,7 +199,8 @@ class Dispatcher:
     def claim(self):
         with locked():
             state=load();pending=state['pending'];ordered=[]
-            roles=['scan','preview','preprocess','frame']
+            roles=['scan','locate','preview','hook','preprocess','frame']
+            for row in pending:row['role']=ROLES.get(row['kind'],row['role'])  # entries queued before the role split
             if state.get('last_role') in roles:
                 index=roles.index(state['last_role'])+1;roles=roles[index:]+roles[:index]
             for role in roles:
