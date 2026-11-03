@@ -203,8 +203,6 @@ def load_originals(drama_id, *, store=None, listed=None):
             {'episode': episode, 'listed': None, 'bytes': files[episode].stat().st_size}
             for episode in sorted(files, key=lambda value: int(value[2:]))
         ]}
-        if files:
-            result['notice'] = '仅显示本地正片，上架状态未查询。'
         return result
     require_material_fetch()
     check_drama(drama_id)

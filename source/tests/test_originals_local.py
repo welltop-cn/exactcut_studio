@@ -99,7 +99,7 @@ def test_local_list_uses_real_cache_and_project_fallback_without_remote_calls(ap
         {'episode': 'EP1', 'listed': None, 'bytes': len(video)},
         {'episode': 'EP11', 'listed': None, 'bytes': len(video)},
     ]
-    assert '上架状态未查询' in result['notice']
+    assert 'notice' not in result
     assert 'url' not in str(result['episodes'])
 
 
