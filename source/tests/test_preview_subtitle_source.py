@@ -6,6 +6,8 @@ from exactcut.media import ffprobe
 from exactcut import preview_subtitle_model as model
 from test_preview_subtitles import configured, dispatcher, wait, CUE, ready, fixture
 
+pytestmark = pytest.mark.integration
+
 
 def test_recognition_reads_verified_lightweight_preview_and_keeps_master_binding(configured, monkeypatch, dispatcher):
     bid, rid, sha, master = configured

@@ -8,6 +8,8 @@ import pytest
 from exactcut import material_versions as m, webserver as web, workflow as w, hook_preview
 from test_phase2_preview_api import fixture, serve, call, finished_hook
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture(params=[False, True], ids=["draft", "existing-preview"])
 def managed_editor(fixture, monkeypatch, request):

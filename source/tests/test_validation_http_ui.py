@@ -7,6 +7,9 @@ import pytest
 from exactcut import material_versions, source_frames, workflow as w
 from test_source_frames import source
 from test_web_base_path import app, request
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.integration
 
 
 @pytest.mark.parametrize('managed', [False, True])
@@ -32,7 +35,7 @@ def test_real_browser_invalid_save_correction_and_reload(source, managed):
         material_versions.enroll(path)
     base = f'http://127.0.0.1:{server.server_address[1]}/home/'
     endpoint = f'/home/api/batches/{item["id"]}'
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
         response = context.request.post(base + 'api/login',
@@ -92,7 +95,7 @@ def test_real_browser_ending_error_upload_or_cancel_clears_message(source, manag
     if managed:
         material_versions.enroll(w.folder(item['id']))
     base = f'http://127.0.0.1:{server.server_address[1]}/home/'
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context = browser.new_context()
         assert context.request.post(base + 'api/login', data={'username': 'admin', 'password': server.password},

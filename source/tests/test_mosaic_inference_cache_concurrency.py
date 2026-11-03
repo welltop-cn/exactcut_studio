@@ -8,6 +8,8 @@ from test_phase2_preview_api import fixture
 from test_mosaic_interactive_admission import enable_models
 from test_mosaic_render import make_track
 
+pytestmark = pytest.mark.integration
+
 
 def setup(ready,tmp_path,monkeypatch):
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch)

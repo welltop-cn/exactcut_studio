@@ -5,6 +5,8 @@ from exactcut.util import read_json, write_json_atomic
 from test_workflow import workspace
 from test_material_versions import enrolled, token, enable_fixture_delivery
 
+pytestmark = pytest.mark.integration
+
 
 def pending_verification():
     m, parent, state = enrolled(media=True)

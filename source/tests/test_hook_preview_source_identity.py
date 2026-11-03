@@ -7,6 +7,8 @@ from exactcut.util import write_json_atomic
 from test_phase2_preview_api import fixture
 from test_cutting import make_video
 
+pytestmark = pytest.mark.integration
+
 @pytest.fixture
 def hook_input(fixture):
     batch=w.create_blank();draft=batch['draft'];draft.update(drama_id='101573',author='source-bound-hook')

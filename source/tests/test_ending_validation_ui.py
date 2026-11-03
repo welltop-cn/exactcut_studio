@@ -1,6 +1,9 @@
 """Ending errors explain the required action and focus its actual control."""
+import pytest
 from test_source_frame_ui import frame_page
 from test_validation_feedback_ui import revalidate_editor
+
+pytestmark = pytest.mark.ui
 
 
 def missing_image(page):

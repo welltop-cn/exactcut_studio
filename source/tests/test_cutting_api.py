@@ -64,6 +64,7 @@ def ready(fixture, tmp_path, monkeypatch):
     return fixture['id'], request.request_id, sha, source
 
 
+@pytest.mark.integration
 def test_access_and_source_identity(ready):
     bid, rid, sha, source = ready
     app = serve()
@@ -88,6 +89,7 @@ def test_access_and_source_identity(ready):
         app.shutdown(); app.server_close()
 
 
+@pytest.mark.integration
 def test_render_save_reopen_and_source_immutable(ready):
     bid, rid, sha, source = ready
     app = serve()
@@ -120,6 +122,7 @@ def test_render_save_reopen_and_source_immutable(ready):
         app.shutdown(); app.server_close()
 
 
+@pytest.mark.integration
 def test_mosaic_placeholder_rejected_by_api(ready):
     bid, rid, sha, _source = ready
     app = serve()
@@ -135,6 +138,7 @@ def test_mosaic_placeholder_rejected_by_api(ready):
         app.shutdown(); app.server_close()
 
 
+@pytest.mark.integration
 def test_disabled_feature(ready, monkeypatch):
     monkeypatch.setattr(cutting, 'settings', lambda: {'enabled': False})
     app = serve()
@@ -144,6 +148,7 @@ def test_disabled_feature(ready, monkeypatch):
         app.shutdown(); app.server_close()
 
 
+@pytest.mark.integration
 def test_busy_failure_recovery_and_delete_lease(ready, monkeypatch):
     import threading
     from exactcut import batch_control
@@ -200,6 +205,7 @@ def test_feature_requires_explicit_config(environment, monkeypatch):
         assert cutting.enabled() is expected
 
 
+@pytest.mark.integration
 def test_discard_fences_stale_window_mutations(ready):
     bid, rid, sha, _ = ready
     app = serve()
@@ -220,6 +226,7 @@ def test_discard_fences_stale_window_mutations(ready):
         app.shutdown(); app.server_close()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('kind', ['cuts', 'mosaics'])
 def test_source_stream_works_while_compute_and_frame_locks_busy(ready, kind):
     bid, rid, sha, source = ready

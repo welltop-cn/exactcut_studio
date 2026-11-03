@@ -53,6 +53,7 @@ def report(root):
     return storage.usage_report(root)
 
 
+@pytest.mark.integration
 def test_usage_aggregates_private_projects_and_shared_drama(workspace):
     first, second = populated(workspace)
     before = {p: p.read_bytes() for p in workspace.rglob('*') if p.is_file()}
@@ -78,6 +79,7 @@ def test_usage_aggregates_private_projects_and_shared_drama(workspace):
     assert before == {p: p.read_bytes() for p in workspace.rglob('*') if p.is_file()}
 
 
+@pytest.mark.integration
 def test_legacy_owner_unreferenced_cache_empty_root_and_symlinks(workspace, tmp_path):
     old = batch(workspace, None, 10)
     # Also cover the batches/<id> layout named in the usage contract.
@@ -102,6 +104,7 @@ def test_legacy_owner_unreferenced_cache_empty_root_and_symlinks(workspace, tmp_
     assert report(empty)['projects'] == report(empty)['users'] == report(empty)['shared'] == []
 
 
+@pytest.mark.integration
 def test_usage_cache_expires_without_repeated_walks(workspace, monkeypatch):
     populated(workspace)
     clock = [100.0]
@@ -167,6 +170,7 @@ def test_usage_timeout_has_cooldown_and_does_not_return_partial_total(workspace,
     assert report(workspace)['totals']['bytes'] == 0
 
 
+@pytest.mark.integration
 def test_usage_http_admin_only_and_read_only(app, tmp_path):
     first, second = populated(tmp_path)
     assert request(app, 'GET', '/home/api/usage')[0] == 401
@@ -188,6 +192,7 @@ def test_usage_http_admin_only_and_read_only(app, tmp_path):
     assert request(app, 'POST', '/home/api/usage', {}, admin)[0] == 404
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('filename,value', [('draft.json', []), ('runtime.json', None),
                                            ('access.json', {'unexpected': 'owner'})])
 def test_usage_bad_metadata_returns_retryable_error(app, tmp_path, filename, value):
@@ -198,6 +203,7 @@ def test_usage_bad_metadata_returns_retryable_error(app, tmp_path, filename, val
     assert 'error' in json.loads(body) and 'totals' not in json.loads(body)
 
 
+@pytest.mark.integration
 def test_usage_multiple_projects_same_owner_counted_once_per_batch(workspace):
     first, second = populated(workspace)
     third = batch(workspace, 'alice', 100, drama='999999')

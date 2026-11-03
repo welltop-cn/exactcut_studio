@@ -175,6 +175,7 @@ def test_first_failed_publish_removes_own_container_and_can_be_retried(ops, tmp_
     assert ops.transition(tmp_path, 'new', engine=engine, timeout=0)['status'] == 'ok'
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('name', ['source/.env.production', 'source/sources/EP1.mp4',
                                 'source/projects/demo/request.xlsx', 'source/feedback/result.json',
                                 'source/outputs/final.mp4', 'source/accounts.sqlite3'])

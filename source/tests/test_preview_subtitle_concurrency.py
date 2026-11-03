@@ -10,6 +10,8 @@ from exactcut import material_versions as media, workflow as w
 from exactcut.util import write_json_atomic
 from copy import deepcopy
 
+pytestmark = pytest.mark.integration
+
 
 def test_actual_execution_allows_two_materials_in_the_same_batch(configured, monkeypatch, dispatcher):
     bid,rid,sha,source=configured

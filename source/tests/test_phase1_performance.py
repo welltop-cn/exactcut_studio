@@ -1,8 +1,11 @@
 from unittest.mock import patch
+import pytest
 from test_phase1_recovery import workspace
 from exactcut import workflow as w
 from exactcut.orchestrator import _request_fingerprint
 from exactcut.util import file_sha256
+
+pytestmark = pytest.mark.integration
 
 
 def test_repeated_source_is_hashed_once_per_batch_and_invalidated_on_change(workspace):

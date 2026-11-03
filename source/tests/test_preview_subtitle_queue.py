@@ -15,6 +15,8 @@ from test_phase2_preview_api import fixture, serve
 from test_cutting_api import ready, call
 from test_preview_subtitles import CUE, configured, dispatcher, route, wait  # noqa: F401
 
+pytestmark = pytest.mark.integration
+
 
 def descriptor(number, actor='admin'):
     return {'task_id':f'{number:064x}','batch_id':'a'*32,'request_id':f'R{number}',

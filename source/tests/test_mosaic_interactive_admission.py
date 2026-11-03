@@ -17,6 +17,8 @@ from test_phase2_preview_api import fixture,serve
 from test_cutting_api import ready
 from test_mosaic_render import make_track
 
+pytestmark = pytest.mark.integration
+
 
 def enable_models(tmp_path,monkeypatch):
     checkpoint=tmp_path/'unit-test-double.checkpoint';checkpoint.write_bytes(b'not-a-real-model')

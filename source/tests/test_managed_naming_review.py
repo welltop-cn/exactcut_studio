@@ -23,6 +23,7 @@ def test_retained_managed_name_is_allocated_around(workspace):
     confirmed = m.confirm(other, {'revision': other_state['revision'], 'mutation_id': token()})
     assert next(iter(confirmed['assets'].values()))['candidate_version']
 
+@pytest.mark.integration
 def test_deleted_asset_name_not_reused(workspace):
     m, path, state = enrolled(media=True)
     original = copy.deepcopy(state['draft']['rows'][0])
@@ -37,6 +38,7 @@ def test_deleted_asset_name_not_reused(workspace):
     new_name = state['versions'][state['assets'][new_id]['candidate_version']]['manifest']['requests'][0]['output_filename']
     assert new_name != old_name, 'New asset reuses retained completed asset name'
 
+@pytest.mark.integration
 def test_same_asset_keeps_retained_name_when_edited(workspace):
     m, path, state = enrolled(media=True)
     original = copy.deepcopy(state['draft']['rows'][0])
@@ -49,6 +51,7 @@ def test_same_asset_keeps_retained_name_when_edited(workspace):
     assert state['versions'][asset['candidate_version']]['manifest']['requests'][0]['output_filename'] == old_name
 
 
+@pytest.mark.integration
 def test_confirm_rejects_another_assets_retained_name(workspace):
     m, path, state = enrolled(media=True)
     original = copy.deepcopy(state['draft']['rows'][0])

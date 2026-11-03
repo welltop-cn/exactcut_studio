@@ -14,6 +14,7 @@ def stage_root(tmp_path,monkeypatch):
     return tmp_path,cfg
 
 
+@pytest.mark.integration
 def test_final_media_can_advance_while_shared_media_is_full(stage_root):
     root,_=stage_root
     with ExitStack() as held:

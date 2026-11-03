@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+import pytest
 import threading
 import time
 from unittest.mock import patch
@@ -78,6 +79,7 @@ def test_error_actions_are_specific():
     assert guidance('network error','preview')['code']=='preview'
 
 
+@pytest.mark.integration
 def test_fbbm_retry_keeps_original_record_and_does_not_upload(workspace):
     w.start_batch(workspace['id'],1)
     path=w.folder(workspace['id']);rid=workspace['assets'][0]['request_id']
@@ -98,6 +100,7 @@ def test_fbbm_retry_keeps_original_record_and_does_not_upload(workspace):
     assert w.runtime(path)['stage']=='fbbm' and not w.runtime(path)['executor_running']
 
 
+@pytest.mark.integration
 def test_same_platform_status_is_not_new_progress(workspace):
     w.start_batch(workspace['id'],1)
     path=w.folder(workspace['id']);rid=workspace['assets'][0]['request_id']

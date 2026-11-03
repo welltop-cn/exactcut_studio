@@ -186,6 +186,7 @@ def test_production_analysis_failure_stops_before_media_processing(tmp_path, mon
         renderer.render_request(tmp_path, SimpleNamespace(hook_text=TEXT), [], tmp_path/'output.mp4', load_config())
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(not shutil.which('ffmpeg'), reason='requires ffmpeg')
 def test_production_render_uses_semantic_choice_and_preserves_video_duration(tmp_path, monkeypatch):
     from exactcut import renderer

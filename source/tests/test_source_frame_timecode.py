@@ -49,6 +49,7 @@ def test_legacy_milliseconds_keep_original_meaning():
     assert manifest.requests[0].timeline[0].end_ms == 1012
 
 
+@pytest.mark.integration
 def test_actual_source_frame_mapping_and_source_replacement(source):
     from exactcut import source_frames
     _, item, _, video = source
@@ -65,6 +66,7 @@ def test_actual_source_frame_mapping_and_source_replacement(source):
     assert intake.validate_draft(data, str(path / 'source.xlsx'))[0] is None
 
 
+@pytest.mark.integration
 def test_vfr_invalid_frame_and_unknown_format_block_execution(source):
     from exactcut import source_frames
     _, item, _, video = source
@@ -86,6 +88,7 @@ def test_vfr_invalid_frame_and_unknown_format_block_execution(source):
     assert intake.validate_draft(data, str(path / 'source.xlsx'))[0] is None
 
 
+@pytest.mark.integration
 def test_save_without_source_preserves_frames_legacy_and_managed(source):
     from exactcut import material_versions as versions
     _, item, _, video = source
@@ -107,6 +110,7 @@ def test_save_without_source_preserves_frames_legacy_and_managed(source):
     assert saved['errors']
 
 
+@pytest.mark.integration
 def test_last_frame_maps_to_source_duration_and_does_not_modify_draft(source):
     from exactcut import source_frames
     _, item, _, _ = source
@@ -154,6 +158,7 @@ def test_blank_api_rejects_invalid_format_without_creating_project(app):
     assert set(w.BATCHES.glob('*')) == before
 
 
+@pytest.mark.integration
 def test_frame_bucket_lookup_does_not_scan_entire_source_index(source, monkeypatch):
     from exactcut import source_frames
     _, item, _, _ = source
@@ -174,6 +179,7 @@ def test_frame_bucket_lookup_does_not_scan_entire_source_index(source, monkeypat
     assert manifest.requests[0].timeline[0].end_ms == meta['times_ms'][64]
 
 
+@pytest.mark.integration
 def test_time_past_episode_names_the_last_frame(source):
     from exactcut import source_frames
     _, item, _, _ = source

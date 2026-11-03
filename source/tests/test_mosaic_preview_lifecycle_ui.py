@@ -1,6 +1,9 @@
 """Preview receipts and failures belong to one operation, never the next editor."""
+import pytest
 from test_mosaic_ui import editor,open_auto
 from test_mosaic_tracking_capability_ui import add_manual_mosaic
+
+pytestmark = pytest.mark.ui
 
 
 def prepare_preview(page):

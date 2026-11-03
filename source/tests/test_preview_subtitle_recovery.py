@@ -9,6 +9,8 @@ from test_phase2_preview_api import fixture
 from test_cutting_api import ready
 from test_preview_subtitles import configured, dispatcher, CUE
 
+pytestmark = pytest.mark.integration
+
 @pytest.mark.parametrize('remove_directory', [False, True])
 def test_pending_without_report_recovers_through_real_worker(configured, dispatcher, monkeypatch, remove_directory):
     bid, rid, sha, _ = configured

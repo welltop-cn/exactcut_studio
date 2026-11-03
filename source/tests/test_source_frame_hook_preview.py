@@ -9,6 +9,8 @@ from test_source_frames import source
 from test_source_frame_timecode import frame_clip
 from test_web_base_path import app, request
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('managed', [False, True])
 def test_frame_draft_hook_preview_uses_ready_source_index(source, monkeypatch, managed):

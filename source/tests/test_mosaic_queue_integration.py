@@ -33,6 +33,7 @@ def second_asset(bid,source,sha):
     return rid
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('managed',[False,True])
 def test_compute_busy_open_another_submit_restore_and_freeze(ready,managed):
     bid,rid,sha,source=ready;rid2=second_asset(bid,source,sha)
@@ -96,6 +97,7 @@ def test_compute_busy_open_another_submit_restore_and_freeze(ready,managed):
         dispatcher.stop();app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_submission_receipt_is_persisted_and_validated(ready):
     bid,rid,sha,source=ready;app=serve()
     try:
@@ -128,6 +130,7 @@ def test_three_users_rotate_without_starvation(tmp_path,monkeypatch):
     assert [j for a,j in sequence if a=='b']==['b0','b1','b2']
 
 
+@pytest.mark.integration
 def test_dispatcher_lease_excludes_second_owner_and_retains_worker(ready,monkeypatch):
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha)
     accounts.initialize(workflow.BATCHES.parent/'accounts.sqlite3','queue-integration-password')
@@ -151,6 +154,7 @@ def test_dispatcher_lease_excludes_second_owner_and_retains_worker(ready,monkeyp
         release.set();first.stop();second.stop()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('failure',['disabled_actor','changed_version','disk_full','missing_input'])
 def test_invalid_queued_task_fails_without_replacing_original(ready,monkeypatch,failure):
     from exactcut import storage
@@ -175,6 +179,7 @@ def test_invalid_queued_task_fails_without_replacing_original(ready,monkeypatch,
     finally:dispatcher.stop(timeout=None)
 
 
+@pytest.mark.integration
 def test_two_authenticated_users_fifo_fairness_and_actual_ffmpeg(ready,monkeypatch):
     import json,uuid
     from http.client import HTTPConnection

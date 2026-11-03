@@ -72,6 +72,7 @@ def test_prefixed_login_redirect_pages_and_session(app):
     assert request(app, 'GET', '/healthz')[0] == 200
 
 
+@pytest.mark.integration
 def test_prefixed_creation_image_and_video_range(app, tmp_path, monkeypatch):
     headers = login(app)
     status, _, body = request(app, 'POST', '/home/api/batches/blank', {}, headers)
@@ -152,6 +153,7 @@ def test_other_prefix_is_not_redirected_or_compatible(app):
         assert 'Location' not in response_headers
 
 
+@pytest.mark.integration
 def test_preview_url_authorizes_before_upload_and_does_not_stream(app, tmp_path, monkeypatch):
     from exactcut import preview_oss
     headers = login(app)
@@ -178,6 +180,7 @@ def test_preview_url_authorizes_before_upload_and_does_not_stream(app, tmp_path,
     assert b'sensitive' not in body
 
 
+@pytest.mark.integration
 def test_oss_preparation_does_not_hold_project_read_lock(app, tmp_path, monkeypatch):
     from exactcut import preview_oss
     from concurrent.futures import ThreadPoolExecutor
@@ -205,6 +208,7 @@ def test_oss_preparation_does_not_hold_project_read_lock(app, tmp_path, monkeypa
         assert preview.result()[0] == 200
 
 
+@pytest.mark.integration
 def test_original_download_redirects_to_signed_oss_without_streaming(app,tmp_path,monkeypatch):
     from exactcut import preview_oss
     headers=login(app)

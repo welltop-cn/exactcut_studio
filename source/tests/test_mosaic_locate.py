@@ -34,6 +34,7 @@ def test_candidate_contract():
         with pytest.raises(cutting.CutError):m.checked_candidates(json.dumps({'candidates':[{**candidate,'box_2d':box}]}),meta)
 
 
+@pytest.mark.integration
 def test_http_lifecycle(configured,monkeypatch):
     m=module();bid,cut_sid,source=configured;original=source.read_bytes()
     cut=cutting.read_session(bid,cut_sid);sid=sessions.open_session(bid,cut['request_id'],cut['source_sha256'])['id']
@@ -61,6 +62,7 @@ def test_http_lifecycle(configured,monkeypatch):
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_failure_recovery_disabled(configured,monkeypatch):
     m=module();bid,cut_sid,_=configured
     cut=cutting.read_session(bid,cut_sid);sid=sessions.open_session(bid,cut['request_id'],cut['source_sha256'])['id']
@@ -93,6 +95,7 @@ def test_provider_single_jpeg_refusal(monkeypatch):
     assert requests[0]['contents'][0].inline_data.mime_type=='image/jpeg'
 
 
+@pytest.mark.integration
 def test_snapshot_open_and_frame_are_independent(configured):
     bid,cut_sid,source=configured;cut=cutting.read_session(bid,cut_sid)
     app=serve();base=f'/api/batches/{bid}/mosaics'
@@ -110,6 +113,7 @@ def test_snapshot_open_and_frame_are_independent(configured):
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_running_job_does_not_hold_edit_gate_and_rejects_stale_result(configured,monkeypatch):
     import threading
     from exactcut import cutting_access, workflow
@@ -137,6 +141,7 @@ def test_running_job_does_not_hold_edit_gate_and_rejects_stale_result(configured
     with pytest.raises(cutting.CutError):m.state(bid,sid,job['id'])
 
 
+@pytest.mark.integration
 def test_modified_snapshot_never_reaches_provider(configured,monkeypatch):
     m=module();bid,cut_sid,_=configured;cut=cutting.read_session(bid,cut_sid)
     session=sessions.open_session(bid,cut['request_id'],cut['source_sha256']);sid=session['id']
@@ -163,6 +168,7 @@ def test_sdk_normalization_does_not_change_shared_schema(monkeypatch):
 from interactive_test_support import interactive_dispatcher
 
 
+@pytest.mark.integration
 def test_locate_waits_for_busy_frame_cache_instead_of_failing(configured,monkeypatch):
     import time
     from exactcut.util import json_sha256

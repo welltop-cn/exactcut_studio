@@ -3,6 +3,8 @@ import pytest
 from test_mosaic_ui import editor as mosaic_editor
 from test_cutting_ui import editor as cut_editor
 
+pytestmark = pytest.mark.ui
+
 
 @pytest.mark.parametrize('immediate', [False, True])
 @pytest.mark.parametrize('mode', ['inflight', 'backoff'])

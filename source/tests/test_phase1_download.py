@@ -2,6 +2,8 @@ import sys
 import pytest
 from exactcut import material_download as dl
 
+pytestmark = pytest.mark.integration
+
 def test_hung_download_terminates_group_and_retains_existing_video(tmp_path):
     import time
     source=tmp_path/'source'; source.mkdir(); media=source/'EP1.mp4'; media.write_bytes(b'existing')

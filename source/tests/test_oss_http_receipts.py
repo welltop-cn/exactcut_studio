@@ -10,6 +10,8 @@ from exactcut import preview_oss, result_store, workflow
 from test_preview_oss import Bucket
 from test_web_base_path import app, login, request
 
+pytestmark = pytest.mark.integration
+
 
 class SigningBucket(Bucket):
     def sign_url(self, method, key, expires, params=None):

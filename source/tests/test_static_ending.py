@@ -10,6 +10,7 @@ from exactcut.intake import validate_draft, timing_explanation, compile_composit
 from exactcut.models import CutRequest
 from exactcut.media import duration_ms
 from exactcut.util import load_config
+from browser_support import shared_playwright
 
 
 def request(**kwargs):
@@ -57,6 +58,7 @@ def frame(video, seconds):
     return Image.open(io.BytesIO(result.stdout)).convert('RGB')
 
 
+@pytest.mark.integration
 def test_real_last_frame_is_appended_silent_and_reuses_base(tmp_path):
     r = request(ending={'mode': 'last_frame', 'duration_ms': 1200})
     config = load_config(); config['render'].update(width=180, height=320, preset='ultrafast')
@@ -76,6 +78,7 @@ def test_real_last_frame_is_appended_silent_and_reuses_base(tmp_path):
     assert audio and set(audio) == {0}
 
 
+@pytest.mark.integration
 def test_image_snapshot_and_contain_render(tmp_path, monkeypatch):
     import os
     import stat
@@ -111,6 +114,7 @@ def test_image_snapshot_and_contain_render(tmp_path, monkeypatch):
         image_file(project, r.ending)
 
 
+@pytest.mark.ui
 def test_editor_ending_controls_keep_plain_rows_and_update_total(tmp_path):
     import re
     from pathlib import Path
@@ -119,7 +123,7 @@ def test_editor_ending_controls_keep_plain_rows_and_update_total(tmp_path):
     html = re.sub(r'<script src="[^"]+"></script>', '', (root/'index.html').read_text())
     source = '\n'.join(line for line in (root/'app.js').read_text().splitlines()
                        if not line.startswith('(async()=>{try{const initial='))
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page()
@@ -229,6 +233,7 @@ def test_invalid_image_cannot_be_confirmed(tmp_path):
         snapshot_images(batch, tmp_path/'project', manifest)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('end_ms', [33, 1033])
 def test_freeze_uses_exact_cut_tail_and_never_repeats_story_audio(tmp_path, monkeypatch, end_ms):
     source = tmp_path/'source/videos/EP1.mp4'; source.parent.mkdir(parents=True)

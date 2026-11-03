@@ -9,6 +9,8 @@ from exactcut.util import read_json, write_json_atomic
 from test_material_versions import enrolled, token
 from test_workflow import workspace
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def candidate(workspace, monkeypatch):

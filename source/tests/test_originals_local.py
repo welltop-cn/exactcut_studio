@@ -87,6 +87,7 @@ def test_fetch_disabled_empty_local_list_is_normal_unready(app):
     assert 'EXACTCUT_ALLOW_MATERIAL_FETCH' not in json.loads(body)['error']
 
 
+@pytest.mark.integration
 def test_local_list_uses_real_cache_and_project_fallback_without_remote_calls(app, tmp_path, video):
     put_video(tmp_path, video)
     put_video(tmp_path, video, 'EP11', project=True)
@@ -103,6 +104,7 @@ def test_local_list_uses_real_cache_and_project_fallback_without_remote_calls(ap
     assert 'url' not in str(result['episodes'])
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('project', [False, True])
 @pytest.mark.parametrize('suffix', ['/EP1', '/EP1/file'])
 def test_local_original_streams_real_video_and_range(app, tmp_path, video, project, suffix):
@@ -119,6 +121,7 @@ def test_local_original_streams_real_video_and_range(app, tmp_path, video, proje
     assert path.read_bytes() == before
 
 
+@pytest.mark.integration
 def test_local_original_keeps_batch_authentication_and_owner_gate(app, tmp_path, video):
     put_video(tmp_path, video)
     instance, batch = app
@@ -135,6 +138,7 @@ def test_local_original_keeps_batch_authentication_and_owner_gate(app, tmp_path,
         assert request(app, suffix, username='alice', password='alice-test-password')[0] == 200
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('component', ['episode', 'drama', 'project-source'])
 def test_local_original_does_not_follow_symlinks(app, tmp_path, video, component):
     outside = tmp_path / 'outside'
@@ -164,6 +168,7 @@ def test_local_original_rejects_invalid_identifiers(app, suffix):
     assert status == 400
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('environment', ['development', 'production'])
 def test_fetch_enabled_keeps_remote_listing_even_with_local_copy(tmp_path, monkeypatch, video, environment):
     from test_originals import FakeStore

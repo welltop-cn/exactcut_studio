@@ -46,6 +46,7 @@ def test_grounding_rejects_order_mismatch_and_ambiguous_units():
     with pytest.raises(ValueError, match='单位'):llm.grounded_segments(item, {'S!A1':'EP1 00:00:00-00:20:00'})
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(not shutil.which('ffmpeg'), reason='requires ffmpeg')
 def test_twenty_second_cut_has_correct_source_positions_and_segment_qc(tmp_path):
     source=tmp_path/'source/videos/EP1.mp4'; source.parent.mkdir(parents=True)
@@ -79,6 +80,7 @@ def test_twenty_second_cut_has_correct_source_positions_and_segment_qc(tmp_path)
     assert '片段 1 时长不符' in failed['requests']['R1']['error']
 
 
+@pytest.mark.integration
 def test_source_with_duration_but_without_video_track_is_rejected(tmp_path):
     from exactcut.media import validate_manifest_sources
     source=tmp_path/'source/videos/EP1.mp4';source.parent.mkdir(parents=True);source.write_bytes(b'audio-only')

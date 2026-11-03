@@ -53,6 +53,7 @@ def test_mask_union_and_failure_never_erase_another_target(tmp_path):
     with pytest.raises(cutting.CutError):render.union_mask(2,[a,b],(8,6))
 
 
+@pytest.mark.integration
 def test_full_video_keeps_frames_rate_size_audio_and_original(tmp_path):
     source=make_video(tmp_path/'source.mp4',frames=30,fps='30000/1001')
     before=file_sha256(source);meta=cutting.probe_source(source)
@@ -75,6 +76,7 @@ def wait_job(bid,sid,jid):
     pytest.fail('render did not finish')
 
 
+@pytest.mark.integration
 def test_batch_http_restore_download_and_immutable_source(ready,monkeypatch):
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id'];calls=[]
     monkeypatch.setattr(tracking,'enabled',lambda:True)
@@ -110,6 +112,7 @@ def test_batch_http_restore_download_and_immutable_source(ready,monkeypatch):
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_mixed_deletion_and_mosaic_and_discard_retains_discovery(ready,monkeypatch):
     from exactcut import mosaic_scan, cutting_scan, workflow
     from exactcut.util import read_json
@@ -140,6 +143,7 @@ def test_mixed_deletion_and_mosaic_and_discard_retains_discovery(ready,monkeypat
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('managed',[False,True])
 def test_combined_result_replaces_current_preserves_source_and_reopens_new_round(ready,monkeypatch,managed):
     from exactcut import workflow, material_versions, preview_oss
@@ -169,6 +173,7 @@ def test_combined_result_replaces_current_preserves_source_and_reopens_new_round
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_discard_running_job_fences_result_and_does_not_change_project(ready,monkeypatch):
     import threading
     from exactcut import workflow
@@ -200,6 +205,7 @@ def test_discard_running_job_fences_result_and_does_not_change_project(ready,mon
     assert workflow.preview_file(bid,rid)[0]==source and file_sha256(source)==sha
 
 
+@pytest.mark.integration
 def test_stop_interrupts_owned_process_and_retains_session(ready,monkeypatch):
     import sys,threading
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id'];entered=threading.Event()
@@ -227,6 +233,7 @@ def test_stop_interrupts_owned_process_and_retains_session(ready,monkeypatch):
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('managed',[False,True])
 def test_confirmation_rechecks_discard_committed_before_asset_gate(ready,monkeypatch,managed):
     from contextlib import contextmanager
@@ -256,6 +263,7 @@ def test_confirmation_rechecks_discard_committed_before_asset_gate(ready,monkeyp
     assert file_sha256(workflow.preview_file(bid,rid)[0])==sha
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('change',['status','job_source','replacement_running','replacement_completed','current_source'])
 def test_confirmation_revalidates_report_and_version_after_gate(ready,monkeypatch,change):
     from contextlib import contextmanager
@@ -296,6 +304,7 @@ def test_target_effect_contract_is_validated_and_preserved():
     with pytest.raises(cutting.CutError):render.validate_targets(meta,[{**target,'effect':{'style':'wrong'}}])
 
 
+@pytest.mark.integration
 def test_distinct_clip_effects_are_rendered_in_one_video(tmp_path):
     source=make_video(tmp_path/'source.mp4',frames=12);meta=cutting.probe_source(source)
     target={'start':0,'end':4,'seed_frame':0,'x':0,'y':0,'w':meta['width'],'h':meta['height'],'effect':{'style':'solid','expansion':'none'}}
@@ -310,6 +319,7 @@ def test_distinct_clip_effects_are_rendered_in_one_video(tmp_path):
     assert frame_numbers(output)[8:]==list(range(8,12))
 
 
+@pytest.mark.integration
 def test_polling_own_running_replacement_does_not_revalidate_old_source(ready,monkeypatch):
     from exactcut import mosaic_replace, mosaic_locate
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
@@ -322,6 +332,7 @@ def test_polling_own_running_replacement_does_not_revalidate_old_source(ready,mo
     assert render.state(bid,sid,job['id'])['replacement']['status']=='running'
 
 
+@pytest.mark.integration
 def test_clip_preview_combines_regions_and_does_not_replace_full_result(ready,monkeypatch):
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
     full=render.start(bid,sid,[],'',[[0,2]]);assert wait_job(bid,sid,full['id'])['status']=='completed'
@@ -347,6 +358,7 @@ def test_clip_preview_combines_regions_and_does_not_replace_full_result(ready,mo
     finally:app.shutdown()
 
 
+@pytest.mark.integration
 def test_clip_preview_of_entire_short_source(tmp_path):
     source=make_video(tmp_path/'source.mp4',frames=6);meta=cutting.probe_source(source)
     target={'start':0,'end':6,'seed_frame':2,'x':0,'y':0,'w':40,'h':40}
@@ -355,6 +367,7 @@ def test_clip_preview_of_entire_short_source(tmp_path):
     assert result['metadata']==meta
 
 
+@pytest.mark.integration
 def test_inference_reused_across_effects_but_not_geometry(ready,monkeypatch):
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);calls=[]
     def infer(source,directory,meta,target,cfg):
@@ -369,6 +382,7 @@ def test_inference_reused_across_effects_but_not_geometry(ready,monkeypatch):
     assert len(calls)==2
 
 
+@pytest.mark.integration
 def test_preview_downscales_without_changing_duration(tmp_path):
     source=tmp_path/'source.mp4'
     cutting.run(['ffmpeg','-y','-v','error','-f','lavfi','-i','color=white:s=1080x1920:r=30','-t','0.4','-c:v','libx264','-pix_fmt','yuv420p',str(source)])
@@ -381,6 +395,7 @@ def test_preview_downscales_without_changing_duration(tmp_path):
     assert result['metadata']['frame_count']==6
 
 
+@pytest.mark.integration
 def test_legacy_render_masks_require_matching_source_reset_and_config(ready,monkeypatch):
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha)
     root=sessions.session_path(bid,session['id']);directory=root/'render-old'/'target-0'
@@ -413,6 +428,7 @@ def test_fixed_region_validation_and_mask_without_tracker(tmp_path,monkeypatch):
     assert render.union_mask(800,[track],(80,48)).getbbox() is None
 
 
+@pytest.mark.integration
 def test_fixed_render_and_preview_without_sam(ready,monkeypatch):
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha);sid=session['id']
     monkeypatch.setattr(tracking,'enabled',lambda:False)
@@ -427,6 +443,7 @@ def test_fixed_render_and_preview_without_sam(ready,monkeypatch):
     assert file_sha256(source)==sha
 
 
+@pytest.mark.integration
 def test_fixed_mask_pixels_and_time_boundaries_in_real_video(tmp_path):
     source=make_video(tmp_path/'source.mp4',frames=12)
     meta=cutting.probe_source(source)
@@ -445,6 +462,7 @@ def test_fixed_mask_pixels_and_time_boundaries_in_real_video(tmp_path):
     assert len(pixels)==5*stride and max(pixels)<5
 
 
+@pytest.mark.integration
 def test_discard_interrupts_composing_process_and_releases_compute(ready,monkeypatch):
     import sys,threading
     from exactcut.util import read_json
@@ -467,6 +485,7 @@ def test_discard_interrupts_composing_process_and_releases_compute(ready,monkeyp
     with cutting.lock_file(cutting.lock_root()/'compute.lock'):pass
 
 
+@pytest.mark.integration
 def test_mixed_processing_encodes_video_once_and_preserves_source_frame_mapping(tmp_path,monkeypatch):
     source=make_video(tmp_path/'source.mp4',frames=30,fps='30000/1001')
     meta=cutting.probe_source(source);original=cutting.run;encodes=[]
@@ -485,6 +504,7 @@ def test_mixed_processing_encodes_video_once_and_preserves_source_frame_mapping(
     assert result['metadata']['has_audio']
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('audio,fps',[(True,'30'),(False,'30000/1001')])
 def test_one_pass_mask_boundaries_survive_head_and_middle_deletions(tmp_path,audio,fps):
     source=make_video(tmp_path/'source.mp4',frames=20,fps=fps,audio=audio)
@@ -496,6 +516,7 @@ def test_one_pass_mask_boundaries_survive_head_and_middle_deletions(tmp_path,aud
     assert result['metadata']=={**meta,'frame_count':15}
     assert frame_numbers(out)==[3,4,5,6,7,0,0,0,0,0,15,16,17,18,19]
 
+@pytest.mark.integration
 @pytest.mark.parametrize('engine',[5,6])
 def test_raw_inference_survives_render_identity_upgrade(ready,monkeypatch,engine):
     from exactcut.util import json_sha256
@@ -518,6 +539,7 @@ def test_inference_identity_is_independent_and_invalidates_inputs():
     for other,t,c in [({**session,'source_sha256':'b'},target,cfg),({**session,'reset_at':'new'},target,cfg),(session,{**target,'x':1},cfg),(session,target,{**cfg,'inference_size':768})]:
         assert tracking.inference_identity(other,t,c)!=key
 
+@pytest.mark.integration
 @pytest.mark.parametrize('change',['missing_mask','reset','source','config'])
 def test_legacy_raw_cache_rejects_incomplete_or_different_inputs(ready,monkeypatch,change):
     bid,rid,sha,source=ready;session=sessions.open_session(bid,rid,sha)
@@ -575,6 +597,7 @@ def blurred_mask_at(box,meta,**effect):
     return target
 
 
+@pytest.mark.integration
 def test_blur_uses_source_frame_indexes_before_deletion_and_keeps_audio(tmp_path):
     source=checker_video(tmp_path/'source.mp4',frames=30,audio=True,fps='30000/1001')
     meta=cutting.probe_source(source)
@@ -596,6 +619,7 @@ def test_blur_uses_source_frame_indexes_before_deletion_and_keeps_audio(tmp_path
     assert pcm(output)==pcm(reference)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('start,end',[(0,2),(28,30)])
 def test_blur_interval_covers_first_frame_and_excludes_end(tmp_path,start,end):
     source=checker_video(tmp_path/'source.mp4',frames=30)
@@ -611,6 +635,7 @@ def test_blur_interval_covers_first_frame_and_excludes_end(tmp_path,start,end):
         else:assert block_span(frame,24,24)>150
 
 
+@pytest.mark.integration
 def test_overlapping_groups_use_their_own_intervals_and_effects(tmp_path):
     source=checker_video(tmp_path/'source.mp4',frames=30)
     meta=cutting.probe_source(source)
@@ -627,6 +652,7 @@ def test_overlapping_groups_use_their_own_intervals_and_effects(tmp_path):
         else:assert block_span(frame,24,24)>150
 
 
+@pytest.mark.integration
 def test_compose_passes_source_frame_intervals_with_deletion(tmp_path,monkeypatch):
     source=make_video(tmp_path/'source.mp4',frames=12);meta=cutting.probe_source(source)
     track=render.prepare_track('unused','unused',{'metadata':meta},

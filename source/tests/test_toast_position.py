@@ -2,6 +2,9 @@ import re
 from pathlib import Path
 
 import pytest
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 
 
 def test_save_toast_stays_clear_of_editor_actions_on_desktop_and_mobile():
@@ -12,7 +15,7 @@ def test_save_toast_stays_clear_of_editor_actions_on_desktop_and_mobile():
     position = next((line for line in script.splitlines() if line.startswith('function positionToast(')), '')
     toast = next(line for line in script.splitlines() if line.startswith('function toast('))
 
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         try:
             browser = p.chromium.launch(headless=True)
         except playwright.Error:

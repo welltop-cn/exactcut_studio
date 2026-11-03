@@ -69,6 +69,7 @@ def test_encoder_threads_uses_central_config_override(tmp_path, monkeypatch):
     assert media.bounded_ffmpeg(['ffmpeg', '-i', 'in.mp4', 'out.mp4'])[-3:] == ['-threads', '8', 'out.mp4']
 
 
+@pytest.mark.integration
 def test_real_multiinput_media_transcode_with_caps(tmp_path):
     output = tmp_path / 'test.mp4'
     media.run_checked(['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=96x96:r=12:d=0.5',
@@ -179,6 +180,7 @@ def test_placement_does_not_swallow_deferred_ai(monkeypatch, tmp_path):
         presentation.placement([b'fixture'], HookOptions(), {'source':'ai_semantic'}, tmp_path)
 
 
+@pytest.mark.integration
 def test_gemini_bypasses_budget_but_openai_frame_ai_still_defers(monkeypatch, tmp_path):
     from exactcut import ai_rate, safety
     permit=Mock(side_effect=ResourceDeferred(1234));monkeypatch.setattr(ai_rate,'acquire',permit)
@@ -294,6 +296,7 @@ def test_resuming_resident_at_global_cap_does_not_require_an_extra_slot(runner, 
     kill.assert_called_once_with(123,signal.SIGCONT)
 
 
+@pytest.mark.integration
 def test_safety_gemini_shots_complete_without_consuming_openai_budget(tmp_path, monkeypatch):
     from exactcut import ai_rate, safety
     from PIL import Image
@@ -430,6 +433,7 @@ def test_inline_ai_default_has_one_nonblocking_slot(module_name, slot_name):
         if first: slots.release()
 
 
+@pytest.mark.integration
 def test_gemini_processing_defers_and_reuses_uploaded_handle_without_sleep(tmp_path, monkeypatch):
     from exactcut import safety, ai_rate
     client = Mock()
@@ -452,6 +456,7 @@ def test_gemini_processing_defers_and_reuses_uploaded_handle_without_sleep(tmp_p
     assert client.files.upload.call_count==1 and client.models.generate_content.call_count==1
 
 
+@pytest.mark.integration
 def test_gemini_vendor_failure_is_not_faked_as_success_or_retried_indefinitely(tmp_path, monkeypatch):
     from exactcut import safety,ai_rate
     client=Mock();client.files.upload.return_value.name='files/fixture';client.files.get.return_value=Mock(state='ACTIVE',uri='fixture-uri')

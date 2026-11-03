@@ -88,6 +88,7 @@ def test_b2_internal_name_alias_does_not_renumber_parent_or_allow_third_party(wo
     assert child.name not in {item['id'] for item in w.summaries()}
 
 
+@pytest.mark.integration
 def test_b1_unknown_internal_delivery_missing_job_never_reenqueues(workspace, monkeypatch):
     m, path, state = enrolled(media=True)
     rid = state['draft']['rows'][0]['request_id']
@@ -140,6 +141,7 @@ def changed_candidate():
     return m, path, m.confirm(path, {'revision': state['revision'], 'mutation_id': token()}), old
 
 
+@pytest.mark.integration
 def test_candidate_pair_freezes_by_copy_and_commit_is_idempotent(workspace):
     m, path, state, old = changed_candidate()
     worker, child, event, job = candidate_job(path, state)
@@ -161,6 +163,7 @@ def test_candidate_pair_freezes_by_copy_and_commit_is_idempotent(workspace):
     assert m.read(path)['assets'][event['asset_id']]['history'] == [old]
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('failure', ['preview', 'master', 'oss', 'generation', 'deleted', 'paused', 'attempt'])
 def test_failed_or_late_candidate_never_replaces_current(workspace, monkeypatch, failure):
     m, path, state, old = changed_candidate()
@@ -187,6 +190,7 @@ def test_failed_or_late_candidate_never_replaces_current(workspace, monkeypatch,
     assert Path(latest['versions'][old]['master_path']).read_bytes() == b'pretend-video-for-upload-integrity-test'
 
 
+@pytest.mark.integration
 def test_old_stage_cannot_claim_new_durable_attempt(workspace):
     m, path, state, old = changed_candidate()
     worker, child, event, job = candidate_job(path, state)
@@ -195,6 +199,7 @@ def test_old_stage_cannot_claim_new_durable_attempt(workspace):
     with pytest.raises(ValueError): worker.stage_enter(job)
 
 
+@pytest.mark.integration
 def test_workflow_detail_preview_repair_copy_and_legacy_guards(workspace):
     m, path, state = enrolled(media=True)
     rid = state['draft']['rows'][0]['request_id']
@@ -213,6 +218,7 @@ def test_workflow_detail_preview_repair_copy_and_legacy_guards(workspace):
     assert master.read_bytes() == b'pretend-video-for-upload-integrity-test'
 
 
+@pytest.mark.integration
 def test_current_preview_and_receipt_cannot_cross_version_or_tombstone(workspace):
     m, path, state = enrolled(media=True)
     rid = state['draft']['rows'][0]['request_id']
@@ -259,6 +265,7 @@ def test_http_managed_save_delete_restore_and_internal_denial(http):
     assert code == 200 and not json.loads(body)['deleted_at'], body
 
 
+@pytest.mark.integration
 def test_actual_run_child_commits_pair_before_stage_evidence(workspace, monkeypatch):
     import sys
     from exactcut import stage_results
@@ -277,6 +284,7 @@ def test_actual_run_child_commits_pair_before_stage_evidence(workspace, monkeypa
     assert m.read(path)['assets'][event['asset_id']]['history'] == [old]
 
 
+@pytest.mark.integration
 def test_render_retry_uses_fresh_child_and_old_attempt_cannot_commit(workspace):
     m, path, state, old = changed_candidate()
     worker, child, event, job = candidate_job(path, state)
@@ -289,6 +297,7 @@ def test_render_retry_uses_fresh_child_and_old_attempt_cannot_commit(workspace):
     assert m.read(path)['assets'][event['asset_id']]['current_version'] == old
 
 
+@pytest.mark.integration
 def test_pause_is_inherited_before_child_scheduler_admission(workspace):
     from exactcut import batch_control
     m, path, state, old = changed_candidate()
@@ -299,6 +308,7 @@ def test_pause_is_inherited_before_child_scheduler_admission(workspace):
     assert not batch_control.read(child)['paused']
 
 
+@pytest.mark.integration
 def test_internal_upload_uses_parent_namespace_and_managed_receipt_route(workspace, monkeypatch):
     from exactcut import preview_oss
     m, path, state, old = changed_candidate()
@@ -386,6 +396,7 @@ def test_managed_http_rechecks_maintenance_inside_release_barrier(http, monkeypa
     assert not m.read(path)['control']['paused']
 
 
+@pytest.mark.integration
 def test_unknown_delivery_explicit_verification_keeps_same_snapshot(workspace):
     m, path, state = enrolled(media=True); rid = state['draft']['rows'][0]['request_id']
     vid = state['assets'][rid]['current_version']; sha = state['versions'][vid]['record']['output_sha256']
@@ -412,6 +423,7 @@ def test_enrollment_rejects_foreign_instance_identity(workspace):
     with pytest.raises(ValueError, match='身份'): m.enroll(path)
 
 
+@pytest.mark.integration
 def test_enrollment_rejects_hash_anomaly_and_unknown_delivery(workspace):
     m = module(); item = imported(); path, request, video, record = complete_asset(item)
     video.write_bytes(b'changed')
@@ -421,6 +433,7 @@ def test_enrollment_rejects_hash_anomaly_and_unknown_delivery(workspace):
     with pytest.raises(ValueError, match='交付'): m.enroll(path)
 
 
+@pytest.mark.integration
 def test_approval_is_version_bound_even_identical_sha_and_delivery_is_fixed(workspace):
     m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
     old_sha = state['versions'][old]['record']['output_sha256']; rid = event['asset_id']
@@ -433,6 +446,7 @@ def test_approval_is_version_bound_even_identical_sha_and_delivery_is_fixed(work
         m.queue_delivery(path, {'revision': state['revision'], 'mutation_id': token(), 'request_id': rid, 'version_id': old, 'sha256': old_sha})
 
 
+@pytest.mark.integration
 def test_current_paths_reject_traversal_after_corruption(workspace):
     m, path, state = enrolled(media=True); rid = state['draft']['rows'][0]['request_id']; vid = state['assets'][rid]['current_version']
     outside = path.parent / 'outside.mp4'; outside.write_bytes(b'outside')
@@ -441,6 +455,7 @@ def test_current_paths_reject_traversal_after_corruption(workspace):
     with pytest.raises(ValueError): m.current_file(path, rid)
 
 
+@pytest.mark.integration
 def test_internal_batch_physical_delete_and_manual_parent_preview_are_rejected(workspace, monkeypatch):
     from exactcut import batch_control
     m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
@@ -452,6 +467,7 @@ def test_internal_batch_physical_delete_and_manual_parent_preview_are_rejected(w
     with pytest.raises(ValueError, match='纳管'): w._make_batch_previews(path.name)
 
 
+@pytest.mark.integration
 def test_parent_results_and_feedback_follow_current_version_for_added_asset(workspace):
     m, path, state = enrolled()
     draft = copy.deepcopy(state['draft']); draft['rows'][0]['seq'] = '2'
@@ -470,6 +486,7 @@ def test_parent_results_and_feedback_follow_current_version_for_added_asset(work
     assert feedback['request_id'] == added and feedback['version_id'] == event['version_id']
 
 
+@pytest.mark.integration
 def test_managed_backfill_never_visits_internal_outputs(workspace, monkeypatch):
     from exactcut import media_backfill, preview_oss
     m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
@@ -484,6 +501,7 @@ def test_managed_backfill_never_visits_internal_outputs(workspace, monkeypatch):
 from test_round1_integration import chain
 
 
+@pytest.mark.integration
 def test_managed_fetch_render_scheduler_chain_commits_and_delivery_is_separate(chain, monkeypatch):
     import sys
     from exactcut import stage_results, webserver as web, orchestrator
@@ -531,6 +549,7 @@ def test_idempotent_receipt_is_compact_and_replay_reads_latest_draft(workspace):
     assert 'versions' not in m.read(path)['mutations'][first['mutation_id']]['result']
 
 
+@pytest.mark.integration
 def test_upload_only_retry_reuses_version_and_candidate_without_render(workspace, monkeypatch):
     from exactcut import preview_oss
     m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
@@ -558,6 +577,7 @@ def test_upload_only_retry_reuses_version_and_candidate_without_render(workspace
     assert Path(latest['versions'][old]['master_path']).exists()
 
 
+@pytest.mark.integration
 def test_delivery_target_drift_fails_before_any_external_operation(workspace, monkeypatch):
     m, path, state = enrolled(media=True); rid = state['draft']['rows'][0]['request_id']; vid = state['assets'][rid]['current_version']
     state = m.queue_delivery(path, {'revision': state['revision'], 'mutation_id': token(), 'request_id': rid, 'version_id': vid, 'sha256': state['versions'][vid]['record']['output_sha256']})
@@ -569,6 +589,7 @@ def test_delivery_target_drift_fails_before_any_external_operation(workspace, mo
     with pytest.raises(ValueError, match='目标'): worker.stage_enter(job)
 
 
+@pytest.mark.integration
 def test_freeze_fsyncs_rename_parent_before_current_commit(workspace, monkeypatch):
     import os
     m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
@@ -582,6 +603,7 @@ def test_freeze_fsyncs_rename_parent_before_current_commit(workspace, monkeypatc
     assert Path(current['master_path']).parents[2] in seen
 
 
+@pytest.mark.integration
 def test_managed_delivery_gate_does_not_create_outbox(workspace, monkeypatch):
     m, path, state = enrolled(media=True); rid = state['draft']['rows'][0]['request_id']; vid = state['assets'][rid]['current_version']
     assert hasattr(m, 'delivery_enabled'), 'Managed delivery gate missing'
@@ -591,6 +613,7 @@ def test_managed_delivery_gate_does_not_create_outbox(workspace, monkeypatch):
     assert m.read(path)['outbox'] == {}
 
 
+@pytest.mark.integration
 def test_old_render_cannot_fail_new_upload_retry(workspace, monkeypatch):
     m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
     worker.stage_enter(job); rendered(child, event); monkeypatch.setattr(worker, 'require_oss', lambda: True)
@@ -613,6 +636,7 @@ def test_deleted_candidate_cancels_own_running_process_without_deleting_files(ch
     assert child.exists() and (child / 'confirmed.json').exists()
 
 
+@pytest.mark.integration
 def test_killed_media_upload_scheduler_requires_fresh_explicit_retry(chain, monkeypatch):
     from exactcut import webserver as web
     m, path, state, old = changed_candidate(); worker, child, event, render_job = candidate_job(path, state)
@@ -637,6 +661,7 @@ def test_killed_media_upload_scheduler_requires_fresh_explicit_retry(chain, monk
     assert not chain.render_calls
 
 
+@pytest.mark.integration
 def test_pause_at_final_commit_can_retry_completed_pair_after_resume(chain, monkeypatch):
     import sys
     from exactcut import stage_results, webserver as web
@@ -699,6 +724,7 @@ controls();assert.equal($('saveButton').disabled,true);
     assert result.returncode == 0, result.stderr
 
 
+@pytest.mark.integration
 def test_requeued_old_render_cannot_replace_upload_retry(workspace, monkeypatch):
     m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
     worker.stage_enter(job); rendered(child, event)
@@ -717,6 +743,7 @@ def test_requeued_old_render_cannot_replace_upload_retry(workspace, monkeypatch)
     assert read_json(jobs / (job['id'] + '.json'))['status'] == 'interrupted'
 
 
+@pytest.mark.integration
 def test_detail_projects_candidate_execution_separately_from_current(workspace):
     m, path, state, old = changed_candidate(); worker, child, event, job = candidate_job(path, state)
     worker.stage_enter(job)
@@ -730,6 +757,7 @@ def test_detail_projects_candidate_execution_separately_from_current(workspace):
     assert m.detail(path)['assets'][0]['candidate']['status'] == 'failed'
 
 
+@pytest.mark.integration
 def test_completed_managed_pair_reports_downloads_ready(workspace):
     m, path, state = enrolled(media=True)
     assert m.detail(path)['runtime']['download_complete'] is True
@@ -752,6 +780,7 @@ def test_managed_runtime_message_follows_execution_state(workspace):
     assert '确认后开始制作' not in producing['message']
 
 
+@pytest.mark.integration
 def test_managed_runtime_message_separates_retained_preview_from_new_work(workspace):
     m, path, state = enrolled(media=True)
     ready = m.detail(path)['runtime']
@@ -812,6 +841,7 @@ def test_managed_copy_retains_only_referenced_ending_image_as_independent_bytes(
     assert copied['draft']['rows'][0]['composition']['ending']['image'] == target.name
 
 
+@pytest.mark.integration
 def test_enrollment_media_hashing_releases_global_naming_lock(workspace, monkeypatch):
     import fcntl
     m = module(); path, _, _, _ = complete_asset(imported())
@@ -829,6 +859,7 @@ def test_enrollment_media_hashing_releases_global_naming_lock(workspace, monkeyp
     assert probes
 
 
+@pytest.mark.integration
 def test_enrollment_rechecks_media_identity_before_commit(workspace, monkeypatch):
     m = module(); path, _, video, _ = complete_asset(imported())
     original = m.file_sha256
@@ -864,6 +895,7 @@ def test_managed_detail_preserves_project_and_candidate_execution_history(worksp
     assert any('内容已确认' in message for message in messages)
 
 
+@pytest.mark.integration
 def test_managed_save_allocates_sequences_around_existing_completed_project(workspace):
     original = imported()
     complete_asset(original)
@@ -877,6 +909,7 @@ def test_managed_save_allocates_sequences_around_existing_completed_project(work
     assert confirmed['assets'][draft['rows'][0]['request_id']]['candidate_version']
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('candidate_status', ['queued', 'processing', 'failed', 'current', None])
 def test_production_events_follow_selected_version_without_old_history(workspace, candidate_status):
     m, path, state = enrolled(media=True)
@@ -930,6 +963,7 @@ def test_clip_editor_does_not_reinterpret_open_ended_or_title_cards(workspace, t
     assert not m.detail(path)['clip_editor']
 
 
+@pytest.mark.integration
 def test_managed_copy_starts_with_configuration_only(workspace):
     m, path, state = enrolled(media=True)
     (path / 'logs').mkdir(); (path / 'logs/old.log').write_text('old execution')
@@ -967,6 +1001,7 @@ def test_production_round_receipts_survive_promotion_retry_and_noop():
     assert m.production_versions(state) == {'b'}
 
 
+@pytest.mark.integration
 def test_saved_changes_do_not_report_old_current_as_this_round(workspace):
     m, path, state = enrolled(media=True)
     rid = state['draft']['rows'][0]['request_id']
@@ -981,6 +1016,7 @@ def test_saved_changes_do_not_report_old_current_as_this_round(workspace):
     assert m.detail(path)['assets'][0]['production_scope'] == 'run'
 
 
+@pytest.mark.integration
 def test_partial_round_keeps_reused_asset_distinct_after_completion(workspace):
     m, path, state = enrolled(media=True)
     first = state['draft']['rows'][0]['request_id']
@@ -1004,6 +1040,7 @@ def test_partial_round_keeps_reused_asset_distinct_after_completion(workspace):
         first: 'reused', event['asset_id']: 'run'}
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('delivery_status,expected', [('unverified', '待核实'), ('publish_failed', 'FBBM 交付未完成'), ('uploading', '正在上传')])
 def test_delivery_banner_matches_actual_delivery_state(workspace, delivery_status, expected):
     m, path, state = enrolled(media=True)
@@ -1024,6 +1061,7 @@ def test_delivery_banner_matches_actual_delivery_state(workspace, delivery_statu
         assert m._blocked(m.read(path))  # Presentation never releases the safety fence.
 
 
+@pytest.mark.integration
 def test_managed_preparation_failure_can_queue_retry(workspace, monkeypatch):
     from exactcut import publish, material_workers, webserver as web
     m, path, state = enrolled(media=True)
@@ -1058,6 +1096,7 @@ def test_managed_preparation_failure_can_queue_retry(workspace, monkeypatch):
     assert sum(d['status'] == 'pending' for d in retried['deliveries'].values()) == 1
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('delivery_status', ['publish_failed', 'unverified'])
 @pytest.mark.parametrize('candidate_status,expected', [('queued', 'queued'), ('processing', 'producing'), ('failed', 'partial')])
 def test_old_delivery_failure_does_not_mask_new_production(workspace, candidate_status, expected, delivery_status):

@@ -14,6 +14,7 @@ def test_effect_contract_and_mask_expansion():
     assert effects.expand(Image.new('L',(100,100)),'large').getbbox() is None
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('style',['pixel','blur','soft_blur','solid'])
 def test_real_ffmpeg_effects(style,tmp_path):
     from test_cutting import make_video
@@ -32,6 +33,7 @@ def test_real_ffmpeg_effects(style,tmp_path):
         assert max(frame)<5
 
 
+@pytest.mark.integration
 def test_effect_changes_job_identity_and_preview_uses_same_graph(tmp_path):
     from exactcut import mosaic_tracking as tracking
     session={'source_sha256':'a'*64};target={'start':2,'end':5}
@@ -100,6 +102,7 @@ def render_layered(path,source,masks,graph,meta):
     return decode_frames(path,meta)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('style',['blur','soft_blur'])
 def test_layered_graph_blur_timeline_skips_frames_outside_source_intervals(style,tmp_path):
     source=detail_source(tmp_path/'source.mp4');meta=cutting.probe_source(source)
@@ -118,6 +121,7 @@ def test_layered_graph_blur_timeline_skips_frames_outside_source_intervals(style
             assert active[frame]==off[frame],'inactive frames must stay pass-through'
 
 
+@pytest.mark.integration
 def test_layered_graph_intervals_keep_every_masked_frame_identical(tmp_path):
     source=detail_source(tmp_path/'source.mp4');meta=cutting.probe_source(source)
     first=mask_video(tmp_path/'first.mkv',meta,{1,2,5})

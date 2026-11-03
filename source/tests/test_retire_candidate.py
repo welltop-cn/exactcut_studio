@@ -7,6 +7,8 @@ from test_workflow import workspace
 from test_round1_integration import chain
 from test_material_versions import changed_candidate, token
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def stale_render(chain, monkeypatch):

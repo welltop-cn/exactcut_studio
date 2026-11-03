@@ -78,6 +78,7 @@ from test_cutting_scan import configured
 from test_phase2_preview_api import fixture
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('kind', ['cuts', 'mosaics'])
 @pytest.mark.parametrize('resource', ['scan', 'compute'])
 def test_busy_scan_is_persisted_without_waiting_request_threads_or_execution_leases(configured, monkeypatch, kind, resource):
@@ -110,6 +111,7 @@ def test_busy_scan_is_persisted_without_waiting_request_threads_or_execution_lea
                 pass
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('kind', ['cuts', 'mosaics'])
 def test_prepare_diagnostics_include_safe_phases(ready, monkeypatch, kind):
     from exactcut import diagnostics, mosaic_session
@@ -161,6 +163,7 @@ def test_asset_and_batch_gates_never_advertise_retry(tmp_path):
         assert type(error.value) is cutting.CutError and error.value.status == 409
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('kind', ['cuts', 'mosaics'])
 @pytest.mark.parametrize('resource', ['worker', 'batch'])
 def test_worker_ownership_waits_but_http_batch_mutation_gate_still_rejects(configured, monkeypatch, kind, resource):

@@ -5,6 +5,8 @@ import pytest
 
 from exactcut import preview_subtitle_model as model, preview_subtitles
 
+pytestmark = pytest.mark.integration
+
 
 CUE = {'start_ms': 100, 'end_ms': 500, 'original_text': 'Hello', 'translation_zh': '你好'}
 

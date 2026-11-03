@@ -7,6 +7,8 @@ from test_round1_integration import chain
 from test_linux_release import ops
 from test_material_versions import changed_candidate, token
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('status', ['queued', 'waiting_resource'])
 def test_deleted_restored_candidate_cancels_derived_render_and_runtime(chain, status, ops, tmp_path):

@@ -23,6 +23,7 @@ def test_completed_result_recovers_successor_gap(runner):
     assert len([j for j in web.stored_jobs() if j.get('phase') == 'render']) == 1
 
 
+@pytest.mark.integration
 def test_result_rejects_changed_inputs_and_artifacts(runner):
     from exactcut import stage_results
     batch = 'd' * 32; path = workflow.BATCHES / batch; path.mkdir()
@@ -57,6 +58,7 @@ def test_reservations_merge_same_device_and_prevent_oversell(tmp_path, monkeypat
     assert storage.reserve('second', {str(a): 25}, jobs)
 
 
+@pytest.mark.integration
 def test_pending_intent_blocks_upload_and_manual_replay(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
@@ -68,6 +70,7 @@ def test_pending_intent_blocks_upload_and_manual_replay(workspace):
     with pytest.raises(ValueError, match='核实'): workflow.queue_publish(batch['id'], rid, record['output_sha256'])
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('phase', ['upload', 'poll'])
 def test_ambiguous_delivery_is_unverified_and_never_replayed(workspace, phase):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
@@ -125,6 +128,7 @@ def test_reservations_rebuild_admission_and_release_launch_failure(runner, monke
     assert not read_json(web.JOBS.parent / 'reservations.json')['jobs']
 
 
+@pytest.mark.integration
 def test_pending_intent_after_process_death_becomes_unverified(workspace, monkeypatch):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
@@ -150,6 +154,7 @@ def test_require_space_does_not_charge_own_reservation_twice(tmp_path, monkeypat
     storage.require_space(tmp_path, 40)
 
 
+@pytest.mark.integration
 def test_unverified_upload_keeps_returned_receipt(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
@@ -173,6 +178,7 @@ def test_post_upload_remote_readback_checks_known_contract_and_keeps_id():
     assert receipts[-1]['feishu_record_id'] == 'known-record'
 
 
+@pytest.mark.integration
 def test_guarded_oss_checks_remote_sha_after_write(tmp_path):
     from exactcut import publish
     video = tmp_path / '123456_fbbm_1_20261009.mp4'; video.write_bytes(b'fixture')
@@ -184,6 +190,7 @@ def test_guarded_oss_checks_remote_sha_after_write(tmp_path):
     bucket.put_object_from_file.assert_called_once(); bucket.head_object.assert_called_once_with('key')
 
 
+@pytest.mark.integration
 def test_legacy_publish_uses_same_delivery_insurance(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
@@ -298,6 +305,7 @@ def sync_fixture(workspace, monkeypatch):
     return batch['id'], rid, path, cf, remote
 
 
+@pytest.mark.integration
 def test_missing_remote_material_cannot_cause_ingest(workspace, monkeypatch):
     batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch)
     assert workflow.poll(batch, rid) == 0
@@ -307,6 +315,7 @@ def test_missing_remote_material_cannot_cause_ingest(workspace, monkeypatch):
     assert read_json(path / 'publications.json')[rid]['status'] == 'fbbm_queued'
 
 
+@pytest.mark.integration
 def test_observed_material_cannot_change_on_later_poll(workspace, monkeypatch):
     batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch)
     remote.update({'状态': '同步中', 'ADS素材ID': '1'})
@@ -317,6 +326,7 @@ def test_observed_material_cannot_change_on_later_poll(workspace, monkeypatch):
     cf.assert_not_called()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('missing', ['ADS素材ID', '视频ID', '状态'])
 def test_incomplete_completion_never_marks_ready(workspace, monkeypatch, missing):
     batch, rid, path, cf, remote = sync_fixture(workspace, monkeypatch)
@@ -327,6 +337,7 @@ def test_incomplete_completion_never_marks_ready(workspace, monkeypatch, missing
     cf.assert_not_called()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('status,expected,code', [
     ('同步中', 'fbbm_queued', 0), ('失败', 'publish_failed', 2), ('已完成', 'fbbm_ready', 0),
 ])
@@ -354,6 +365,7 @@ def test_finish_delivery_preserves_specific_error(runner):
     assert read_json(path / 'publications.json')['R1']['error'] == error
 
 
+@pytest.mark.integration
 def test_oss_preparation_failure_is_retryable_without_feishu_write(workspace):
     from exactcut import publish
     batch = imported(); path, request, video, record = complete_asset(batch)

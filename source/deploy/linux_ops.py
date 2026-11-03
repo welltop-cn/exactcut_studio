@@ -676,10 +676,14 @@ def build(root, repo, version):
         test_image = 'exactcut-validation:' + version.lower()
         # BuildKit treats a bare sha256 ID in FROM as a Docker Hub repository.
         # Use the local tag only for the validation build, then recheck its ID.
+        # The runtime image carries only requirements.lock.txt; test tools (pytest, xdist)
+        # are added to this throwaway validation image from requirements-dev.lock.txt.
         dockerfile = (f'FROM {image}\nRUN apt-get update && apt-get install -y --no-install-recommends git nodejs '
-                      '&& rm -rf /var/lib/apt/lists/*\n')
+                      '&& rm -rf /var/lib/apt/lists/*\n'
+                      'COPY source/requirements.lock.txt source/requirements-dev.lock.txt /tmp/exactcut-deps/\n'
+                      'RUN pip install --no-cache-dir -r /tmp/exactcut-deps/requirements-dev.lock.txt\n')
         with (folder / 'test-image.log').open('w') as log:
-            run('docker', 'build', '-t', test_image, '-', input=dockerfile, text=True,
+            run('docker', 'build', '-t', test_image, '-f', '-', source, input=dockerfile, text=True,
                 stdout=log, stderr=subprocess.STDOUT)
         if Docker().inspect_image(image) != (image_id, commit):
             raise RuntimeError('测试镜像构建期间运行镜像被替换')

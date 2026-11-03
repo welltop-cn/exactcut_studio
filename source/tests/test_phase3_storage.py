@@ -24,6 +24,7 @@ def protected_files(root):
     return {p:(p.read_bytes(),p.stat().st_ino,p.stat().st_mtime_ns) for p in files}
 
 
+@pytest.mark.integration
 def test_cleanup_skips_live_cache_and_never_touches_original_output_or_approval(tmp_path):
     original=protected_files(tmp_path)
     expired=cache(tmp_path,age=9*86400);active=cache(tmp_path,key='b',age=9*86400)
@@ -36,6 +37,7 @@ def test_cleanup_skips_live_cache_and_never_touches_original_output_or_approval(
     assert {p:(p.read_bytes(),p.stat().st_ino,p.stat().st_mtime_ns) for p in original}==original
 
 
+@pytest.mark.integration
 def test_quota_removes_oldest_and_manual_preview_rejects_changed_inventory(tmp_path,monkeypatch):
     old=cache(tmp_path,age=60);new=cache(tmp_path,key='b')
     from exactcut.util import load_config
@@ -50,6 +52,7 @@ def test_quota_removes_oldest_and_manual_preview_rejects_changed_inventory(tmp_p
     assert storage.cleanup(tmp_path,token=storage.report(tmp_path)['cleanup_token'])['removed']==1
 
 
+@pytest.mark.integration
 def test_symlinked_project_cache_or_metadata_is_excluded(tmp_path):
     outside=tmp_path/'outside';outside.mkdir();p=outside/('a'*64+'.mp4');p.write_bytes(b'keep')
     project=tmp_path/'projects/123456';project.mkdir(parents=True)
@@ -72,6 +75,7 @@ def test_low_space_fails_before_render_or_ai_and_handles_distinct_filesystems(tm
     assert len(checked) == 1 and checked[0][1] == 2 * expected  # All paths share this test's filesystem.
 
 
+@pytest.mark.integration
 def test_storage_api_requires_auth_admin_csrf_and_matching_cleanup_preview(fixture,tmp_path):
     p=cache(tmp_path);app=serve()
     try:

@@ -108,6 +108,7 @@ def test_finish_prefetch_does_not_interrupt_a_confirmed_queued_render(console):
     assert w.runtime(path)['status'] == 'queued'
 
 
+@pytest.mark.integration
 def test_queued_render_reports_prefetch_bytes_without_changing_durable_runtime(console):
     from exactcut import source_prefetch
     from exactcut.util import write_json_atomic
@@ -229,6 +230,7 @@ def test_clearing_drama_cancels_queued_downloads_without_changing_draft(console,
     assert result['episodes'][0]['status'] == 'queued'
 
 
+@pytest.mark.integration
 def test_real_cache_download_is_reused_and_source_duration_is_returned(console, monkeypatch):
     from exactcut import source_prefetch
     monkeypatch.setattr(cache, '_fetch_argv', lambda: ['fixture'])
@@ -286,6 +288,7 @@ def test_recovery_uses_prefetch_result_without_changing_draft_state(console):
     assert w.runtime(w.folder(job['batch_id']))['status'] == 'draft'
 
 
+@pytest.mark.integration
 def test_actual_worker_downloads_fixture_and_preserves_editable_draft(console, monkeypatch, tmp_path):
     import os
     import sys

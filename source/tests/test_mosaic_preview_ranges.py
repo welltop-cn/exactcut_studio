@@ -1,4 +1,5 @@
 """Long fixed and separated tracked intervals retain their existing preview range."""
+import pytest
 from exactcut import cutting,workflow,mosaic_session as sessions,mosaic_render as render,mosaic_tracking as tracking
 from exactcut.util import read_json,write_json_atomic,file_sha256
 from test_cutting import make_video,frame_numbers
@@ -6,6 +7,8 @@ from test_cutting_api import ready
 from test_phase2_preview_api import fixture
 from test_mosaic_interactive_admission import enable_models,terminal
 from test_mosaic_render import make_track
+
+pytestmark = pytest.mark.integration
 
 
 def long_session(ready,tmp_path,monkeypatch):

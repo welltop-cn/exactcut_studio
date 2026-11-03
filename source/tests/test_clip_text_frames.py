@@ -151,6 +151,7 @@ def test_http_requires_auth_csrf_and_passes_explicit_format(app, monkeypatch):
     assert call(app, 'POST', '/api/clip-text', {**data, 'time_format': 'unknown'})[0] == 400
 
 
+@pytest.mark.integration
 def test_model_paste_saves_prepares_and_confirms_actual_source_frame_boundaries(app, monkeypatch):
     from copy import deepcopy
     import uuid
@@ -183,6 +184,7 @@ def test_model_paste_saves_prepares_and_confirms_actual_source_frame_boundaries(
     assert 'start_f' not in json.dumps(event['manifest'])
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('field', ['start_m', 'start_s', 'start_f', 'end_m', 'end_s', 'end_f'])
 def test_source_frame_confirmation_requires_every_explicit_time_field(app, monkeypatch, field):
     mock_frames(monkeypatch, [frame(episode=1, start_f=19, end_s=1, end_f=12)])

@@ -3,6 +3,8 @@ import pytest
 from test_cutting_ui import editor as cut_editor, select as select_cut
 from test_mosaic_ui import editor as mosaic_editor, open_editor, confirm_region
 
+pytestmark = pytest.mark.ui
+
 
 @pytest.fixture(params=['cut', 'mosaic'])
 def playback(request):

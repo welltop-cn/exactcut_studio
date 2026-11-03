@@ -101,6 +101,7 @@ def test_late_timeout_callback_after_close_is_safe():
     read.expire()  # Timer.cancel can race with an already entering callback.
 
 
+@pytest.mark.integration
 def test_transient_source_stat_defers_fingerprint_instead_of_failing(tmp_path, monkeypatch):
     source = tmp_path / 'source.mp4'; source.write_bytes(b'original')
     monkeypatch.setattr(evidence, 'source_paths', lambda *args: {'01': source})

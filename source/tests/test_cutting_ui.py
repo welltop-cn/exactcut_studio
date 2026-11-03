@@ -3,6 +3,9 @@ import re
 from pathlib import Path
 
 import pytest
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
@@ -10,7 +13,7 @@ def editor():
     playwright = pytest.importorskip('playwright.sync_api')
     root = Path(__file__).parents[1] / 'exactcut/web'
     html = re.sub(r'<script src="[^"]+"></script>', '', (root/'index.html').read_text())
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page(viewport={'width': 1440, 'height': 900})
         page.set_default_timeout(2500)

@@ -2,6 +2,8 @@
 import pytest
 from test_mosaic_ui import editor, open_auto
 
+pytestmark = pytest.mark.ui
+
 
 def saved_targets(page):
     return page.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3')))).targets")

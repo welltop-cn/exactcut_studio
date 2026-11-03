@@ -1,4 +1,5 @@
 import json
+import pytest
 from pathlib import Path
 
 from PIL import Image
@@ -24,6 +25,7 @@ def draft():
     }
 
 
+@pytest.mark.integration
 def test_switches_default_off_and_do_not_change_an_existing_fingerprint(tmp_path, monkeypatch):
     manifest, errors = validate_draft(draft(), '')
     assert errors == []
@@ -61,6 +63,7 @@ def test_title_and_logo_switches_are_independent(tmp_path):
     assert manifest.brand_overlay.logo == 'loreker'
 
 
+@pytest.mark.integration
 def test_enabled_brand_changes_the_fingerprint(tmp_path, monkeypatch):
     episode = tmp_path / 'EP1.mp4'
     episode.write_bytes(b'episode')
@@ -95,6 +98,7 @@ def test_png_puts_the_title_at_the_top_left_and_the_logo_at_the_bottom(tmp_path)
         assert box[0] < 50 and box[1] < 60 and box[3] < 220 and box[2] < 800
 
 
+@pytest.mark.integration
 def test_brand_stays_on_the_plot_and_off_the_ending(tmp_path):
     render_config = {**load_config()['render'], 'width': 108, 'height': 192, 'preset': 'ultrafast', 'crf': 28}
     source, plot, ending, output = (tmp_path / name for name in ('source.mp4', 'plot.mp4', 'ending.mp4', 'joined.mp4'))
@@ -130,6 +134,7 @@ def test_editor_shows_two_independent_switches():
     assert '默认关闭' not in source
 
 
+@pytest.mark.integration
 def test_hook_covers_brand_without_moving_and_brand_remains_after_hook(tmp_path, monkeypatch):
     from exactcut import renderer
     from exactcut.hook_options import HookOptions

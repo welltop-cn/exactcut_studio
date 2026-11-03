@@ -9,6 +9,8 @@ from exactcut.stage_results import ResourceDeferred
 from test_cutting_api import ready
 from test_phase2_preview_api import fixture
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('operation',['scan','locate','subtitle','safety-images','safety-video'])
 def test_gemini_ignores_exhausted_openai_bucket_and_never_changes_it(ready,tmp_path,monkeypatch,operation):

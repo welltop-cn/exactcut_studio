@@ -62,6 +62,7 @@ def test_batch_status_is_derived_from_all_materials(workspace, states, publicati
     assert w.runtime(path)['status'] == expected
 
 
+@pytest.mark.integration
 def test_ready_material_can_be_approved_while_sibling_renders(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch)
     w.update(path, 'producing', request_parallel=True)
@@ -91,6 +92,7 @@ def two_requests(batch):
     return path, manifest, first['request_id']
 
 
+@pytest.mark.integration
 def test_selected_orchestrator_isolates_sources_results_and_resolved_manifest(workspace, monkeypatch):
     from exactcut import orchestrator as o
     from exactcut.models import BatchManifest
@@ -123,6 +125,7 @@ def test_selected_orchestrator_isolates_sources_results_and_resolved_manifest(wo
     assert len(list((path / 'production').glob('resolved-*.manifest.json'))) == 2
 
 
+@pytest.mark.integration
 def test_render_evidence_and_disk_budget_include_only_selected_request(workspace, monkeypatch):
     from exactcut import stage_results as e, storage
     path, manifest, rid = two_requests(imported())
@@ -162,6 +165,7 @@ def test_batch_executor_observation_does_not_use_finished_fetch_timestamp(worksp
         assert observation(state)['heartbeat_seconds'] is not None
 
 
+@pytest.mark.integration
 def test_upload_progress_ignores_previous_render_completion(workspace):
     from exactcut.progress import observation
     batch = imported(); path, request, video, record = complete_asset(batch)

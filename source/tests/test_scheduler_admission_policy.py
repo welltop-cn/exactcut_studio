@@ -78,6 +78,7 @@ def test_auto_source_fetch_is_admitted_when_ordinary_jobs_exceed_ten(console):
     assert sum(job['action']=='prefetch' for job in jobs())==1
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('action',['start','preview','publish'])
 def test_legacy_batch_submission_and_delivery_ignore_global_ten(ready,tmp_path,monkeypatch,action):
     bid,rid,sha,_=ready
@@ -95,6 +96,7 @@ def test_legacy_batch_submission_and_delivery_ignore_global_ten(ready,tmp_path,m
     finally:server.shutdown();server.server_close()
 
 
+@pytest.mark.integration
 def test_production_profile_runs_three_real_media_tasks_with_other_lanes(runner,tmp_path,monkeypatch):
     profile=read_json(Path(concurrency.__file__).parents[1]/'config/production.json')
     monkeypatch.setattr(concurrency,'load_config',lambda:profile);monkeypatch.setattr(web.subprocess,'Popen',REAL_POPEN)

@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 prepare = ["scenedetect>=0.6.4", "opencv-python>=4.10.0"]
-dev = ["pytest>=8.0.0"]
+dev = ["pytest>=8.0.0", "pytest-xdist>=3.6"]
 
 [project.scripts]
 exactcut = "exactcut.cli:main"
@@ -30,7 +30,14 @@ include = ["exactcut*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+# Default run is the unit layer. Full suite: -m "" ; see tests/conftest.py.
+addopts = "-q --strict-markers -m 'not ui and not integration'"
+markers = [
+  "unit: pure logic; no browser, no ffmpeg/ffprobe, no real media (default layer)",
+  "ui: starts a Playwright browser",
+  "integration: runs ffmpeg/ffprobe or processes real media; run before merging to main or releasing",
+  "flaky_fs: depends on filesystem timestamp granularity; known flaky",
+]
 
 
 [tool.setuptools.package-data]

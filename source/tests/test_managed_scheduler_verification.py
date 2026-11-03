@@ -14,6 +14,8 @@ from test_workflow import workspace
 from test_material_versions import enable_fixture_delivery, token
 from test_managed_verification_retry import pending_verification
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def verification(workspace, monkeypatch):

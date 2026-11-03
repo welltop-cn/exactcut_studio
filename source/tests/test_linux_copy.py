@@ -1,8 +1,10 @@
 from pathlib import Path
+import pytest
 
 from exactcut import material_download as dl
 
 
+@pytest.mark.integration
 def test_place_file_never_uses_macos_clone(tmp_path, monkeypatch):
     calls = []
 

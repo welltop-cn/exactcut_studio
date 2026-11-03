@@ -113,6 +113,7 @@ def test_completed_missing_result_does_not_stick(runner, phase):
     assert workflow.runtime(path)['status'] not in workflow.ACTIVE
 
 
+@pytest.mark.integration
 def test_scheduler_legacy_one_gib_hash_does_not_block_other_user(runner, monkeypatch):
     from exactcut import batch_control
     monkeypatch.setattr(web, 'LOCK', OwnerLock())
@@ -145,6 +146,7 @@ def test_scheduler_legacy_one_gib_hash_does_not_block_other_user(runner, monkeyp
         close_logs(owned); drain_reads()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('phase', ['upload', 'poll'])
 def test_delivery_reserves_approved_final_bytes(workspace, phase, monkeypatch):
     batch = imported(); path, request, video, record = complete_asset(batch)
@@ -160,6 +162,7 @@ def test_delivery_reserves_approved_final_bytes(workspace, phase, monkeypatch):
     assert storage.reserve('second', allocations, jobs)
 
 
+@pytest.mark.integration
 def test_same_disk_render_reserves_single_output_and_temporary_peak(workspace, monkeypatch):
     batch = imported(); path, request, video, record = complete_asset(batch)
     from exactcut.models import BatchManifest
@@ -175,6 +178,8 @@ def test_same_disk_render_reserves_single_output_and_temporary_peak(workspace, m
     assert not storage.reserve('second', allocations, jobs)
 
 
+@pytest.mark.flaky_fs
+@pytest.mark.integration
 def test_fast_result_rejects_same_size_change_with_restored_mtime(runner):
     job, path = result_fixture(runner)
     video = path / 'production/videos/x.mp4'; video.parent.mkdir(parents=True); video.write_bytes(b'original')
@@ -185,6 +190,7 @@ def test_fast_result_rejects_same_size_change_with_restored_mtime(runner):
     assert not stage_results.scheduler_verified(job, web.JOBS, workflow.BATCHES, workflow.ROOT)
 
 
+@pytest.mark.integration
 def test_hash_snapshot_rejects_mutation_during_read(tmp_path, monkeypatch):
     video = tmp_path / 'x.mp4'; video.write_bytes(b'original')
     def mutate(file):
@@ -227,6 +233,7 @@ def test_background_pool_has_no_backlog_and_releases_failed_slots(tmp_path):
         release.set(); drain_reads()
 
 
+@pytest.mark.integration
 def test_dead_owned_child_waiting_for_evidence_releases_render_slot(runner, monkeypatch):
     job, path = result_fixture(runner)
     video = path / 'production/videos/x.mp4'; video.parent.mkdir(parents=True); video.write_bytes(b'fixture')
@@ -246,6 +253,7 @@ def test_dead_owned_child_waiting_for_evidence_releases_render_slot(runner, monk
         release.set(); close_logs(owned); drain_reads()
 
 
+@pytest.mark.integration
 def test_corrupt_persisted_digest_cannot_pass_fast_verification(runner):
     job, path = result_fixture(runner)
     video = path / 'production/videos/x.mp4'; video.parent.mkdir(parents=True); video.write_bytes(b'original')
@@ -255,6 +263,7 @@ def test_corrupt_persisted_digest_cannot_pass_fast_verification(runner):
     assert not stage_results.scheduler_verified(job, web.JOBS, workflow.BATCHES, workflow.ROOT)
 
 
+@pytest.mark.integration
 def test_render_uses_parent_fetch_bound_digest_without_hashing(workspace, monkeypatch):
     batch = imported(); path, request, video, record = complete_asset(batch)
     jobs = workspace / 'jobs'; jobs.mkdir()
@@ -270,6 +279,7 @@ def test_render_uses_parent_fetch_bound_digest_without_hashing(workspace, monkey
     assert stage_results.scheduler_fingerprint(render, workflow.BATCHES, workflow.ROOT, jobs=jobs) == expected
 
 
+@pytest.mark.integration
 def test_pending_evidence_fences_same_batch_but_not_another_batch(runner, monkeypatch):
     job, path = result_fixture(runner)
     video = path / 'production/videos/x.mp4'; video.parent.mkdir(parents=True); video.write_bytes(b'fixture')
@@ -287,6 +297,7 @@ def test_pending_evidence_fences_same_batch_but_not_another_batch(runner, monkey
     finally: release.set(); close_logs(owned); drain_reads()
 
 
+@pytest.mark.integration
 def test_legacy_publish_action_reserves_final_bytes(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch)
     allocations = storage.job_budget({'action': 'publish', 'batch_id': batch['id'], 'request_id': request['request_id']}, workflow.BATCHES, workflow.ROOT)
@@ -308,6 +319,7 @@ def test_legacy_render_budget_probe_is_deferred_without_global_lock(runner, monk
     finally: release.set(); tick.join(5); close_logs(owned); drain_reads()
 
 
+@pytest.mark.integration
 def test_live_crash_window_is_adopted_before_legacy_result_verification(runner, monkeypatch):
     from exactcut import batch_control as control
     job, path = result_fixture(runner)
@@ -323,6 +335,7 @@ def test_live_crash_window_is_adopted_before_legacy_result_verification(runner, 
     assert read_json(web.JOBS / (job['id'] + '.json'))['adopted_after_restart']
 
 
+@pytest.mark.integration
 def test_completed_parent_with_successor_never_rechecks_old_media(runner, monkeypatch):
     job, path = result_fixture(runner, 'fetch')
     result = stage_results.complete(job, web.JOBS, workflow.BATCHES, workflow.ROOT, 0)
@@ -336,6 +349,7 @@ def test_completed_parent_with_successor_never_rechecks_old_media(runner, monkey
     assert not waiting
 
 
+@pytest.mark.integration
 def test_completed_invalid_artifact_has_visible_failure(runner):
     job, path = result_fixture(runner, 'fetch')
     video = path / 'source.mp4'; video.write_bytes(b'original')
@@ -351,6 +365,7 @@ def test_completed_invalid_artifact_has_visible_failure(runner):
     assert workflow.runtime(path)['status'] == 'interrupted'
 
 
+@pytest.mark.integration
 def test_async_render_source_digest_is_bound_to_current_stat(workspace, monkeypatch):
     batch = imported(); path, request, video, record = complete_asset(batch)
     source = workspace / 'source.mp4'; source.write_bytes(b'original')
@@ -373,6 +388,7 @@ def test_async_render_source_digest_is_bound_to_current_stat(workspace, monkeypa
     assert prepare() != expected
 
 
+@pytest.mark.integration
 def test_legacy_validation_mutation_fence_rejects_changed_file(runner, monkeypatch):
     job, path = result_fixture(runner)
     video = path / 'production/videos/x.mp4'; video.parent.mkdir(parents=True); video.write_bytes(b'original')

@@ -98,6 +98,7 @@ def test_approved_preview_requires_matching_text_options_timeline_sources_and_di
     assert display.approved_preview(tmp_path,r,timeline,[]) is None
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(not shutil.which('ffmpeg'),reason='requires ffmpeg')
 def test_hook_only_remake_reuses_checked_base_and_corruption_or_timeline_changes_rebuild(tmp_path,monkeypatch):
     config=load_config()
@@ -127,6 +128,7 @@ def test_hook_only_remake_reuses_checked_base_and_corruption_or_timeline_changes
     assert fourth['expected_duration_ms']==1800
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(not shutil.which('ffmpeg'),reason='requires ffmpeg')
 def test_twenty_second_episode_is_rendered_as_twenty_seconds_and_source_changes_invalidate_cache(tmp_path):
     source=tmp_path/'source/videos/EP1.mp4'
@@ -164,6 +166,7 @@ def test_browser_manual_token_offsets_match_python_after_emoji_newlines_and_punc
         assert clean[token['start']:token['end']]==token['text']
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(not shutil.which('ffmpeg'),reason='requires ffmpeg')
 def test_production_render_uses_approved_preview_without_reanalysing(tmp_path,monkeypatch):
     r=request(mode='manual',position='middle',manual_ranges=[{'start':19,'end':31}],

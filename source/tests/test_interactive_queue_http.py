@@ -6,6 +6,8 @@ from test_phase2_preview_api import fixture,serve,call
 from test_cutting_api import ready
 from test_mosaic_interactive_admission import enable_models
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('operation,role',[('scan','scan'),('locate','scan'),('clip-preview','preview'),('track','preview'),('cuts-scan','scan')])
 def test_full_execution_pool_returns_persisted_queued_receipt(ready,tmp_path,monkeypatch,operation,role):

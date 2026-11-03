@@ -30,6 +30,7 @@ def coarse(*args,**kwargs):
     return {'risk_events':[{'id':str(i),'start_frame':i*5,'end_frame':i*5+5,'category':'风险','evidence_zh':'证据'} for i in range(10)],'warnings':[]}
 
 
+@pytest.mark.integration
 def test_whole_scan_preserves_unlocalized_and_bounds_calls(configured,monkeypatch):
     m=module();bid,sid=setup(configured);calls=[]
     def forty(*args,**kwargs):
@@ -47,6 +48,7 @@ def test_whole_scan_preserves_unlocalized_and_bounds_calls(configured,monkeypatc
     poll(m,bid,sid)
 
 
+@pytest.mark.integration
 def test_http_whole_scan_and_failure(configured,monkeypatch):
     m=module();bid,sid=setup(configured)
     monkeypatch.setattr(cutting_scan,'detect',lambda *a,**k: (_ for _ in ()).throw(RuntimeError('secret')))
@@ -64,6 +66,7 @@ def test_http_whole_scan_and_failure(configured,monkeypatch):
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_scan_failure_records_private_diagnostics_without_provider_body(configured,monkeypatch):
     from exactcut import diagnostics
     m=module();bid,sid=setup(configured);logged=[]
@@ -83,6 +86,7 @@ def test_scan_failure_records_private_diagnostics_without_provider_body(configur
     assert 'private provider response' not in str(result)
 
 
+@pytest.mark.integration
 def test_partial_localization_retains_evidence(configured,monkeypatch):
     m=module();bid,sid=setup(configured);seen=[]
     monkeypatch.setattr(cutting_scan,'detect',coarse)
@@ -97,6 +101,7 @@ def test_partial_localization_retains_evidence(configured,monkeypatch):
     assert job['events'][0]['candidates'] and job['warnings']
 
 
+@pytest.mark.integration
 def test_running_reset_and_global_lease(configured,monkeypatch):
     import threading
     from exactcut import cutting_access, workflow
@@ -125,6 +130,7 @@ def test_running_reset_and_global_lease(configured,monkeypatch):
     with pytest.raises(cutting.CutError):m.state(bid,sid)
 
 
+@pytest.mark.integration
 def test_deadline_preserves_all_events_without_localization(configured,monkeypatch):
     m=module();bid,sid=setup(configured);calls=[]
     monkeypatch.setattr(m,'TIMEOUT',0)
@@ -135,6 +141,7 @@ def test_deadline_preserves_all_events_without_localization(configured,monkeypat
     assert all(e['status']=='needs_review' for e in job['events'])
 
 
+@pytest.mark.integration
 def test_snapshot_modified_before_scan_is_failure(configured,monkeypatch):
     m=module();bid,sid=setup(configured);calls=[]
     (sessions.session_path(bid,sid)/'source.mp4').write_bytes(b'changed')
@@ -152,6 +159,7 @@ def test_expired_region_deadline_never_calls_model(monkeypatch):
     assert not calls
 
 
+@pytest.mark.integration
 def test_stale_generation_cannot_publish(configured,monkeypatch):
     import threading
     m=module();bid,sid=setup(configured);entered=threading.Event();finish=threading.Event()
@@ -184,6 +192,7 @@ def test_expired_coarse_deadline_skips_proxy(tmp_path,monkeypatch):
     assert not calls and closed
 
 
+@pytest.mark.integration
 def test_coarse_visible_before_localization_finishes(configured,monkeypatch):
     import threading
     m=module();bid,sid=setup(configured);entered=threading.Event();finish=threading.Event();configs=[]
@@ -203,6 +212,7 @@ def test_coarse_visible_before_localization_finishes(configured,monkeypatch):
     assert poll(m,bid,sid)['status']=='completed'
 
 
+@pytest.mark.integration
 def test_each_localized_event_is_published_before_next_finishes(configured,monkeypatch):
     import threading
     m=module();bid,sid=setup(configured);entered=threading.Event();finish=threading.Event();calls=[]
@@ -223,6 +233,7 @@ def test_each_localized_event_is_published_before_next_finishes(configured,monke
     poll(m,bid,sid)
 
 
+@pytest.mark.integration
 def test_scan_logs_lifecycle_and_request_context(configured,monkeypatch):
     from exactcut import diagnostics
     m=module();bid,sid=setup(configured);logged=[]

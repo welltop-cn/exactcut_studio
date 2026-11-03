@@ -4,6 +4,7 @@ import subprocess
 from pathlib import Path
 
 import pytest
+from browser_support import shared_playwright
 
 WEB = Path(__file__).parents[1] / 'exactcut/web'
 
@@ -13,7 +14,7 @@ def page():
     html = re.sub(r'<script src="[^"]+"></script>', '', (WEB / 'index.html').read_text())
     js = '\n'.join(line for line in (WEB / 'app.js').read_text().splitlines()
                    if not line.startswith('(async()=>{try{const initial='))
-    with pytest.importorskip('playwright.sync_api').sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.route('**/*', lambda route: route.fulfill(body=html, content_type='text/html'))
@@ -42,6 +43,7 @@ def page():
         browser.close()
 
 
+@pytest.mark.ui
 def test_cached_managed_prefetch_without_runtime_plan_recovers_to_latest(page):
     # material_versions.detail puts plan at top level; batch_response adds prefetch runtime fields.
     result = page.evaluate('''async()=>{
@@ -66,6 +68,7 @@ def test_cached_managed_prefetch_without_runtime_plan_recovers_to_latest(page):
     assert result['calls'] == ['http://fixture.test/api/batches/b/preview-url/RB']
 
 
+@pytest.mark.ui
 def test_cached_render_failure_clears_switch_and_allows_retry(page):
     result = page.evaluate('''async()=>{
       rememberBatch(b);
@@ -83,6 +86,7 @@ def test_cached_render_failure_clears_switch_and_allows_retry(page):
     assert result['calls'] == ['http://fixture.test/api/batches/b/preview-url/RB']
 
 
+@pytest.mark.ui
 def test_old_video_cannot_request_preview_with_new_project_even_with_same_material_id(page):
     result = page.evaluate('''async()=>{
       const video=document.querySelector('video');
@@ -94,6 +98,7 @@ def test_old_video_cannot_request_preview_with_new_project_even_with_same_materi
     assert result == []
 
 
+@pytest.mark.ui
 @pytest.mark.parametrize('plan', [None, {}, {'required': []}, {'required': ['EP1']}])
 def test_prefetch_unknown_episode_or_missing_plan_does_not_break_render(page, plan):
     result = page.evaluate('''plan=>{
@@ -106,6 +111,7 @@ def test_prefetch_unknown_episode_or_missing_plan_does_not_break_render(page, pl
     assert '0/' not in result and '/0' not in result
 
 
+@pytest.mark.integration
 def test_preview_plays_real_video_after_cached_project_switch(page, tmp_path):
     video = tmp_path / 'preview.mp4'
     subprocess.run(['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i',
@@ -127,6 +133,7 @@ def test_preview_plays_real_video_after_cached_project_switch(page, tmp_path):
     assert page.evaluate("document.querySelector('video').error") is None
 
 
+@pytest.mark.ui
 def test_download_link_waits_for_background_oss_copy_then_downloads(page):
     page.evaluate('''() => {
       b.assets[0].original='/api/batches/b/download/RB';
@@ -152,6 +159,7 @@ def test_download_link_waits_for_background_oss_copy_then_downloads(page):
     assert page.locator('.download-status').inner_text() in ('', '正在准备下载，就绪后会自动开始…')
 
 
+@pytest.mark.ui
 def test_download_wait_stops_when_project_switches(page):
     page.evaluate('''() => {
       b.assets[0].original='/api/batches/b/download/RB';

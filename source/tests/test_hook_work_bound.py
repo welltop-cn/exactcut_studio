@@ -5,6 +5,8 @@ from exactcut import renderer
 from exactcut.media import run_checked
 from exactcut.util import load_config
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('end_ms,fade_ms', [(900,400),(917,0),(1500,1000)])
 def test_bounded_overlay_matches_every_frame_and_audio(tmp_path, monkeypatch, end_ms, fade_ms):

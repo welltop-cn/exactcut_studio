@@ -62,6 +62,7 @@ def test_catalog_real_names_and_bounds():
     assert [(r['id'], r['title']) for r in rows] == [('101400', 'Real title'), ('101401', 'Next title')]
 
 
+@pytest.mark.integration
 def test_download_bridge_deduplicates_and_never_overwrites(tmp_path, monkeypatch):
     monkeypatch.setattr('exactcut.material_download.validate_downloaded_video', lambda video: None)
     from exactcut.material_download import mirror_videos

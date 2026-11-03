@@ -30,6 +30,7 @@ def replace(ready,session,job):
     return result
 
 
+@pytest.mark.integration
 def test_replace_changes_all_current_reads_and_keeps_original(ready):
     session,job=rendered(ready);bid,rid,sha,original=ready
     result=replace(ready,session,job)
@@ -56,6 +57,7 @@ def test_replace_changes_all_current_reads_and_keeps_original(ready):
     with pytest.raises(cutting.CutError):cutting.open_session(bid,rid,job['output_sha256'])
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('entry',[
     {'status':'fbbm_ready'}, {'status':'upload_queued'}, {'status':'uploading'},
     {'status':'fbbm_queued'}, {'status':'unverified'},
@@ -71,6 +73,7 @@ def test_delivered_or_ambiguous_has_no_edit_capability(ready,entry):
     assert not next(a for a in w.detail(bid)['assets'] if a['request_id']==rid)['can_edit_video']
 
 
+@pytest.mark.integration
 def test_oss_failure_keeps_old_current_and_retry_works(ready,monkeypatch):
     session,job=rendered(ready);bid,rid,sha,original=ready
     monkeypatch.setattr(preview_oss,'enabled',lambda:True)
@@ -85,6 +88,7 @@ def test_oss_failure_keeps_old_current_and_retry_works(ready,monkeypatch):
     assert replace(ready,session,job)['replacement']['status']=='completed'
 
 
+@pytest.mark.integration
 def test_upload_acceptance_cannot_race_replacement(ready,monkeypatch):
     import threading
     from exactcut import cutting_replace
@@ -104,6 +108,7 @@ def test_upload_acceptance_cannot_race_replacement(ready,monkeypatch):
         time.sleep(.05)
 
 
+@pytest.mark.integration
 def test_managed_replace_keeps_delivery_and_draft_identity(ready):
     bid,rid,sha,original=ready
     mv.enroll(w.folder(bid));before=mv.read(w.folder(bid))
@@ -117,6 +122,7 @@ def test_managed_replace_keeps_delivery_and_draft_identity(ready):
     assert file_sha256(original)==sha
 
 
+@pytest.mark.integration
 def test_actual_upload_pipeline_receives_replacement(ready,monkeypatch):
     from exactcut import publish
     session,job=rendered(ready);bid,rid,sha,original=ready
@@ -133,6 +139,7 @@ def test_actual_upload_pipeline_receives_replacement(ready,monkeypatch):
     assert read_json(w.folder(bid)/'publications.json')[rid]['status']=='fbbm_queued'
 
 
+@pytest.mark.integration
 def test_corrupt_output_never_replaces(ready):
     session,job=rendered(ready);bid,rid,sha,original=ready
     (cutting.session_path(bid,session['id'])/(job['id']+'.mp4')).write_bytes(b'broken')
@@ -140,6 +147,7 @@ def test_corrupt_output_never_replaces(ready):
     assert w.preview_file(bid,rid)[0]==original and file_sha256(original)==sha
 
 
+@pytest.mark.integration
 def test_interrupted_replacement_recovers_before_and_after_commit(ready):
     session,job=rendered(ready);bid,rid,sha,original=ready
     path=cutting.session_path(bid,session['id'])/'session.json'
@@ -150,6 +158,7 @@ def test_interrupted_replacement_recovers_before_and_after_commit(ready):
     assert cutting.get_session(bid,session['id'])['jobs'][-1]['replacement']['status']=='completed'
 
 
+@pytest.mark.integration
 def test_historical_delivery_in_results_also_locks_editing(ready):
     from exactcut import result_store, cutting_access
     bid,rid,sha,_=ready;batch=w.folder(bid)
@@ -160,6 +169,7 @@ def test_historical_delivery_in_results_also_locks_editing(ready):
     with pytest.raises(cutting.CutError):cutting.open_session(bid,rid,sha)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('control',['paused','archived'])
 def test_managed_control_blocks_cutting(ready,control):
     from exactcut import cutting_access
@@ -171,6 +181,7 @@ def test_managed_control_blocks_cutting(ready,control):
     with pytest.raises(ValueError):cutting.open_session(bid,rid,sha)
 
 
+@pytest.mark.integration
 def test_managed_replacement_upload_uses_isolated_new_master(ready,monkeypatch):
     import uuid
     from exactcut import material_workers as worker,publish
@@ -194,6 +205,7 @@ def test_managed_replacement_upload_uses_isolated_new_master(ready,monkeypatch):
     assert file_sha256(original)==sha
 
 
+@pytest.mark.integration
 def test_failure_before_delivery_intent_remains_editable(ready,monkeypatch):
     from exactcut import cutting_access
     bid,rid,sha,_=ready;batch=w.folder(bid)
@@ -233,6 +245,7 @@ def test_lock_file_closes_stream_on_other_flock_errors(tmp_path,monkeypatch):
     assert stream.closed
 
 
+@pytest.mark.integration
 def test_discard_keeps_original_and_invalidates_recipe_and_scan(ready):
     from exactcut import cutting_scan,cutting_replace
     from test_cutting_api import call,serve
@@ -254,6 +267,7 @@ def test_discard_keeps_original_and_invalidates_recipe_and_scan(ready):
     assert new_job['id']!=job['id'] and not new_job.get('discarded')
 
 
+@pytest.mark.integration
 def test_discard_rejects_live_generation(ready):
     session,job=rendered(ready);bid=ready[0]
     path=cutting.session_path(bid,session['id'])

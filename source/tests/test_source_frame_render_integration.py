@@ -13,6 +13,8 @@ from test_source_frames import source
 from test_web_base_path import app
 from test_source_frame_timecode import frame_clip
 
+pytestmark = pytest.mark.integration
+
 
 def run(*args):
     return subprocess.run(['ffmpeg', '-v', 'error', *args], check=True, capture_output=True).stdout

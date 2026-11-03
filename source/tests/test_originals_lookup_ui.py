@@ -1,4 +1,7 @@
 from test_clip_text_ui import page
+import pytest
+
+pytestmark = pytest.mark.ui
 
 
 def pending_lookup(page):

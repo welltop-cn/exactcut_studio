@@ -23,6 +23,7 @@ def isolated_sources(tmp_path, monkeypatch):
     return directory
 
 
+@pytest.mark.integration
 def test_ready_episode_returns_while_render_holds_shared_lock(isolated_sources):
     video = isolated_sources / 'EP1.mp4'
     video.write_bytes(b'validated episode')
@@ -36,6 +37,7 @@ def test_ready_episode_returns_while_render_holds_shared_lock(isolated_sources):
             assert found == {'EP1': video}
 
 
+@pytest.mark.integration
 def test_episode_evicted_during_unlocked_check_is_downloaded_under_lock(isolated_sources, monkeypatch):
     video = isolated_sources / 'EP1.mp4'
     video.write_bytes(b'old episode')
@@ -124,6 +126,7 @@ def base_render(tmp_path, monkeypatch):
     return SimpleNamespace(project=project, root=tmp_path, render=render, cuts=cuts, config=config)
 
 
+@pytest.mark.integration
 def test_same_cut_different_hook_overlays_overlap_and_generate_base_once(base_render, monkeypatch):
     first_entered, second_entered, release = Event(), Event(), Event()
 
@@ -151,6 +154,7 @@ def test_same_cut_different_hook_overlays_overlap_and_generate_base_once(base_re
     assert [item['base_cache_reused'] for item in results] == [False, True]
 
 
+@pytest.mark.integration
 def test_frame_sampling_runs_after_base_lock_is_released(base_render, monkeypatch):
     sampled = []
 
@@ -169,6 +173,7 @@ def test_frame_sampling_runs_after_base_lock_is_released(base_render, monkeypatc
     assert sampled == [True]
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('cached', [False, True])
 def test_cleanup_can_evict_base_without_deleting_active_overlay_input(base_render, monkeypatch, cached):
     if cached:
@@ -195,6 +200,7 @@ def test_cleanup_can_evict_base_without_deleting_active_overlay_input(base_rende
     assert len(inputs) == 1 and not inputs[0].exists()
 
 
+@pytest.mark.integration
 def test_encoder_threads_change_reuses_base_cache(base_render):
     base_render.config['media'] = {'encoder_threads': 4}
     first = base_render.render('first')

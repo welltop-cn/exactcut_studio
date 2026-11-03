@@ -1,13 +1,16 @@
 from pathlib import Path
 
 import pytest
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 
 
 def test_unchanged_timing_keeps_dom_focus_and_expanded_details():
     playwright = pytest.importorskip('playwright.sync_api')
     source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
     helpers = '\n'.join(line for line in source.splitlines() if line.startswith(('function refreshClipTiming(', 'function refreshTiming(')))
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page()
@@ -32,7 +35,7 @@ def test_text_timeline_opens_as_editable_clip_fields_without_implicit_draft_chan
     root = Path(__file__).parents[1] / 'exactcut/web'
     html = re.sub(r'<script src="[^"]+"></script>', '', (root / 'index.html').read_text())
     source = '\n'.join(line for line in (root / 'app.js').read_text().splitlines() if not line.startswith('(async()=>{try{const initial='))
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page()
@@ -82,7 +85,7 @@ def test_new_timing_error_opens_previously_collapsed_review(failure):
     helpers = '\n'.join(line for line in source.splitlines() if line.startswith((
         'function refreshClipTiming(', 'function timingTable(', 'function seconds(',
         'function clock(', 'function esc(')))
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page()

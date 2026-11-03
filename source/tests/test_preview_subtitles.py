@@ -81,6 +81,7 @@ def test_balanced_chunks_cover_every_millisecond_without_tiny_tail(duration):
     assert max(length for _,length in parts)-min(length for _,length in parts)<=1
 
 
+@pytest.mark.integration
 def test_sdk_schema_conversion_cannot_change_persistent_task_identity(tmp_path,monkeypatch):
     from copy import deepcopy
     from types import SimpleNamespace
@@ -102,6 +103,7 @@ def test_sdk_schema_conversion_cannot_change_persistent_task_identity(tmp_path,m
         model.SCHEMA.clear();model.SCHEMA.update(original)
 
 
+@pytest.mark.integration
 def test_any_chunk_failure_discards_partial_success(tmp_path, monkeypatch):
     source=tmp_path/'source.mp4';source.write_bytes(b'video')
     cfg=subtitles.settings();cfg['model']='fixture-model'
@@ -118,6 +120,7 @@ def test_any_chunk_failure_discards_partial_success(tmp_path, monkeypatch):
     assert len(calls)==2
 
 
+@pytest.mark.integration
 def test_legacy_delivered_acl_cache_and_immutability(configured, monkeypatch, dispatcher):
     bid,rid,sha,source=configured
     record=read_json(w.folder(bid)/'production/results.json')
@@ -149,6 +152,7 @@ def test_legacy_delivered_acl_cache_and_immutability(configured, monkeypatch, di
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_managed_delivered_uses_current_not_candidate(configured, monkeypatch, dispatcher):
     bid,rid,sha,source=configured
     media.enroll(w.folder(bid))
@@ -165,6 +169,7 @@ def test_managed_delivered_uses_current_not_candidate(configured, monkeypatch, d
     assert error.value.status==409
 
 
+@pytest.mark.integration
 def test_invalid_subtitle_configuration_isolated_from_login_and_existing_ui(configured, monkeypatch):
     bid,rid,sha,_=configured
     def invalid():raise subtitles.SubtitleError('private-invalid-setting',503)
@@ -181,6 +186,7 @@ def test_invalid_subtitle_configuration_isolated_from_login_and_existing_ui(conf
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_extremely_short_video_fails_clearly_without_provider_request(configured,monkeypatch,dispatcher):
     bid,rid,sha,_=configured
     monkeypatch.setattr(subtitles,'ffprobe',lambda _: {'format':{'duration':'0.1'}})
@@ -190,6 +196,7 @@ def test_extremely_short_video_fails_clearly_without_provider_request(configured
     assert report['status']=='failed' and '过短' in report['error'] and not calls
 
 
+@pytest.mark.integration
 def test_duration_limit_message_uses_configured_limit(configured,monkeypatch,dispatcher):
     bid,rid,sha,_=configured
     subtitles.settings()['max_duration_seconds']=1
@@ -199,6 +206,7 @@ def test_duration_limit_message_uses_configured_limit(configured,monkeypatch,dis
     assert report['status']=='failed' and '1 秒' in report['error'] and '300' not in report['error']
 
 
+@pytest.mark.integration
 def test_same_task_reuses_and_source_change_fails(configured, monkeypatch, dispatcher):
     bid,rid,sha,source=configured
     entered,finish=threading.Event(),threading.Event();calls=[]
@@ -234,6 +242,7 @@ def test_same_task_reuses_and_source_change_fails(configured, monkeypatch, dispa
     assert len(calls)==1
 
 
+@pytest.mark.integration
 def test_provider_error_text_never_reaches_the_report(configured, monkeypatch, dispatcher):
     bid,rid,sha,_=configured
     monkeypatch.setattr(model,'recognize',lambda *a: (_ for _ in ()).throw(RuntimeError('private-key-url')))

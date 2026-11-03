@@ -6,7 +6,6 @@ import json
 import os
 from pathlib import Path
 import plistlib
-import socket
 import sqlite3
 import signal
 import subprocess
@@ -92,16 +91,15 @@ def test_maintenance_denies_writes_and_keeps_health_available(tmp_path,monkeypat
 
 def test_second_worker_for_same_data_is_rejected(tmp_path):
     state=tmp_path/'.web-state';state.mkdir();(state/'password').write_text('a'*32)
-    sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+    # Port 0: each server binds its own free port, so parallel workers never collide.
     env=dict(os.environ,EXACTCUT_DATA_ROOT=str(tmp_path),EXACTCUT_ENVIRONMENT='test',
-             EXACTCUT_ALLOW_EXTERNAL_WRITES='0',EXACTCUT_PORT=str(port),EXACTCUT_WORKER_ENABLED='1')
+             EXACTCUT_ALLOW_EXTERNAL_WRITES='0',EXACTCUT_PORT='0',EXACTCUT_WORKER_ENABLED='1')
     first=subprocess.Popen([sys.executable,'-m','exactcut.webserver'],env=env,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
     try:
         for _ in range(60):
             if (state/'accounts.sqlite3').exists():break
             time.sleep(.05)
         assert first.poll() is None
-        env['EXACTCUT_PORT']=str(port+1)
         second=subprocess.run([sys.executable,'-m','exactcut.webserver'],env=env,capture_output=True,text=True,timeout=10)
         assert second.returncode!=0
         assert '已有任务执行器' in second.stderr
@@ -155,6 +153,7 @@ def fingerprints(module,files):
     return {str(p):(module.sha(p),p.stat().st_ino,p.stat().st_mtime_ns) for p in files}
 
 
+@pytest.mark.integration
 def test_engineering_snapshot_excludes_business_data_and_restores_code_history(ops,monkeypatch):
     module,root,_=ops;repo,release=engineering_fixture(module,monkeypatch)
     files=business_fixture(root);before=fingerprints(module,files)
@@ -188,6 +187,7 @@ def test_engineering_snapshot_excludes_business_data_and_restores_code_history(o
     with pytest.raises(RuntimeError,match='verification failed'):module.verify(archive)
 
 
+@pytest.mark.integration
 def test_engineering_backup_does_not_gate_or_wait_for_active_production(ops,monkeypatch):
     module,root,_=ops;engineering_fixture(module,monkeypatch);files=business_fixture(root)
     before=fingerprints(module,files)
@@ -219,6 +219,7 @@ def prepare_target(module):
     return release
 
 
+@pytest.mark.integration
 def test_failed_health_check_restores_deployment_and_preserves_latest_data(ops,monkeypatch):
     module,root,plist=ops;prepare_target(module)
     original=plist.read_bytes();latest=root/'.web-state/latest.json';latest.write_text('{"new_order":true}')
@@ -244,6 +245,7 @@ def test_failed_health_check_restores_deployment_and_preserves_latest_data(ops,m
     assert sum(a[1]=='bootstrap' for a in commands)==2
 
 
+@pytest.mark.integration
 def test_successful_code_rollback_keeps_latest_database_original_and_output(ops,monkeypatch):
     module,root,plist=ops;release=prepare_target(module)
     files=business_fixture(root);before=fingerprints(module,files)

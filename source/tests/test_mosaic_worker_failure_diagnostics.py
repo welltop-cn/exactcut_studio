@@ -5,6 +5,8 @@ import subprocess
 import pytest
 from exactcut import diagnostics,mosaic_tracking as tracking,processing_cancel,storage,cutting
 
+pytestmark = pytest.mark.integration
+
 
 def test_worker_failure_has_diagnostic_even_when_temporary_directory_is_removed(tmp_path,monkeypatch):
     diagnostics.configure(tmp_path)

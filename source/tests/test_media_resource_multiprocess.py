@@ -40,6 +40,7 @@ def test_media_probe_child_retains_identity_until_dead_after_parent_kill(tmp_pat
             except ProcessLookupError:pass
 
 
+@pytest.mark.integration
 def test_source_index_same_video_is_probed_once_across_processes(source,tmp_path):
     _,item,_,_=source;other=workflow.create_blank();log=tmp_path/'probe.log';script=tmp_path/'indexer.py'
     script.write_text("from exactcut import source_frames,workflow\nfrom test_source_prefetch import draft_with\nimport sys,os,time\noriginal=source_frames.media.run_checked\ndef probe(*a,**k):\n fd=os.open(sys.argv[2],os.O_WRONLY|os.O_CREAT|os.O_APPEND,0o600);os.write(fd,b'probe\\n');os.close(fd);time.sleep(.3);return original(*a,**k)\nsource_frames.media.run_checked=probe\nsource_frames.prepare(workflow.folder(sys.argv[1]),draft_with('EP1'),'EP1')\n")
@@ -55,6 +56,7 @@ def test_source_index_same_video_is_probed_once_across_processes(source,tmp_path
             if process.poll() is None:process.kill();process.wait(timeout=3)
 
 
+@pytest.mark.integration
 def test_oss_same_object_has_one_put_across_processes(tmp_path,monkeypatch):
     monkeypatch.setenv('EXACTCUT_DATA_ROOT',str(tmp_path));monkeypatch.setenv('EXACTCUT_ENVIRONMENT','test')
     video=tmp_path/'preview.mp4';video.write_bytes(b'isolated fixture video');script=tmp_path/'uploader.py';log=tmp_path/'put.log'

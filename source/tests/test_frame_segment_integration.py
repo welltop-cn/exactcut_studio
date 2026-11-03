@@ -1,9 +1,12 @@
 """Combined frame-editor and segment-effect contract across feature branches."""
+import pytest
 from copy import deepcopy
 from exactcut import intake,source_frames,workflow as w
 from test_source_frames import source
 from test_web_base_path import app
 from test_source_frame_timecode import draft,frame_clip
+
+pytestmark = pytest.mark.integration
 
 
 def test_frame_confirmation_keeps_caption_and_transition(source):

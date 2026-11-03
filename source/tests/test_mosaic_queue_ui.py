@@ -2,6 +2,8 @@
 from test_mosaic_ui import editor, open_auto
 import pytest
 
+pytestmark = pytest.mark.ui
+
 
 def test_queued_restore_uses_server_parameters_before_enabling_controls(editor):
     editor.evaluate('''() => {

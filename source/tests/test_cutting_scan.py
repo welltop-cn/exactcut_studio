@@ -42,6 +42,7 @@ def configured(ready, tmp_path, monkeypatch):
     return bid,session['id'],source
 
 
+@pytest.mark.integration
 def test_scan_http_lifecycle_cache_recovery_and_acl(configured, monkeypatch):
     bid,sid,source=configured
     started,finish=threading.Event(),threading.Event()
@@ -84,6 +85,7 @@ def test_scan_http_lifecycle_cache_recovery_and_acl(configured, monkeypatch):
         finish.set();app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_detector_preserves_coarse_on_provider_refinement_failure(tmp_path, monkeypatch):
     from exactcut import diagnostics
     logged=[]
@@ -120,6 +122,7 @@ def test_detector_preserves_coarse_on_provider_refinement_failure(tmp_path, monk
     assert '普通亲吻、拥抱不单独标记' in calls[0]['contents'][-1].text
 
 
+@pytest.mark.integration
 def test_scan_disabled(configured, monkeypatch):
     bid,sid,source=configured
     monkeypatch.delenv('EXACTCUT_CUT_SCAN_ENV')
@@ -142,6 +145,7 @@ def test_refinement_tail_never_seeks_beyond_last_frame():
     assert max(stamps)==149966 and all(0<=s<=149966 for s in stamps)
 
 
+@pytest.mark.integration
 def test_scan_rejects_modified_frozen_source(configured, monkeypatch):
     bid,sid,original=configured
     original_bytes=original.read_bytes()
@@ -157,6 +161,7 @@ def test_scan_rejects_modified_frozen_source(configured, monkeypatch):
     assert not called and original.read_bytes()==original_bytes
 
 
+@pytest.mark.integration
 def test_explicit_rescan_bypasses_completed_cache_but_not_running(configured,monkeypatch):
     bid,sid,_=configured
     calls=[];finish=threading.Event()

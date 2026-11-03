@@ -9,6 +9,8 @@ from test_phase2_preview_api import fixture
 from test_mosaic_inference_cache_concurrency import setup
 from test_mosaic_render import make_track
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('complete',[False,True])
 def test_parent_death_retains_key_until_child_exit_and_recovers_verified_work(ready,tmp_path,monkeypatch,complete):

@@ -109,6 +109,7 @@ def test_failed_managed_legacy_candidate_retries_original_ms_in_fresh_child():
     assert not (retry_child / 'source-picker').exists()
 
 
+@pytest.mark.integration
 def test_completed_legacy_asset_reuses_existing_version_and_media_when_adding_new_work():
     # Existing lifecycle helper supplies integrity-checked bytes, not a render fixture.
     item = legacy_project()

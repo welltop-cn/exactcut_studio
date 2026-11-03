@@ -4,6 +4,8 @@ from test_cutting_ui import editor as cut_editor
 from test_mosaic_ui import editor as mosaic_editor, open_auto
 from test_cutting import make_video
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture(params=['cut','mosaic'])
 def cloud_editor(request,tmp_path):

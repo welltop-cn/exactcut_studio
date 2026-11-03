@@ -8,6 +8,6 @@ if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
   exit 2
 fi
 "$PYTHON_BIN" -m venv "$PROJECT_ROOT/.venv"
-"$PROJECT_ROOT/.venv/bin/python" -m pip install -r "$PROJECT_ROOT/requirements.lock.txt"
+"$PROJECT_ROOT/.venv/bin/python" -m pip install -r "$PROJECT_ROOT/requirements-dev.lock.txt"
 "$PROJECT_ROOT/.venv/bin/python" -m pip install --no-deps -e "$PROJECT_ROOT"
 echo "安装完成：$PROJECT_ROOT/bin/exactcut --help"
