@@ -1,9 +1,10 @@
 """Queue admission, immutable editing and cancellation over real HTTP/media."""
+from contextlib import ExitStack
 import shutil
 import threading
 import time
 import pytest
-from exactcut import accounts, workflow, cutting, mosaic_queue as queue, mosaic_render as render
+from exactcut import editor_resources, accounts, workflow, cutting, mosaic_queue as queue, mosaic_render as render
 from exactcut import mosaic_session as sessions, material_versions
 from exactcut.util import read_json, write_json_atomic, file_sha256
 from test_cutting_api import ready, call, prepared, exact_frame
@@ -43,7 +44,9 @@ def test_compute_busy_open_another_submit_restore_and_freeze(ready,managed):
     app=serve();root=f'/api/batches/{bid}/mosaics'
     dispatcher=queue.Dispatcher(.01)
     try:
-        with cutting.lock_file(cutting.lock_root()/'compute.lock'):
+        with ExitStack() as stack:
+            for _ in range(editor_resources.settings()['final_media_tasks']):
+                stack.enter_context(editor_resources.acquire('final_media'))
             dispatcher.start()
             code,a=call(app,'POST',root+'/open',{'request_id':rid,'source_sha256':sha})
             assert code in {200,202};a=prepared(app,root,a)

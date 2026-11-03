@@ -456,7 +456,6 @@ def start_render(batch_id, session_id, ranges, mosaics=None):
             return existing
         if not existing and len(data['jobs']) >= 20:
             raise CutError('本次成片最多生成 20 个剪切方案')
-        compute = lock_file(lock_root()/'compute.lock', resource='compute')
         worker_lease = batch_lock = None
         try:
             worker_lease = lock_file(path/(recipe+'.lock'))
@@ -468,17 +467,16 @@ def start_render(batch_id, session_id, ranges, mosaics=None):
                    'expected_frames': meta['frame_count']-sum(b-a for a, b in ranges)}
             data['jobs'] = [j for j in data['jobs'] if j['id'] != recipe] + [job]
             write_json_atomic(path/'session.json', data)
-            task = threading.Thread(target=_render_job, args=(path, data, job, compute, worker_lease, batch_lock), daemon=True)
+            task = threading.Thread(target=_render_job, args=(path, data, job, worker_lease, batch_lock), daemon=True)
             task.start()
             return job.copy()
         except Exception:
-            compute.close()
             if worker_lease: worker_lease.close()
             if batch_lock: batch_lock.close()
             raise
 
 
-def _render_job(path, data, job, compute, worker_lease, batch_lock):
+def _render_job(path, data, job, worker_lease, batch_lock):
     output = path/(job['id']+'.mp4')
     try:
         if file_sha256(path/'source.mp4') != data['source_sha256']:
@@ -497,7 +495,6 @@ def _render_job(path, data, job, compute, worker_lease, batch_lock):
             write_json_atomic(path/'session.json', latest)
     finally:
         worker_lease.close()
-        compute.close()
         batch_lock.close()
 
 

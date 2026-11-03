@@ -1,6 +1,7 @@
 """Long fixed and separated tracked intervals retain their existing preview range."""
+from contextlib import ExitStack
 import pytest
-from exactcut import cutting,workflow,mosaic_session as sessions,mosaic_render as render,mosaic_tracking as tracking
+from exactcut import editor_resources, cutting,workflow,mosaic_session as sessions,mosaic_render as render,mosaic_tracking as tracking
 from exactcut.util import read_json,write_json_atomic,file_sha256
 from test_cutting import make_video,frame_numbers
 from test_cutting_api import ready
@@ -23,7 +24,9 @@ def test_fixed_twenty_second_preview_is_complete_while_final_resource_is_busy(re
     bid,session,source,sha=long_session(ready,tmp_path,monkeypatch)
     monkeypatch.setattr(tracking,'run_tracker',lambda *a:(_ for _ in ()).throw(AssertionError('fixed must not invoke SAM')))
     target={'start':0,'end':600,'seed_frame':0,'x':5,'y':4,'w':20,'h':10,'motion':'fixed'}
-    with cutting.lock_file(cutting.lock_root()/'compute.lock'):
+    with ExitStack() as stack:
+        for _ in range(editor_resources.settings()['final_media_tasks']):
+            stack.enter_context(editor_resources.acquire('final_media'))
         job=render.start(bid,session['id'],[target],'',effect={'style':'solid'},preview=True)
         path=sessions.session_path(bid,session['id'])/f"render-{job['id']}.json";terminal(path)
         assert read_json(path)['status']=='completed'

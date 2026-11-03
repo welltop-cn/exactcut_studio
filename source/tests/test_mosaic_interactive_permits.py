@@ -1,7 +1,8 @@
 """A final admission cannot revoke an already admitted read-only model task."""
+from contextlib import ExitStack
 import threading
 import pytest
-from exactcut import cutting,cutting_scan,mosaic_scan,mosaic_locate,mosaic_tracking as tracking,mosaic_render as render,mosaic_session as sessions
+from exactcut import editor_resources, cutting,cutting_scan,mosaic_scan,mosaic_locate,mosaic_tracking as tracking,mosaic_render as render,mosaic_session as sessions
 from exactcut.util import read_json,file_sha256
 from test_cutting_api import ready
 from test_phase2_preview_api import fixture
@@ -118,7 +119,9 @@ def test_cancel_intent_survives_interactive_worker_loss(tmp_path,module):
 def test_legacy_cut_preparation_is_independent_of_final_compute(ready):
     from exactcut import cutting
     bid,rid,sha,source=ready
-    with cutting.lock_file(cutting.lock_root()/'compute.lock'):
+    with ExitStack() as stack:
+        for _ in range(editor_resources.settings()['final_media_tasks']):
+            stack.enter_context(editor_resources.acquire('final_media'))
         session=cutting.open_session(bid,rid,sha)
         assert session['metadata']['frame_count']==90
         assert session['source_sha256']==sha
@@ -130,7 +133,9 @@ def test_legacy_cut_scan_does_not_wait_for_final_compute(ready,tmp_path,monkeypa
     def scan(src,meta,cfg,policy,key,progress,**kwargs):
         return {'risk_events':[],'warnings':[]}
     monkeypatch.setattr(cutting_scan,'detect',scan)
-    with cutting.lock_file(cutting.lock_root()/'compute.lock'):
+    with ExitStack() as stack:
+        for _ in range(editor_resources.settings()['final_media_tasks']):
+            stack.enter_context(editor_resources.acquire('final_media'))
         report=cutting_scan.start(bid,session['id'],'standard')
         path=cutting.session_path(bid,session['id'])/f"scan-{report['id']}.json";terminal(path)
         assert read_json(path)['status']=='completed'
