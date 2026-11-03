@@ -17,7 +17,7 @@ const ctx=vm.createContext({
  previewObserver:{disconnect(){}},clearTimeout(){},
  $:id=>nodes[id]||(nodes[id]={hidden:false,textContent:'',querySelectorAll:()=>[video]}),
  document:{querySelectorAll:()=>[video]},window:{confirm:()=>true},
- api:(path,data)=>data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({resolve,reject})),
+ api:(path,data)=>path.endsWith('/hook-previews')?Promise.resolve({jobs:[]}):data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({resolve,reject})),
  renderBatches(){},showPage(name){nodes.page=name},renderEditor(){rendered.push(ctx.current.marker)},
  controls(){},renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
@@ -26,6 +26,7 @@ vm.runInContext(source.split('\n').find(line=>line.startsWith('function remember
 vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
 vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('let openingBatchId='),source.indexOf('function isoDate(')),ctx);
+vm.runInContext(source.slice(source.indexOf('async function restoreHookPreviews('),source.indexOf('async function submitHookPreview(')),ctx);
 const item=marker=>({id:'a',marker,runtime:{status:'draft'},assets:[]});
 (async()=>{
  ctx.dirty=true;ctx.window.confirm=()=>false;
@@ -61,7 +62,7 @@ const nodes={},pending=[],rendered=[];
 const ctx=vm.createContext({dirty:false,selectedId:null,current:null,batchCache:[],archivedView:false,
  assetKeys:'',hookPreviews:new Map(),validationDismissed:false,prefetchTimer:0,previewObserver:null,
  clearTimeout(){},$:id=>nodes[id]||(nodes[id]={querySelectorAll:()=>[]}),window:{confirm:()=>true},
- api:(path,data)=>data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({path,resolve,reject})),
+ api:(path,data)=>path.endsWith('/hook-previews')?Promise.resolve({jobs:[]}):data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({path,resolve,reject})),
  renderBatches(){},showPage(name){nodes.page=name},renderEditor(){rendered.push(ctx.current.id)},
  controls(){},renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
@@ -70,6 +71,7 @@ vm.runInContext(source.split('\n').find(line=>line.startsWith('function remember
 vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
 vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('let openingBatchId='),source.indexOf('function isoDate(')),ctx);
+vm.runInContext(source.slice(source.indexOf('async function restoreHookPreviews('),source.indexOf('async function submitHookPreview(')),ctx);
 const item=(id,revision=1)=>({id,revision,draft:{text:'saved'},runtime:{status:'draft'},assets:[]});
 (async()=>{
  let opening=vm.runInContext("openBatch('a')",ctx);pending[0].resolve(item('a'));await opening;

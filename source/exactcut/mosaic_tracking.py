@@ -3,10 +3,11 @@ import os
 import re
 import subprocess
 import sys
+import time
 import threading
 from pathlib import Path
 from . import cutting, mosaic_session as sessions, mosaic_locate, cutting_access, workflow, storage
-from . import mosaic_effects as effects, processing_cancel
+from . import mosaic_effects as effects, processing_cancel, editor_resources, diagnostics, mosaic_mps
 from .util import load_config, read_json, write_json_atomic, json_sha256, file_sha256, now_iso
 
 
@@ -67,11 +68,28 @@ def state(bid,sid,jid):
     with cutting.lock_file(path.parent/'track-state.lock',blocking=True):
         job=recover(path)
         if not job:raise cutting.CutError('跟踪任务不存在',404)
-        mosaic_locate.current(bid,sid,job)
+        mosaic_locate.current(bid,sid,job,readonly=True)
+        name=job.get('tracking_inference','')
         progress=path.parent/f'track-{jid}'/'progress.json'
-        if job['status']=='running' and progress.is_file():
+        if isinstance(name,str) and re.fullmatch(r'inference-[0-9a-f]{32}(?:-work-[0-9a-f]{32})?',name):progress=path.parent/name/'progress.json'
+        if job['status']=='running' and not job.get('cancel_requested') and job.get('stage')!='composing' and progress.is_file():
             p=read_json(progress)
             job={**job,'progress':f"SAM 2 跟踪 {p['frames_done']} / {p['frames_total']} 帧"}
+        return job
+
+
+def stop(bid,sid,jid,reset_at):
+    session=sessions.read_session(bid,sid);cutting.require_reset(session,reset_at)
+    if not isinstance(jid,str) or not re.fullmatch('[0-9a-f]{32}',jid):raise cutting.CutError('跟踪任务不存在',404)
+    path=sessions.session_path(bid,sid)/f'track-{jid}.json'
+    with cutting.lock_file(path.parent/'track-state.lock',blocking=True):
+        job=recover(path)
+        if not job:raise cutting.CutError('跟踪任务不存在',404)
+        mosaic_locate.current(bid,sid,job,readonly=True)
+        if job['status']=='queued':
+            job.update(status='cancelled',cancel_requested=True,progress='已取消等待中的预览');write_json_atomic(path,job)
+        elif job['status'] in {'running','cancelling'}:
+            job.update(cancel_requested=True,progress='正在停止预览…');write_json_atomic(path,job)
         return job
 
 
@@ -86,7 +104,7 @@ def preview_file(bid,sid,jid):
 def inference_identity(session,target,cfg):
     """Raw SAM masks: change this version only when inference semantics change."""
     geometry={k:target[k] for k in ('start','end','seed_frame','x','y','w','h')}
-    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':geometry,'config':cfg,'inference_engine':1})[:32]
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':geometry,'config':cfg,'inference_engine':1,**mosaic_mps.fingerprint(cfg)})[:32]
 
 
 def legacy_inference_identities(session,geometry,cfg):
@@ -95,69 +113,80 @@ def legacy_inference_identities(session,geometry,cfg):
 
 
 def identity(session,target,cfg,effect=None):
-    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':6,'effect':effects.validate(effect)})[:32]
+    return json_sha256({'source':session['source_sha256'],'reset':session.get('reset_at',''),'target':target,'config':cfg,'engine':6,'effect':effects.validate(effect),**mosaic_mps.fingerprint(cfg)})[:32]
 
 
-def start(bid,sid,target,reset_at,effect=None):
-    effect=effects.validate(effect)
-    session=sessions.read_session(bid,sid)
+def start(bid,sid,target,reset_at,effect=None,*,actor='admin'):
+    effect=effects.validate(effect);session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
         cutting.require_reset(session,reset_at)
         cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
         target=validate_target(session['metadata'],target)
         if target.get('motion')=='fixed':raise cutting.CutError('固定位置请使用片段效果预览')
         if not enabled():raise cutting.CutError('本机 SAM 2 跟踪尚未配置',503)
-        cfg=settings()
-        jid=identity(session,target,cfg,effect)
-        path=sessions.session_path(bid,sid)/f'track-{jid}.json'
+        cfg=settings();jid=identity(session,target,cfg,effect);path=sessions.session_path(bid,sid)/f'track-{jid}.json'
         with cutting.lock_file(path.parent/'track-state.lock',blocking=True):
             previous=recover(path)
-            if previous and (previous['status']=='running' or previous['status']=='completed' and not any(f.get('box') is None for f in previous.get('result',{}).get('frames',[])) and (path.parent/f'track-{jid}'/'preview.mp4').is_file()):return previous
-            leases=[]
-            try:
-                for lock,shared,resource in [(cutting.lock_root()/'compute.lock',False,'compute'),(path.with_suffix('.worker.lock'),False,None),(cutting.lock_root()/f'{bid}.lock',True,None)]:
-                    leases.append(cutting.lock_file(lock,shared=shared,resource=resource))
-                job={'schema_version':1,'id':jid,'status':'running','source_sha256':session['source_sha256'],'reset_at':reset_at,'target':target,'effect':effect,'created_at':now_iso(),'progress':'SAM 2 正在跟踪并生成预览'}
-                write_json_atomic(path,job)
-            except Exception:
-                for lease in reversed(leases):lease.close()
-                raise
-    try:threading.Thread(target=_work,args=(bid,sid,path,job,cfg,leases),daemon=True).start()
-    except Exception:
-        for lease in reversed(leases):lease.close()
-        raise
+            if previous and (previous['status'] in {'queued','running'} or previous['status']=='completed' and not any(f.get('box') is None for f in previous.get('result',{}).get('frames',[])) and (path.parent/f'track-{jid}'/'preview.mp4').is_file()):return previous
+            job={'schema_version':1,'id':jid,'status':'queued','actor':actor,'source_sha256':session['source_sha256'],'reset_at':reset_at,'target':target,'effect':effect,'created_at':now_iso(),'progress':'跟踪预览已接收，等待处理'}
+            from . import interactive_queue
+            interactive_queue.enqueue('track',session,path,job,cfg,state_lock=path.parent/'track-state.lock')
     return job
 
-
+@editor_resources.media_operation
 def run_tracker(source,directory,meta,target,cfg):
     storage.require_space(source.parent,1024**3)
     directory.mkdir(exist_ok=True)
     (directory/'progress.json').unlink(missing_ok=True)
-    request={'source':str(source),'output':str(directory),'metadata':meta,'target':target,'config':cfg}
+    from .media import encoder_limit
+    request={'source':str(source),'output':str(directory),'metadata':meta,'target':target,'config':cfg,'encoder_threads':encoder_limit(),'execution_lease':editor_resources.export_media()}
     write_json_atomic(directory/'request.json',request)
     env=os.environ.copy()
     env['PYTHONPATH']=os.pathsep.join([str(Path(__file__).resolve().parents[1]),*cfg.get('dependency_paths',[])])
     with (directory/'worker.log').open('wb') as log:
         result=processing_cancel.run([sys.executable,'-m','exactcut.mosaic_sam2',str(directory/'request.json')],env=env,stdout=log,stderr=log,timeout=900)
-    if result.returncode:raise cutting.CutError('SAM 2 跟踪失败，原片保留；请检查本机模型运行日志')
+    if result.returncode:
+        try:
+            with (directory/'worker.log').open('rb') as log:
+                log.seek(max(0,log.seek(0,2)-8192));tail=log.read(8192).decode('utf-8',errors='replace')
+        except OSError:tail='模型进程失败，运行日志不可读'
+        diagnostics.event('mosaic.tracker_process_failed',level='error',return_code=result.returncode,
+            source_width=meta['width'],source_height=meta['height'],frame_count=target['end']-target['start'],worker_tail=tail)
+        raise cutting.CutError('SAM 2 跟踪失败，原片保留；请检查本机模型运行日志')
     result=read_json(directory/'result.json')
     checked_frames(target,result.get('frames'),result['width'],result['height'])
     if not cfg.get('masks_only') and not (directory/'preview.mp4').is_file():raise cutting.CutError('跟踪预览未生成')
     return result
 
 
-def _work(bid,sid,path,job,cfg,leases):
+def _work(bid,sid,path,job,cfg,leases,permit=None):
+    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases), editor_resources.encoding():
+        _work_scoped(bid,sid,path,job,cfg,leases,permit)
+
+
+def _work_scoped(bid,sid,path,job,cfg,leases,permit=None):
+    started=time.monotonic()
     def update(**fields):
         with cutting.lock_file(path.parent/'track-state.lock',blocking=True):
             saved=read_json(path);saved.update(fields);write_json_atomic(path,saved)
     try:
-        session=mosaic_locate.current(bid,sid,job);source=path.parent/'source.mp4'
+        session=mosaic_locate.current(bid,sid,job,permit=permit);source=path.parent/'source.mp4'
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败')
-        result=run_tracker(source,path.parent/f"track-{job['id']}",session['metadata'],job['target'],{**cfg,'effect':job.get('effect')})
-        with cutting_access.gate(workflow.folder(bid),session['request_id']):
-            mosaic_locate.current(bid,sid,job)
+        from . import mosaic_inference
+        from .mosaic_sam2 import render_preview
+        directory=path.parent/f"track-{job['id']}"
+        track=mosaic_inference.prepare(path.parent,session,job['target'],cfg,directory,
+            on_tracking=lambda name:update(tracking_inference=name),
+            validate=lambda:mosaic_locate.current(bid,sid,job,permit=permit))
+        update(stage='composing',progress='正在合成单区域预览…')
+        render_preview(source,directory,session['metadata'],job['target'],job.get('effect'),track['directory']/'masks')
+        result={**track['result'],'elapsed_seconds':round(time.monotonic()-started,2)}
+        with cutting_access.gate(workflow.folder(bid),session['request_id'],readonly=permit is not None):
+            mosaic_locate.current(bid,sid,job,permit=permit)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，跟踪结果失效')
             update(status='completed',completed_at=now_iso(),result=result,progress='预览已生成，请逐段检查遮挡效果')
+    except processing_cancel.Cancelled:
+        update(status='cancelled',progress='已停止预览，当前选择已保留')
     except Exception as exc:
         update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '跟踪未完成，请重试；原片保留')
     finally:

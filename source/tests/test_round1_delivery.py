@@ -295,20 +295,32 @@ def test_readonly_mode_survives_delayed_reentry_and_dead_process(api, workspace)
     assert read_json(path / 'publications.json')[rid]['verification_only']['material_id'] == '123'
 
 
-@pytest.mark.parametrize('change', ['arbitrary_ids', 'sha', 'queue_full', 'same_batch', 'token_payload'])
+@pytest.mark.parametrize('change', ['arbitrary_ids', 'sha', 'same_batch', 'token_payload'])
 def test_verification_http_rejects_unsafe_or_conflicting_intake(api, workspace, change):
     batch, path, rid, video, record, entry = uncertain(workspace)
     data = {'request_id': rid, 'sha256': record['output_sha256'], 'submission_token': 'fixture-token-123456'}
     if change == 'arbitrary_ids': data['material_id'] = '999'
     elif change == 'sha': data['sha256'] = 'wrong'
-    elif change == 'queue_full':
-        for index in range(10): web.save({'id': str(index), 'status': 'queued', 'created': index})
     elif change == 'same_batch': web.save({'id': 'a' * 32, 'status': 'queued', 'batch_id': batch['id'], 'action': 'preview'})
     else:
         assert post(api, '/api/batches/' + batch['id'] + '/verify-delivery', data)[0] == 202
         data['sha256'] = 'different'
     code, _ = post(api, '/api/batches/' + batch['id'] + '/verify-delivery', data)
-    assert code == (429 if change == 'queue_full' else 400)
+    assert code==400
+
+
+def test_verification_accepts_beyond_ten_without_losing_source_binding_or_idempotence(api,workspace):
+    batch,path,rid,video,record,entry=uncertain(workspace)
+    original=video.read_bytes()
+    for index in range(10):web.save({'id':str(index),'status':'queued','created':index})
+    data={'request_id':rid,'sha256':record['output_sha256'],'submission_token':'fixture-token-123456'}
+    endpoint='/api/batches/'+batch['id']+'/verify-delivery'
+    assert post(api,endpoint,data)[0]==202
+    jobs=list(web.stored_jobs());assert len(jobs)==11
+    matching=[job for job in jobs if job.get('batch_id')==batch['id'] and job.get('request_id')==rid]
+    assert len(matching)==1 and matching[0]['status']=='queued'
+    assert post(api,endpoint,data)[0] in {200,202}
+    assert len(list(web.stored_jobs()))==11 and video.read_bytes()==original
 
 
 def test_lost_readonly_marker_never_falls_back_to_ordinary_poll(workspace):

@@ -34,7 +34,13 @@ def handle(handler, batch_id, suffix, method):
             if not handler.can_access(batch_id):
                 raise cutting.CutError('项目不存在或无权访问', 404)
             if method == 'POST' and suffix == 'open':
-                return handler.respond(200, cutting.open_session(batch_id, data.get('request_id'), data.get('source_sha256')))
+                from . import editor_preparation
+                value=editor_preparation.submit('cuts',batch_id,data.get('request_id'),data.get('source_sha256'),handler.user['username'])
+                return handler.respond(202 if value.get('status') in {'queued','running'} else 200,value)
+            preparation=re.fullmatch(r'preparation/([0-9a-f]{32})',suffix)
+            if method=='GET' and preparation:
+                from . import editor_preparation
+                return handler.respond(200,editor_preparation.state('cuts',batch_id,preparation[1]))
             if method == 'GET' and suffix.startswith('saved/'):
                 return handler.respond(200, {'versions': cutting.saved_versions(batch_id, unquote(suffix[6:]))})
             scan_route = re.fullmatch(r'([0-9a-f]{32})/scan(?:/(standard|strict))?', suffix)
@@ -43,14 +49,14 @@ def handle(handler, batch_id, suffix, method):
                 sid, policy = scan_route.groups()
                 from . import cutting_access, workflow
                 scan_session = cutting.read_session(batch_id, sid)
-                cutting_access.require_editable(workflow.folder(batch_id), scan_session['request_id'], source_sha=scan_session['source_sha256'])
+                cutting_access.require_editable(workflow.folder(batch_id), scan_session['request_id'], source_sha=scan_session['source_sha256'], readonly=method == 'GET')
                 if method == 'GET' and policy:
                     return handler.respond(200, cutting_scan.state(batch_id, sid, policy))
                 if method == 'POST' and policy is None:
                     with cutting_access.gate(workflow.folder(batch_id), scan_session['request_id']):
                         cutting_access.require_editable(workflow.folder(batch_id), scan_session['request_id'], source_sha=scan_session['source_sha256'])
                         cutting.require_reset(cutting.read_session(batch_id, sid), data.get('reset_at', ''))
-                        return handler.respond(202, cutting_scan.start(batch_id, sid, data.get('policy', 'standard'), force=data.get('force', False)))
+                        return handler.respond(202, cutting_scan.start(batch_id, sid, data.get('policy', 'standard'), force=data.get('force', False), actor=handler.user['username']))
                 raise cutting.CutError('识别入口不存在', 404)
             match = re.fullmatch(r'([0-9a-f]{32})(?:/(source|source-url|frame/[0-9]+|output/[0-9a-f]{32}|render|save|replace|discard))?', suffix)
             if not match:
@@ -70,8 +76,8 @@ def handle(handler, batch_id, suffix, method):
                 if action == 'source':
                     return handler.stream_video(cutting.session_path(batch_id, sid)/'source.mp4')
                 if action.startswith('frame/'):
-                    file = cutting.frame_file(batch_id, sid, int(action[6:]))
-                    return handler.respond(200, file.read_bytes(), 'image/jpeg')
+                    from . import editor_frames
+                    return editor_frames.handle(handler,'cuts',batch_id,sid,int(action[6:]))
                 if action.startswith('output/'):
                     return handler.stream_video(cutting.output_file(batch_id, sid, action[7:]))
             elif action == 'discard':

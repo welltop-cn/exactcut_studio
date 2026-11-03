@@ -232,6 +232,14 @@ def active_records(root):
             occupied = True  # unknown active work must block a service stop
         if occupied:
             active.append(str(subtitle_queue.relative_to(root)))
+    mosaic_queue = state / 'mosaic-queue.json'
+    if mosaic_queue.exists():
+        try:
+            data=read(mosaic_queue)
+            if data.get('schema_version')!=1 or not isinstance(data.get('tasks'),list):raise ValueError('invalid mosaic queue')
+            occupied=any(item['state']=='active' for item in data['tasks'])
+        except (OSError,ValueError,TypeError,KeyError):occupied=True
+        if occupied:active.append(str(mosaic_queue.relative_to(root)))
     return active
 
 

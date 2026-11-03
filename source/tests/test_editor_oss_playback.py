@@ -1,7 +1,7 @@
 """Real Chromium decoding of a synthetic master through the OSS source path."""
 import pytest
 from test_cutting_ui import editor as cut_editor
-from test_mosaic_ui import editor as mosaic_editor, open_editor
+from test_mosaic_ui import editor as mosaic_editor, open_auto
 from test_cutting import make_video
 
 
@@ -26,7 +26,9 @@ def cloud_editor(request,tmp_path):
         return old(url,body);
       };
     }''')
-    if kind=='mosaic':open_editor(page)
+    if kind=='mosaic':
+        open_auto(page)
+        page.locator('#mosaicBatchClose').click()
     else:page.locator('[data-open-cut]').evaluate('(el)=>el.click()')
     page.wait_for_function('kind=>document.getElementById(kind+"Source").readyState>=2',arg=kind)
     return page,kind

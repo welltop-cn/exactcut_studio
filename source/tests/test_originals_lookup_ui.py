@@ -61,3 +61,18 @@ def test_late_dialog_catalog_cannot_replace_new_project_list(page):
     page.evaluate("lookups[1].resolve({drama_id:'101494',episodes:[{episode:'EP1',listed:true,bytes:10}]})")
     page.wait_for_timeout(50)
     assert page.locator('#originalsBox').inner_text() == 'new project'
+
+
+def test_local_catalog_preserves_unknown_listing_status_through_cache_and_dialog(page):
+    pending_lookup(page)
+    page.evaluate("lookups[0].resolve({drama_id:'101494',episodes:[{episode:'EP1',listed:true,bytes:10},{episode:'EP2',listed:false,bytes:20},{episode:'EP3',listed:null,bytes:30}]})")
+    page.wait_for_function("!document.querySelector('#originalsOpen').disabled")
+    assert page.evaluate('originalsLookup.catalog.episodes.map(ep=>ep.listed)') == [True, False, None]
+    assert page.locator('#originalsStatus').inner_text() == '有 3 集原片（EP1–EP3）'
+    page.locator('#originalsOpen').click()
+    rows = page.locator('.original-row')
+    assert rows.count() == 3
+    assert rows.nth(0).locator('.unlisted').count() == 0
+    assert rows.nth(1).locator('.unlisted').inner_text() == '未上架'
+    assert rows.nth(2).locator('.unlisted').count() == 0
+    assert '上架状态未查询' not in page.locator('#originalsBox').inner_text()

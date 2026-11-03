@@ -51,13 +51,21 @@ def graph(meta,effect=None,start=None,end=None):
             '[original][pixel][mask]maskedmerge,format=yuv420p[out]')
 
 
-def layered_graph(meta,appearances):
+def layered_graph(meta,appearances,intervals=None):
     # Each effect samples the original image; later layers win in overlapping regions.
+    # intervals optionally carries the source-frame spans with a mask per layer;
+    # blur only runs there so untouched frames cost nothing.
     count=len(appearances)
+    if intervals is None:intervals=[None]*count
     result='[0:v]format=gbrp,split='+str(count+1)+'[base]'+''.join(f'[source{i}]' for i in range(count))+';'
     previous='base'
-    for i,appearance in enumerate(appearances):
-        operation=transform(meta,appearance)
+    for i,(effect,spans) in enumerate(zip(appearances,intervals)):
+        operation=transform(meta,effect)
+        if spans is not None and effect['style'] in ('blur','soft_blur'):
+            if spans:
+                enable='+'.join(f'gte(n,{start})*lt(n,{end})' for start,end in spans)
+                operation+=f":enable='{enable}'"
+            else:operation='null'
         mask=f'settb=expr={meta["fps_den"]}/{meta["fps_num"]},setpts=N,scale={meta["width"]}:{meta["height"]}:flags=neighbor,format=gbrp'
         result+=f'[source{i}]{operation}[effect{i}];[{i+1}:v]{mask}[mask{i}];'
         result+=f'[{previous}][effect{i}][mask{i}]maskedmerge[layer{i}];'

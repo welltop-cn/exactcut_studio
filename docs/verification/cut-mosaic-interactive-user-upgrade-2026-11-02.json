@@ -1,0 +1,153 @@
+{
+  "status": "passed",
+  "previous_pid": 70585,
+  "pid": 59032,
+  "previous_revision": "1a8d7c0df223e5c49788ebc966a7e5ea1101727d",
+  "revision": "c93dc49047f4c636a445ccd289f472b18c5fbdff",
+  "user_jobs_cancelled": 0,
+  "production_deployment": false,
+  "activity_audit": [],
+  "persistent_files": 334,
+  "persistent_hashes_unchanged_before_login": true,
+  "changed_files": [],
+  "capabilities": {
+    "Rf63c4d459b7b484b9a201f21652eb81c": {
+      "region_recognition": true,
+      "tracking": true,
+      "render_stop": true,
+      "oss_playback": false,
+      "scan_enabled": true
+    },
+    "R79f9b018e23f4a7e9725da45219485d8": {
+      "region_recognition": true,
+      "tracking": true,
+      "render_stop": true,
+      "oss_playback": false,
+      "scan_enabled": true
+    },
+    "R0d6fdddb": {
+      "region_recognition": true,
+      "tracking": true,
+      "render_stop": true,
+      "oss_playback": false,
+      "scan_enabled": true
+    },
+    "Rb4ea94a929654f41ab65b255dc64ece8": {
+      "region_recognition": true,
+      "tracking": true,
+      "render_stop": true,
+      "oss_playback": false,
+      "scan_enabled": true
+    }
+  },
+  "historical_read_audit": [
+    {
+      "id": "4822ce06e1234a63987680480818d7d5",
+      "stored_status": "completed",
+      "http_status": 200,
+      "source_sha_matches": true,
+      "reset_matches": true,
+      "error": null
+    },
+    {
+      "id": "4e084b25e17a4c228200f120361f72df",
+      "stored_status": "cancelled",
+      "http_status": 409,
+      "source_sha_matches": true,
+      "reset_matches": false,
+      "error": "本次编辑已在其他窗口放弃，请关闭后重新打开"
+    }
+  ],
+  "initial_verification_issue": "Historical cancelled task belongs to discarded reset and correctly returns 409; current completed task is 200. All files remained byte-identical.",
+  "source_ranges": [
+    {
+      "session_id": "474c9cfd5c1dfa15c488e6d4e964a85e",
+      "status": 206,
+      "bytes": 64,
+      "content_range": "bytes 0-63/180474730"
+    },
+    {
+      "session_id": "ae55eb2d946f917d6e57623824e93c2c",
+      "status": 206,
+      "bytes": 64,
+      "content_range": "bytes 0-63/160126818"
+    },
+    {
+      "session_id": "ea25056ff53199eb39ed17bf7d7903fc",
+      "status": 206,
+      "bytes": 64,
+      "content_range": "bytes 0-63/165484232"
+    },
+    {
+      "session_id": "bcc85688e7d3543eeb135507f334b8c5",
+      "status": 206,
+      "bytes": 64,
+      "content_range": "bytes 0-63/196968619"
+    }
+  ],
+  "completed_result_range": {
+    "id": "4822ce06e1234a63987680480818d7d5",
+    "status": 206,
+    "bytes": 64
+  },
+  "settings": {
+    "editor_resources": {
+      "preview_tasks": 2,
+      "preview_per_user": 1,
+      "scan_tasks": 2,
+      "scan_per_user": 1,
+      "preprocess_tasks": 2,
+      "preprocess_per_user": 1,
+      "encoder_threads": 2
+    },
+    "concurrency": {
+      "fetch": 1,
+      "render": 1,
+      "upload": 1,
+      "poll": 1,
+      "max_active_children": 1,
+      "enabled": true,
+      "hook_previews": 1,
+      "ai": {
+        "requests_per_minute": 6,
+        "burst": 2
+      }
+    },
+    "mosaic_queue": {
+      "max_active_tasks": 1
+    }
+  },
+  "javascript_errors": [],
+  "blocked_posts": [],
+  "browser_material_entries": 4,
+  "browser_url": "http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5",
+  "login_verified": true,
+  "browser_draft_keys": [],
+  "account_users_before": "884a25771468d1fc38696cbf212ad5d934219c28ff6285eb9be371bf372931a9",
+  "account_users_after": "884a25771468d1fc38696cbf212ad5d934219c28ff6285eb9be371bf372931a9",
+  "persistent_hashes_unchanged_except_auth_session_db": true,
+  "unchanged_files_after_login": 333,
+  "auth_session_db_byte_change_expected": true,
+  "health": {
+    "status": "ok",
+    "release": "development-mosaic-queue-user-c93dc49",
+    "environment": "development",
+    "maintenance": false,
+    "worker_alive": null,
+    "worker_heartbeat_age_seconds": null
+  },
+  "verification_automatic_model_or_generation_posts": 0,
+  "schema_version": 1,
+  "url": "http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5",
+  "normal_restarts": 1,
+  "loaded_code_tree": "/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources/source",
+  "original_data_root_preserved": true,
+  "configuration_changes": [
+    "editor_resources: preview/scan/preprocess=2 global /1 user; encoder2",
+    "mosaic_queue final1",
+    "concurrency explicit prior lanes1/global1/hook1; AI6RPM/burst2"
+  ],
+  "local_trial_only": true,
+  "linux_server_capacity_verified": false,
+  "private_evidence": "source/.dev-state/cut-mosaic-user-trial-20261031/interactive-upgrade-20261102/evidence.json"
+}

@@ -1,0 +1,153 @@
+{
+  "schema_version": 1,
+  "status": "passed_pending_parent_independent_health",
+  "url": "http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5",
+  "pid": 15988,
+  "loaded_revision": "e2cbcc08fd28c1adef4daca0bca503e220481e83",
+  "source_revision": "96c1aa555e35c394178723afd7d65e22c0142597",
+  "initial_pid": 59032,
+  "intermediate_rollback_pid": 14277,
+  "scope": "local18883 only; no production publish or main merge",
+  "idle_checks": {
+    "before_maintenance": {
+      "busy": [],
+      "unreadable": []
+    },
+    "after_maintenance": {
+      "busy": [],
+      "unreadable": []
+    },
+    "user_jobs_cancelled": 0
+  },
+  "preservation": {
+    "persistent_files_before": 336,
+    "all_existing_hashes_equal_after_restart": true,
+    "after_browser_non_auth_hashes_unchanged": true,
+    "users_table_hash_unchanged": true,
+    "rate_bucket_hash_unchanged": true,
+    "old_reports": [
+      {
+        "id": "4822ce06e1234a63987680480818d7d5",
+        "stored_status": "completed",
+        "http_status": 200
+      },
+      {
+        "id": "4e084b25e17a4c228200f120361f72df",
+        "stored_status": "cancelled",
+        "http_status": 409
+      }
+    ],
+    "source_ranges": [
+      {
+        "session_id": "474c9cfd5c1dfa15c488e6d4e964a85e",
+        "status": 206,
+        "bytes": 64
+      },
+      {
+        "session_id": "ae55eb2d946f917d6e57623824e93c2c",
+        "status": 206,
+        "bytes": 64
+      },
+      {
+        "session_id": "ea25056ff53199eb39ed17bf7d7903fc",
+        "status": 206,
+        "bytes": 64
+      },
+      {
+        "session_id": "bcc85688e7d3543eeb135507f334b8c5",
+        "status": 206,
+        "bytes": 64
+      }
+    ],
+    "assets_readable": 4,
+    "old_freeze_decisions": "report and media JSON byte-identical; no confirm/discard/reset performed",
+    "db_restore_performed": false
+  },
+  "health": {
+    "status": "ok",
+    "release": "development-mosaic-queue-user-e2cbcc0",
+    "environment": "development",
+    "maintenance": false,
+    "worker_alive": null,
+    "worker_heartbeat_age_seconds": null
+  },
+  "effective_profile": {
+    "ordinary": {
+      "fetch": 2,
+      "render": 3,
+      "upload": 2,
+      "poll": 4,
+      "max_active_children": 11,
+      "enabled": true
+    },
+    "remaining_openai_budget": {
+      "requests_per_minute": 6,
+      "burst": 1
+    },
+    "interactive_execution": {
+      "preview_tasks": 2,
+      "scan_tasks": 2,
+      "preprocess_tasks": 2,
+      "media_tasks": 5,
+      "final_media_tasks": 1,
+      "frame_tasks": 2,
+      "transfer_tasks": 2,
+      "encoder_threads": 2
+    },
+    "mosaic_final": 1,
+    "subtitles": {
+      "max_active_tasks": 2,
+      "max_queued_tasks": 30
+    },
+    "ffmpeg_threads": 4,
+    "sam_threads": 4
+  },
+  "configuration_statement": "local actual profile equals same-version candidate production business baseline; no online production runtime inspection",
+  "safety": {
+    "ordinary_worker_enabled": false,
+    "external_writes": false,
+    "publishing": false,
+    "material_fetch": false,
+    "tracking_device": "mps",
+    "tracking_and_gemini_enabled": true,
+    "interactive_dispatcher_owned_by_current_pid": true
+  },
+  "static_assets_sha256": {
+    "app.js": "0811a845f6916b0f06211503d991a3b7e53a0e563953837975aed2b25e79bae0",
+    "mosaic.js": "1d372e57e973dac532c3ce025701b4f63621785de8f0a7f82a38a5158432d2a3",
+    "cutting.js": "09989b0f828fca9bb6f50dfeb05687981ff476acedf6815999663b12221ded8a",
+    "editor-busy.js": "eb705993c7d7f285f70b70e132cd17b5164e17cd9c3e032bdf8ec0bb5a3356a5"
+  },
+  "browser": {
+    "login_verified": true,
+    "material_entries": 4,
+    "url": "http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5",
+    "javascript_errors": [],
+    "forbidden_requests": [],
+    "allowed_posts": [
+      "/home/api/login",
+      "/home/api/client-events",
+      "/home/api/client-events",
+      "/home/api/workspace",
+      "/home/api/client-events",
+      "/home/api/client-events",
+      "/home/api/workspace",
+      "/home/api/client-events"
+    ],
+    "independent_context_draft_receipt_keys": [],
+    "automatic_model_or_generation_posts": 0
+  },
+  "first_attempt": {
+    "issue": "static JavaScript verification omitted authentication and received401",
+    "rollback": "normal SIGTERM, exact previous launcher/runtime restored, no DB restore; old PID14277 healthy",
+    "retry": "fresh idle and maintenance checks, authenticated static verification, then successful upgrade"
+  },
+  "private_evidence_directory": "/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue/source/.dev-state/cut-mosaic-user-trial-20261031/resource-upgrade-20261103-005744",
+  "source_tests": {
+    "passed": 2057,
+    "skipped": 1,
+    "existing_warnings": 10,
+    "seconds": 673.17
+  },
+  "unrelated_confirmed_issues": []
+}

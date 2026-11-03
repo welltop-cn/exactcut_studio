@@ -6,7 +6,7 @@ import uuid
 import pytest
 
 from exactcut import material_versions as m, webserver as web, workflow as w, hook_preview
-from test_phase2_preview_api import fixture, serve, call
+from test_phase2_preview_api import fixture, serve, call, finished_hook
 
 
 @pytest.fixture(params=[False, True], ids=["draft", "existing-preview"])
@@ -35,7 +35,8 @@ def test_managed_hook_preview_keeps_authority_unchanged(managed_editor, monkeypa
     before = (path / 'media-state.json').read_bytes()
     status, result = call(app, 'POST', f'/api/batches/{path.name}/hook-preview',
                           {'revision': m.read(path)['revision'], 'index': 0})
-    assert status == 200, result
+    assert status==202,result
+    assert finished_hook(app,path.name,result)['status']=='completed'
     assert (path / 'media-state.json').read_bytes() == before
 
 
@@ -71,7 +72,8 @@ def test_managed_preview_rejects_concurrent_edit(managed_editor, monkeypatch):
             {'revision': state['revision'], 'mutation_id': uuid.uuid4().hex, 'draft': state['draft']})
         assert status == 200, result
         finish.set(); worker.join(3)
-        assert responses[0][0] == 409
+        assert responses[0][0]==202
+        assert finished_hook(app,path.name,responses[0][1])['status']=='superseded'
         assert not (w.ROOT / 'projects/101460/cache/hook-previews' / ('b' * 64 + '.json')).exists()
     finally:
         finish.set(); worker.join(3)
@@ -104,3 +106,6 @@ def test_global_enable_enrolls_new_blank_before_prefetch(managed_editor, monkeyp
     assert status == 201, result
     assert result.get('media_managed') is True
     assert m.read(w.folder(result['id']))['draft'] == result['draft']
+
+
+from interactive_test_support import interactive_dispatcher

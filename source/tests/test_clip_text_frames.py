@@ -118,7 +118,6 @@ def test_mixed_explicit_and_complex_lines_send_whole_text_to_frame_model(monkeyp
 def test_frame_mode_uses_independent_strict_schema_over_existing_transport(monkeypatch):
     monkeypatch.setattr(m, 'require_ai', lambda: None)
     monkeypatch.setattr(m, 'load_env_file', lambda path: None)
-    monkeypatch.setattr(m.ai_rate, 'acquire', lambda: None)
     monkeypatch.setenv('OPENAI_API_KEY', 'test-only')
     monkeypatch.setenv('OPENAI_BASE_URL', 'https://fixture.invalid/v1')
     client = httpx.Client

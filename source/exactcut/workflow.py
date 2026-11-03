@@ -3,7 +3,7 @@ from __future__ import annotations
 import base64
 import copy
 import fcntl
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import json
 import os
 import shutil
@@ -26,7 +26,7 @@ from .preview import make_preview, available_preview, media_path
 from .util import read_json, write_json_atomic, load_config, load_env_file, file_sha256, now_iso
 
 from .runtime import CODE_ROOT, data_root, instance_marker, environment, release_id, maintenance_file, source_root
-from .runtime import project_env_file
+from .runtime import project_env_file, mutation_lock
 
 ROOT = data_root()
 BATCHES = ROOT / '.web-state/batches'
@@ -415,7 +415,7 @@ def ending_image_file(batch_id, request_id):
     return matches[0]
 
 
-def import_excel(data):
+def import_excel(data, *, publication_lock=None):
     payload = base64.b64decode(data.get('content', ''), validate=True)
     name = Path(str(data.get('filename', 'upload.xlsx'))).name
     if not name.lower().endswith('.xlsx') or len(payload) > 10_000_000 or not payload.startswith(b'PK'):
@@ -431,7 +431,12 @@ def import_excel(data):
         source.unlink()
         path.rmdir()
         raise
-    with naming_lock():
+    # HTTP supplies its short publication barrier. Offline callers may already
+    # own that non-reentrant lock (release/recovery); preserve their existing API.
+    with (publication_lock() if publication_lock else nullcontext()), naming_lock():
+        if publication_lock and maintenance_file().exists():
+            source.unlink();path.rmdir()
+            raise ValueError('系统正在发布维护，请稍后重试导入')
         imported = []
         for index, (draft, warnings) in enumerate(groups):
             group_id = batch_id if index == 0 else uuid.uuid4().hex
@@ -594,7 +599,8 @@ def delete_batch(batch_id, confirmation):
     if confirmation != batch_id:
         raise ValueError('请确认永久删除此项目，删除后不可恢复')
     from .cutting import batch_lease
-    with batch_control.LOCK, batch_lease(batch_id, exclusive=True):
+    from .cutting_access import gate
+    with batch_control.LOCK, gate(path), batch_lease(batch_id, exclusive=True):
         if not batch_control.read(path).get('archived'):
             raise ValueError('请先归档项目，再永久删除')
         jobs_dir = ROOT / '.web-state/jobs'

@@ -1,0 +1,190 @@
+{
+  "status": "passed",
+  "complete_workflow_environment": "Local Apple M2 Max / MPS; not Linux CPU-server equivalence",
+  "target_deployment": "CPU server without GPU",
+  "linux_cpu_server_capacity_verified": false,
+  "bounded_cpu_smoke_evidence": "cut-mosaic-interactive-cpu-smoke-2026-11-02.json",
+  "model_mocks": false,
+  "user_18883_touched": false,
+  "ai_budget": {
+    "requests_per_minute": 6,
+    "burst": 2
+  },
+  "a_started_running_at_ns": 1793608908849700000,
+  "b_first_preview_completed_at_ns": 1793608925837675000,
+  "b_queued_at_ns": 1793608928617080000,
+  "a_completed_at": "2026-11-02T08:47:37.925155+00:00",
+  "same_user_c_opened_while_a_running": true,
+  "two_users_preview_playback_and_cancel_retry_passed": true,
+  "legacy_single_track": {
+    "frames": 60,
+    "has_audio": true,
+    "additional_model_calls": 0
+  },
+  "legacy_cuts_scan": {
+    "status": "completed",
+    "actor": "beta",
+    "a_status_at_completion": "running"
+  },
+  "b_complete_output_checks": {
+    "frames": 10,
+    "has_audio": true,
+    "decoded_audio_samples": 73728,
+    "audio_rms": 2041.05,
+    "first_frame_mask_center_rgb": [
+      0,
+      0,
+      0
+    ],
+    "first_frame_outside_rgb": [
+      33,
+      48,
+      70
+    ]
+  },
+  "final_max_active": 1,
+  "original_sha256_unchanged": "2ffa067666b9b1f4d7084403c4da261351b80c43e111900e1ea38858c03ed25b",
+  "javascript_errors": [],
+  "schema_version": 1,
+  "actual_authenticated_interactive_users": 2,
+  "actual_final_jobs": 2,
+  "real_gemini_requests": 7,
+  "gemini_two_user_overlap_seconds": {
+    "video": 4.217477,
+    "region": 3.132402
+  },
+  "sam_observed_mask_generation_overlap_seconds": 1.111557,
+  "b_queued_before_a_completed_seconds": 329.308,
+  "a_running_until_completed_seconds": 349.075,
+  "a_output_metadata": {
+    "fps_num": 30,
+    "fps_den": 1,
+    "frame_count": 6187,
+    "width": 1080,
+    "height": 1920,
+    "has_audio": true
+  },
+  "b_output_metadata": {
+    "fps_num": 6,
+    "fps_den": 1,
+    "frame_count": 10,
+    "width": 160,
+    "height": 96,
+    "has_audio": true
+  },
+  "os_free_percent_min": 48,
+  "mps_transfer_policy": "blocking_v1",
+  "raw_private_evidence": "source/.dev-state/interactive-real-20261102/2a90805a/evidence.json",
+  "test_command": "python3.12 -m pytest -o addopts= -q",
+  "regression": {
+    "passed": 1995,
+    "skipped": 1,
+    "existing_fork_warnings": 10,
+    "seconds": 613.96
+  },
+  "model_work": [
+    {
+      "actor": "alpha",
+      "target_frames": 300,
+      "started_at_ns": 1793608908927384000,
+      "finished_at_ns": 1793609050641628000,
+      "success": true,
+      "nonempty_masks": 300
+    },
+    {
+      "actor": "alpha",
+      "target_frames": 6,
+      "started_at_ns": 1793608918380503000,
+      "finished_at_ns": 1793608923396524000,
+      "success": true,
+      "nonempty_masks": 6
+    },
+    {
+      "actor": "beta",
+      "target_frames": 60,
+      "started_at_ns": 1793608953266707000,
+      "finished_at_ns": 1793608962532427000,
+      "error_type": "Cancelled"
+    },
+    {
+      "actor": "gamma",
+      "target_frames": 60,
+      "started_at_ns": 1793608953320036000,
+      "finished_at_ns": 1793609000853834000,
+      "success": true,
+      "nonempty_masks": 60
+    },
+    {
+      "actor": "beta",
+      "target_frames": 60,
+      "started_at_ns": 1793609003296592000,
+      "finished_at_ns": 1793609048056432000,
+      "success": true,
+      "nonempty_masks": 60
+    }
+  ],
+  "network": [
+    {
+      "actor": "alpha",
+      "kind": "video",
+      "started_at_ns": 1793608909277230000,
+      "real_sdk_call": true,
+      "success": true,
+      "finished_at_ns": 1793608913557738000
+    },
+    {
+      "actor": "alpha",
+      "kind": "region",
+      "started_at_ns": 1793608914230806000,
+      "real_sdk_call": true,
+      "success": true,
+      "finished_at_ns": 1793608917527396000
+    },
+    {
+      "actor": "gamma",
+      "kind": "video",
+      "started_at_ns": 1793608929657452000,
+      "real_sdk_call": true,
+      "success": true,
+      "finished_at_ns": 1793608934880716000
+    },
+    {
+      "actor": "beta",
+      "kind": "video",
+      "started_at_ns": 1793608930663239000,
+      "real_sdk_call": true,
+      "success": true,
+      "finished_at_ns": 1793608934929879000
+    },
+    {
+      "actor": "beta",
+      "kind": "region",
+      "started_at_ns": 1793608949897176000,
+      "real_sdk_call": true,
+      "success": true,
+      "finished_at_ns": 1793608953199079000
+    },
+    {
+      "actor": "gamma",
+      "kind": "region",
+      "started_at_ns": 1793608949928513000,
+      "real_sdk_call": true,
+      "success": true,
+      "finished_at_ns": 1793608953060915000
+    },
+    {
+      "actor": null,
+      "kind": "video",
+      "started_at_ns": 1793609052098009000,
+      "real_sdk_call": true,
+      "success": true,
+      "finished_at_ns": 1793609055971016000
+    }
+  ],
+  "limitations": [
+    "Two authenticated interactive users were verified; this is not an unlimited-user promise.",
+    "The three concurrent application workloads used one 300-frame final and two 60-frame previews; maximum-size capacity is recorded separately.",
+    "MPS allocator/RSS counters cannot be added to derive physical unified-memory usage.",
+    "Synthetic mask checks do not certify tracking quality for arbitrary real material."
+  ]
+}

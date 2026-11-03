@@ -6,7 +6,7 @@ from exactcut import cutting, cutting_scan as scan
 from exactcut import mosaic_session as sessions
 from exactcut.util import write_json_atomic
 from test_cutting_scan import configured
-from test_cutting_api import ready, call
+from test_cutting_api import ready, call, prepared, exact_frame
 from test_phase2_preview_api import fixture, serve
 
 
@@ -18,7 +18,7 @@ def module():
 def poll(m,bid,sid,jid):
     for _ in range(150):
         job=m.state(bid,sid,jid)
-        if job['status']!='running':return job
+        if job['status'] not in {'queued','running','cancelling'}:return job
         time.sleep(.02)
     pytest.fail('worker did not complete')
 
@@ -84,7 +84,6 @@ def test_provider_single_jpeg_refusal(monkeypatch):
     requests=[];closed=[]
     def ask(**kwargs):requests.append(kwargs);return SimpleNamespace(text=None)
     monkeypatch.setattr(genai,'Client',lambda **kwargs:SimpleNamespace(models=SimpleNamespace(generate_content=ask),close=lambda:closed.append(True)))
-    monkeypatch.setattr(scan.ai_rate,'acquire',lambda:None)
     with pytest.raises(cutting.CutError):m.detect(b'jpeg',{'width':100,'height':100},{'model':'fixture','request_timeout_ms':1000},'fixture-key')
     assert len(requests)==1 and closed
     names=[name for name,_ in logged]
@@ -99,10 +98,11 @@ def test_snapshot_open_and_frame_are_independent(configured):
     app=serve();base=f'/api/batches/{bid}/mosaics'
     try:
         code,session=call(app,'POST',base+'/open',{'request_id':cut['request_id'],'source_sha256':cut['source_sha256']})
-        assert code==200 and 'jobs' not in session
+        assert code in {200,202}
+        session=prepared(app,base,session);assert 'jobs' not in session
         snapshot=sessions.session_path(bid,session['id'])/'source.mp4'
         assert snapshot.read_bytes()==source.read_bytes() and snapshot!=cutting.session_path(bid,cut_sid)/'source.mp4'
-        code,jpeg=call(app,'GET',base+'/'+session['id']+'/frame/15')
+        code,jpeg=exact_frame(app,base+'/'+session['id']+'/frame/15')
         assert code==200 and jpeg.startswith(b'\xff\xd8')
         assert call(app,'GET',base+'/'+session['id']+'/frame/90')[0]==400
         other=__import__('exactcut.workflow',fromlist=['create_blank']).create_blank()
@@ -122,7 +122,7 @@ def test_running_job_does_not_hold_edit_gate_and_rejects_stale_result(configured
     try:
         assert entered.wait(2)
         assert m.start(bid,sid,0,20,5,'')['id']==job['id']
-        with pytest.raises(cutting.CutError):m.start(bid,sid,0,20,6,'')
+        other=m.start(bid,sid,0,20,6,'');assert other['id']!=job['id']
         with pytest.raises(cutting.CutError):
             with cutting.batch_lease(bid,exclusive=True):pytest.fail('active worker must retain source')
         with cutting_access.gate(workflow.folder(bid),session['request_id']):
@@ -131,7 +131,7 @@ def test_running_job_does_not_hold_edit_gate_and_rejects_stale_result(configured
     path=sessions.session_path(bid,sid)/f"locate-{job['id']}.json"
     for _ in range(150):
         data=json.loads(path.read_text())
-        if data['status']!='running':break
+        if data['status'] not in {'queued','running','cancelling'}:break
         time.sleep(.02)
     assert data['status']=='failed' and data['candidates']==[]
     with pytest.raises(cutting.CutError):m.state(bid,sid,job['id'])
@@ -155,8 +155,28 @@ def test_sdk_normalization_does_not_change_shared_schema(monkeypatch):
         _transformers.t_schema(SimpleNamespace(vertexai=False),kwargs['config'].response_schema)
         return SimpleNamespace(text='{"candidates":[]}')
     monkeypatch.setattr(genai,'Client',lambda **kwargs:SimpleNamespace(models=SimpleNamespace(generate_content=ask),close=lambda:None))
-    monkeypatch.setattr(scan.ai_rate,'acquire',lambda:None)
     try:
         assert m.detect(b'jpeg',{'width':100,'height':100},{'model':'fixture','request_timeout_ms':1000},'fixture')==[]
         assert m.SCHEMA==before
     finally:m.SCHEMA.clear();m.SCHEMA.update(before)
+
+from interactive_test_support import interactive_dispatcher
+
+
+def test_locate_waits_for_busy_frame_cache_instead_of_failing(configured,monkeypatch):
+    import time
+    from exactcut.util import json_sha256
+    m=module();bid,cut_sid,_=configured
+    cut=cutting.read_session(bid,cut_sid);sid=sessions.open_session(bid,cut['request_id'],cut['source_sha256'])['id']
+    monkeypatch.setattr(m,'detect',lambda *args:[])
+    cache=sessions.session_path(bid,sid)/'frames'
+    hold=cutting.lock_file(cutting.lock_root()/('frame-'+json_sha256(str(cache.resolve()))+'.lock'))
+    try:
+        job=m.start(bid,sid,0,20,5,'')
+        time.sleep(2.4)
+        waiting=m.state(bid,sid,job['id'])
+        assert waiting['status'] in {'queued','running'},waiting
+        assert waiting['status']!='failed'
+    finally:
+        hold.close()
+    assert poll(m,bid,sid,job['id'])['status']=='completed'

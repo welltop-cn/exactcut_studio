@@ -51,6 +51,14 @@ def call(app,method,path,data=None,auth=True,csrf=True):
         conn.close()
 
 
+def finished_hook(app,bid,job):
+    deadline=time.monotonic()+5
+    while job['status'] in {'queued','running','cancelling'}:
+        assert time.monotonic()<deadline;time.sleep(.01)
+        code,job=call(app,'GET',f"/api/batches/{bid}/hook-previews/{job['id']}");assert code==200
+    return job
+
+
 def test_preview_requires_auth_csrf_access_and_matching_revision(fixture,monkeypatch):
     monkeypatch.setattr(hook_preview,'compute',lambda *a:pytest.fail('invalid requests must not call AI'))
     app=serve()
@@ -87,7 +95,8 @@ def test_long_preview_does_not_block_reads_or_saves_and_rejects_stale_result(fix
         assert call(app,'POST',path+'/save',{'revision':fixture['revision'],'draft':draft})[0]==200
         assert time.monotonic()-start<1
         finish.set();task.join(3)
-        assert response[0][0]==409
+        assert response[0][0]==202
+        assert finished_hook(app,fixture['id'],response[0][1])['status']=='superseded'
         assert not (tmp_path/'projects/101460/cache/hook-previews'/('a'*64+'.json')).exists()
     finally:
         finish.set();task.join(3);app.shutdown();app.server_close()
@@ -104,8 +113,12 @@ def test_preview_saves_complete_cache_only_after_successful_recheck(fixture,tmp_
     app=serve()
     try:
         status,result=call(app,'POST',f"/api/batches/{fixture['id']}/hook-preview",{'revision':fixture['revision'],'index':0})
-        assert status==200 and result['preview_key']=='a'*64
+        assert status==202
+        job=finished_hook(app,fixture['id'],result)
+        assert job['status']=='completed' and job['result']['preview_key']=='a'*64
         assert (tmp_path/'projects/101460/cache/hook-previews'/('a'*64+'.json')).is_file()
         assert w.read_json(tmp_path/'projects/101460/cache/hook-emphasis'/('b'*64+'.json'))=={'test':'complete'}
     finally:
         app.shutdown();app.server_close()
+
+from interactive_test_support import interactive_dispatcher

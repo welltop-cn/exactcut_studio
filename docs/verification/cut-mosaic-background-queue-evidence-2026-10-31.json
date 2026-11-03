@@ -1,0 +1,119 @@
+{
+  "environment": "development",
+  "url": "http://127.0.0.1:18883/home/",
+  "batch_id": "44856f4afe564766b8cc8ea8d5350a71",
+  "max_active_tasks": 1,
+  "queue_states": [
+    "done",
+    "done",
+    "done"
+  ],
+  "browser": {
+    "base_url": "http://127.0.0.1:18883/home",
+    "batch_id": "44856f4afe564766b8cc8ea8d5350a71",
+    "cases": [
+      "two_materials_editable",
+      "queued_A_locked",
+      "queued_B_admitted_while_A_busy",
+      "reopen_queued_restores_six_frame_deletion",
+      "queued_cancel_unlocks_only_after_ack",
+      "browser_closed_B_still_queued",
+      "B_completed_with_browser_closed",
+      "relogin_completed_result_and_confirmation_available",
+      "originals_unchanged_before_confirmation",
+      "discard_preserves_parameters",
+      "discard_retains_original",
+      "confirmation_promotes_new_media",
+      "new_round_uses_84_frame_media",
+      "no_browser_javascript_errors"
+    ],
+    "javascript_errors": []
+  },
+  "tasks": [
+    {
+      "id": "af99d802c3b14368b4102b0ca3965ebc",
+      "actor": "admin",
+      "status": "cancelled",
+      "stage": "queued",
+      "source_sha256": "6b2efa0f7bb4dc39e696394246f687c0afd5d3eb444c628e140b3668f9d635e3",
+      "ranges": [
+        [
+          3,
+          9
+        ]
+      ],
+      "targets": [],
+      "result": null,
+      "replacement": null,
+      "discarded_at": null
+    },
+    {
+      "id": "c915104865ba41128b01c648cd490e1e",
+      "actor": "admin",
+      "status": "completed",
+      "stage": "completed",
+      "source_sha256": "6b2efa0f7bb4dc39e696394246f687c0afd5d3eb444c628e140b3668f9d635e3",
+      "ranges": [
+        [
+          3,
+          9
+        ]
+      ],
+      "targets": [],
+      "result": {
+        "metadata": {
+          "fps_num": 30,
+          "fps_den": 1,
+          "frame_count": 84,
+          "width": 112,
+          "height": 64,
+          "has_audio": true
+        },
+        "sha256": "e8e735bdafbe0e3b613c667835662ef47de575318c9e2b2940f7d3f7cf9ea8e9",
+        "bytes": 13863,
+        "skipped_frames": 0,
+        "warnings": [],
+        "region_count": 0,
+        "notice": "请预览检查遮挡效果；无告警不代表没有漏遮。"
+      },
+      "replacement": null,
+      "discarded_at": "2026-10-31T03:35:22.874010+00:00"
+    },
+    {
+      "id": "ab14925627844960b249a13996391ca3",
+      "actor": "admin",
+      "status": "completed",
+      "stage": "completed",
+      "source_sha256": "6b2efa0f7bb4dc39e696394246f687c0afd5d3eb444c628e140b3668f9d635e3",
+      "ranges": [
+        [
+          3,
+          9
+        ]
+      ],
+      "targets": [],
+      "result": {
+        "metadata": {
+          "fps_num": 30,
+          "fps_den": 1,
+          "frame_count": 84,
+          "width": 112,
+          "height": 64,
+          "has_audio": true
+        },
+        "sha256": "e8e735bdafbe0e3b613c667835662ef47de575318c9e2b2940f7d3f7cf9ea8e9",
+        "bytes": 13863,
+        "skipped_frames": 0,
+        "warnings": [],
+        "region_count": 0,
+        "notice": "请预览检查遮挡效果；无告警不代表没有漏遮。"
+      },
+      "replacement": {
+        "status": "completed",
+        "completed_at": "2026-10-31T03:35:24.411113+00:00",
+        "storage": "local"
+      },
+      "discarded_at": null
+    }
+  ]
+}

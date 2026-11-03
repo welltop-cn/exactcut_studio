@@ -35,10 +35,19 @@ def test_frame_draft_hook_preview_uses_ready_source_index(source, monkeypatch, m
         cache.mkdir()
         return {'preview_key': 'a' * 64}, {'decision': {}}, cache
     monkeypatch.setattr(hook_preview, 'compute', compute)
-    status, _, body = request(server, 'POST', f'/home/api/batches/{path.name}/hook-preview',
-                              {'revision': saved['revision'], 'index': 0}, headers)
-    assert status == 200, body
-    assert json.loads(body)['preview_key'] == 'a' * 64
+    from exactcut.interactive_queue import Dispatcher
+    import time
+    dispatcher=Dispatcher(poll_seconds=.01);assert dispatcher.start()
+    try:
+        status,_,body=request(server,'POST',f'/home/api/batches/{path.name}/hook-preview',{'revision':saved['revision'],'index':0},headers)
+        assert status==202,body
+        job=json.loads(body);deadline=time.monotonic()+5
+        while job['status'] in {'queued','running','cancelling'}:
+            assert time.monotonic()<deadline;time.sleep(.01)
+            status,_,body=request(server,'GET',f"/home/api/batches/{path.name}/hook-previews/{job['id']}",headers=headers)
+            assert status==200;job=json.loads(body)
+        assert job['status']=='completed' and job['result']['preview_key']=='a'*64
+    finally:dispatcher.stop(timeout=None)
     assert len(computed) == 1
     project, cut_request = computed[0]
     assert project == w.ROOT / 'projects/101573'

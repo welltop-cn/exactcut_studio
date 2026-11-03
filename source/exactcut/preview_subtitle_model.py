@@ -4,9 +4,8 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
-from . import ai_rate, diagnostics
+from . import diagnostics
 from .cutting import run
-from .stage_results import ResourceDeferred
 from .util import file_sha256, json_sha256, read_json, write_json_atomic
 
 PROMPT = '''输入画面已经仅保留下方字幕区域。读取其中实际可见的对白字幕并翻译为简体中文。没有音轨；不要推测未显示的台词。
@@ -103,13 +102,8 @@ def prepare_chunk(source, target, offset, duration, cfg):
 
 def ask(client, video, duration_ms, cfg, deadline):
     from google.genai import types
-    while True:
-        if time.monotonic()+cfg['request_timeout_ms']/1000 > deadline:
-            raise RecognitionError('字幕识别总用时超限，请点击重试')
-        try:
-            ai_rate.acquire(); break
-        except ResourceDeferred:
-            time.sleep(.2)
+    if time.monotonic()+cfg['request_timeout_ms']/1000 > deadline:
+        raise RecognitionError('字幕识别总用时超限，请点击重试')
     part = types.Part.from_bytes(data=video.read_bytes(), mime_type='video/mp4')
     part.video_metadata = types.VideoMetadata(fps=cfg['sample_fps'])
     return client.models.generate_content(model=cfg['model'], contents=[part,

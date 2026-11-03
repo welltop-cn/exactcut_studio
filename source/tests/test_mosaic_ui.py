@@ -16,7 +16,8 @@ def editor():
     Image.new('RGB', (160, 96), '#555555').save(jpeg, 'JPEG')
     with playwright.sync_playwright() as p:
         browser = p.chromium.launch(headless=True)
-        page = browser.new_page(viewport={'width': 1440, 'height': 900})
+        context=browser.new_context(viewport={'width':1440,'height':900})
+        page=context.new_page()
         page.set_default_timeout(3000)
         page.route('**/*', lambda r: r.fulfill(body=html, content_type='text/html'))
         page.route('**/frame/*', lambda r: r.fulfill(body=jpeg.getvalue(), content_type='image/jpeg'))
@@ -180,8 +181,7 @@ def scan_result(page, *, needs_review=False):
 
 def open_auto(page):
     page.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
-    page.locator('#mosaicScan').wait_for(state='visible')
-    page.wait_for_function("!document.getElementById('mosaicScan').disabled || !document.getElementById('mosaicStop').hidden")
+    page.wait_for_function("!document.getElementById('mosaicBatchDialog').hidden || (!document.getElementById('mosaicScan').disabled && !document.getElementById('mosaicWorkspace').hidden) || !document.getElementById('mosaicStop').hidden")
 
 
 def test_scan_finds_range_and_region_without_manual_frame_selection(editor):
@@ -312,7 +312,7 @@ def test_preparing_failure_can_retry_and_does_not_reopen_closed_dialog(editor):
     editor.locator('#mosaicWorkspace').wait_for(state='visible')
 
 
-def test_running_scan_allows_view_but_locks_editing(editor):
+def test_running_scan_keeps_existing_regions_editable(editor):
     scan_result(editor)
     editor.evaluate('''() => {
       const original=api;
@@ -322,12 +322,14 @@ def test_running_scan_allows_view_but_locks_editing(editor):
     }''')
     editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     editor.locator('[data-scan-event="e1"]').wait_for()
-    assert '完成后可继续编辑' in editor.locator('#mosaicScanStatus').inner_text()
+    assert '已有片段可编辑' in editor.locator('#mosaicScanStatus').inner_text()
     assert editor.locator('#mosaicScan').is_disabled()
     editor.locator('[data-scan-event="e1"]').click()
     editor.locator('#mosaicOverlay').wait_for(state='visible')
-    assert editor.locator('[data-proposal]').is_disabled()
-    assert editor.locator('#mosaicConfirm').is_disabled()
+    assert editor.locator('[data-proposal]').is_enabled()
+    assert editor.locator('#mosaicConfirm').is_enabled()
+    editor.locator('[data-proposal]').click()
+    assert active_count(editor)==1
 
 
 def test_wide_list_and_fixed_adopt_next(editor):
@@ -546,12 +548,10 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     assert editor.evaluate('batchBody.targets.map(t=>t.start)')==[10,30]
     assert editor.locator('#mosaicBatchDownload').is_visible()
     assert editor.locator('#mosaicBatchVideo').is_visible()
-    assert editor.locator('#mosaicBatchStatus').inner_text()=='完整视频已生成，可预览或下载。'
+    assert editor.locator('#mosaicBatchStatus').inner_text()=='处理完成，请预览；确认替换或放弃结果后可继续编辑。'
     assert '失跟' not in editor.locator('#mosaicBatchDialog').inner_text()
     editor.locator('#mosaicBatchClose').click();editor.locator('#mosaicClose').click()
     open_auto(editor)
-    editor.locator('#mosaicBatchView').wait_for()
-    editor.locator('#mosaicBatchView').click()
     assert editor.locator('#mosaicBatchDownload').is_visible()
     assert active_count(editor)==2
 
@@ -565,6 +565,7 @@ def test_unified_delete_mosaic_choice_persists_and_discard_resets(editor):
       window.api=async(url,body)=>{
         if(url.endsWith('/render')){if(!body)return {job:null};planRequests.push(body);return {id:'b'.repeat(32),status:'completed',targets:body.targets,ranges:body.ranges,result:{region_count:body.targets.length},completed_at:'now'};}
         if(url.endsWith('/scan'))return body?scanJob:{enabled:true,report:scanJob};
+        if(url.endsWith('/discard-result'))return {id:'b'.repeat(32),status:'completed',discarded_at:'now'};
         if(url.endsWith('/discard')){session.reset_at='reset1';scanJob.reset_at='reset1';return session;}
         return old(url,body);
       };
@@ -584,10 +585,12 @@ def test_unified_delete_mosaic_choice_persists_and_discard_resets(editor):
     editor.locator('#mosaicBatchClose').click()
     editor.once('dialog',lambda d:d.accept())
     editor.locator('#mosaicDiscard').click()
-    editor.wait_for_function("!document.getElementById('mosaicDialog').open")
+    editor.wait_for_function("!document.getElementById('mosaicClear').disabled")
+    assert editor.locator('[data-event-delete="e1"]').get_attribute('aria-pressed')=='true'
+    editor.locator('#mosaicClose').click()
     open_auto(editor)
-    assert editor.locator('[data-event-delete="e1"]').get_attribute('aria-pressed')=='false'
-    assert editor.locator('#mosaicBatchStart').is_disabled()
+    assert editor.locator('[data-event-delete="e1"]').get_attribute('aria-pressed')=='true'
+    assert editor.locator('#mosaicBatchStart').is_enabled()
     assert editor.locator('[data-scan-event="e1"]').count()==1
 
 
@@ -605,8 +608,6 @@ def test_generated_result_replace_and_compare_use_saved_plan(editor):
       };window.renderRuntime=()=>{};window.toast=()=>{};
     }''')
     open_auto(editor)
-    editor.locator('[data-target-view]').click()
-    editor.locator('#mosaicBatchView').click()
     assert editor.locator('#mosaicReplace').is_enabled()
     editor.locator('#mosaicBatchVideo').evaluate('el=>el.currentTime=1')
     editor.locator('#mosaicBatchBefore').click()
@@ -617,13 +618,10 @@ def test_generated_result_replace_and_compare_use_saved_plan(editor):
     editor.locator('#mosaicBatchVideo').evaluate("el=>el.dispatchEvent(new Event('loadedmetadata'))")
     assert editor.locator('#mosaicBatchVideo').evaluate('el=>el.currentTime')==1
     editor.locator('#mosaicBatchClose').click()
-    editor.locator('[data-target-remove]').click()
+    assert editor.locator('[data-target-remove]').is_disabled()
+    assert editor.locator('#mosaicBatchStart').is_hidden()
     editor.locator('#mosaicBatchView').click()
-    assert editor.locator('#mosaicReplace').is_disabled()
-    assert '变化' in editor.locator('#mosaicBatchVersion').inner_text()
-    editor.locator('#mosaicBatchClose').click()
-    editor.locator('[data-target-remove]').click()
-    editor.locator('#mosaicBatchView').click()
+    assert editor.locator('#mosaicReplace').is_enabled()
     editor.once('dialog',lambda d:d.accept())
     editor.locator('#mosaicReplace').click()
     editor.wait_for_function("!document.getElementById('mosaicDialog').open")
@@ -699,7 +697,7 @@ def test_generation_locks_edits_until_stop_acknowledged(editor):
       const old=api;window.stopped=false;
       window.api=async(url,body)=>{
         if(url.endsWith('/stop')){window.stopBody=body;stopped=true;return {id:'b'.repeat(32),status:'running',cancel_requested:true,targets:[]};}
-        if(url.endsWith('/render'))return {job:{id:'b'.repeat(32),status:'running',targets:[]}};
+        if(url.endsWith('/render'))return {job:{id:'b'.repeat(32),queued_task:true,status:'running',targets:[],ranges:[[30,90]]}};
         if(url.includes('/render/'))return stopped?new Promise(r=>window.finishStop=r):{id:'b'.repeat(32),status:'running',targets:[]};
         if(url.endsWith('/scan')&&!body)return {enabled:true,report:scanJob};
         return old(url,body);
@@ -707,7 +705,7 @@ def test_generation_locks_edits_until_stop_acknowledged(editor):
     }''')
     open_auto(editor);editor.locator('#mosaicProcessing').wait_for()
     assert editor.locator('[data-event-delete]').is_disabled()
-    assert editor.locator('[data-proposal]').is_disabled()
+    assert editor.locator('#mosaicAddClip').is_disabled()
     assert editor.locator('#mosaicClear').is_disabled()
     assert editor.locator('#mosaicEffectStyle').is_disabled()
     assert editor.locator('#mosaicAdjustToggle').is_disabled()
@@ -773,7 +771,7 @@ def test_effect_preview_sends_all_clip_regions_without_saving(editor):
     assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
 
 
-def test_closing_running_clip_preview_stops_without_discarding_effect_draft(editor):
+def test_closing_running_clip_preview_detaches_without_cancelling_or_discarding_effect_draft(editor):
     scan_result(editor)
     editor.evaluate("""() => {
       session.capabilities.tracking=true;window.previewStopped=false;
@@ -787,11 +785,11 @@ def test_closing_running_clip_preview_stops_without_discarding_effect_draft(edit
     open_auto(editor);editor.locator('#mosaicScan').click();editor.locator('[data-proposal]').click()
     editor.locator('[data-effect-target]').click();editor.locator('#mosaicEffectStyle').select_option('soft_blur')
     editor.locator('#mosaicEffectPreview').click()
-    assert editor.locator('#mosaicEffectSave').is_disabled()
+    assert editor.locator('#mosaicEffectSave').is_enabled()
     assert editor.locator('#mosaicTrackDialog').bounding_box()['height']>=700
     editor.locator('#mosaicTrackClose').click()
     editor.wait_for_function("!document.querySelector('#mosaicEffectSave').disabled")
-    assert editor.evaluate('stopPreviewBody.job_id')=='c'*32
+    assert editor.evaluate('previewStopped') is False
     assert editor.locator('#mosaicEffectStyle').input_value()=='soft_blur'
 
 
@@ -976,11 +974,12 @@ def test_unedited_rescan_updates_and_manual_clip_survives(editor):
 
 
 def test_saved_time_drives_generation_and_keeps_ai_original(editor):
+    editor.evaluate('session.capabilities.tracking=true')
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-proposal]').click()
     editor.locator('[data-scan-event]').click();editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
     editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicConfirm').click()
-    editor.evaluate("""() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.timeBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.timeBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
     editor.locator('#mosaicBatchStart').click()
     assert editor.evaluate('timeBody.targets[0].start')==40
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")

@@ -1,5 +1,6 @@
 """Source-frame index and existing renderer boundaries, without visual picker APIs."""
 import subprocess
+import time
 import pytest
 from exactcut import source_frames, workflow as w, webserver as web
 from test_web_base_path import app, login, request
@@ -82,20 +83,91 @@ def test_index_requires_current_source_and_draft_episode(source):
     with pytest.raises(ValueError, match='准备正片'):
         source_frames.prepare(path, draft_with('EP1'), 'EP1')
 
-def test_index_rejects_non_draft_and_bounds_probe_work(source):
+def test_index_defers_without_starting_probe_or_holding_identity_lock_when_media_is_full(source, monkeypatch):
+    from contextlib import ExitStack
+    from exactcut import editor_resources
+    from exactcut.stage_results import ResourceDeferred
     _, item, _, _ = source
-    path = w.folder(item['id'])
-    source_frames._SLOTS.acquire()
-    source_frames._SLOTS.acquire()
-    try:
-        with pytest.raises(ValueError, match='繁忙'):
-            source_frames.prepare(path, draft_with('EP1'), 'EP1')
-    finally:
-        source_frames._SLOTS.release()
-        source_frames._SLOTS.release()
+    path=w.folder(item['id'])
+    calls=[]
+    original=source_frames.media.run_checked
+    monkeypatch.setattr(source_frames.media,'run_checked',lambda *a,**kw:(calls.append(a),original(*a,**kw))[1])
+    def short_wait(kind,actor='admin',*,timeout=1800):
+        try:return editor_resources.acquire(kind,actor)
+        except editor_resources.cutting.ResourceBusy:
+            raise editor_resources.cutting.CutError('等待处理资源超时，请重试',503)
+    monkeypatch.setattr(editor_resources,'wait',short_wait)
+    with ExitStack() as held:
+        for _ in range(editor_resources.settings()['media_tasks']):held.enter_context(editor_resources.acquire('media'))
+        with pytest.raises(ResourceDeferred) as error:
+            source_frames.prepare(path,draft_with('EP1'),'EP1')
+        assert 0 < error.value.not_before <= time.time()+2
+        assert calls==[] and not list((path/'source-picker').glob('*/index.json'))
+        video=source_frames._video('101573','EP1')
+        key=source_frames.json_sha256({'version':1,'drama':'101573','episode':'EP1',
+                                       'signature':source_frames._fingerprint(video)})
+        with source_frames.resource_locks.hold('source-index',key,timeout=0):
+            pass  # the waiter must not leave the identity lock held while media is busy
+    result=source_frames.prepare(path,draft_with('EP1'),'EP1')
+    assert result['times_ms'] and result['duration_ms']>0
+    assert len(calls)==1
     w.update(path, 'queued', '等待制作')
     with pytest.raises(ValueError):
         source_frames.prepare(path, draft_with('EP1'), 'EP1')
+
+
+def test_index_identity_lock_timeout_defers_instead_of_source_error(source, monkeypatch):
+    import threading, time
+    from exactcut import resource_locks
+    from exactcut.stage_results import ResourceDeferred
+    _, item, _, video = source
+    path=w.folder(item['id'])
+    key=source_frames.json_sha256({'version':1,'drama':'101573','episode':'EP1',
+                                   'signature':source_frames._fingerprint(video)})
+    original=resource_locks.hold
+    monkeypatch.setattr(resource_locks,'hold',lambda ns,ident,*,timeout=180:original(ns,ident,timeout=.05))
+    outcome=[]
+    def run():
+        try:source_frames.prepare(path,draft_with('EP1'),'EP1')
+        except BaseException as exc:outcome.append(exc)
+    with original('source-index',key):
+        thread=threading.Thread(target=run);thread.start();thread.join(5)
+    assert len(outcome)==1 and isinstance(outcome[0],ResourceDeferred),outcome
+    assert not list((path/'source-picker').glob('*/index.json'))
+    assert source_frames.prepare(path,draft_with('EP1'),'EP1')['times_ms']
+
+
+def test_same_source_index_is_probed_once_across_projects(source, monkeypatch):
+    import threading
+    _, item, _, video = source
+    first=w.folder(item['id']);second=w.folder(w.create_blank()['id'])
+    entered,release=threading.Event(),threading.Event();calls=[]
+    original=source_frames.media.run_checked
+    def probe(*a,**kw):
+        calls.append(a);entered.set();assert release.wait(10);return original(*a,**kw)
+    monkeypatch.setattr(source_frames.media,'run_checked',probe)
+    result=[]
+    thread=threading.Thread(target=lambda:result.append(source_frames.prepare(first,draft_with('EP1'),'EP1')))
+    thread.start();assert entered.wait(5)
+    waiter=threading.Thread(target=lambda:result.append(source_frames.prepare(second,draft_with('EP1'),'EP1')))
+    waiter.start()
+    try:time.sleep(.2);assert waiter.is_alive(),'same-key waiter must wait for the holder'
+    finally:release.set()
+    thread.join(10);waiter.join(10)
+    assert len(calls)==1 and len(result)==2
+    assert result[0]==result[1] and result[0]['key']
+    assert list((second/'source-picker'/result[0]['key']).glob('index.json'))
+
+
+def test_bad_source_still_fails_without_publishing_index(source):
+    _, item, _, video = source
+    video.write_bytes(b'not a video')
+    path=w.folder(item['id'])
+    with pytest.raises(ValueError,match='帧索引暂不可用'):
+        source_frames.prepare(path,draft_with('EP1'),'EP1')
+    assert not list((path/'source-picker').glob('*/index.json'))
+    with pytest.raises(ValueError,match='帧索引暂不可用'):
+        source_frames.prepare(path,draft_with('EP1'),'EP1')
 
 def test_visual_picker_script_and_media_endpoints_are_unavailable(source):
     app, item, headers, _ = source

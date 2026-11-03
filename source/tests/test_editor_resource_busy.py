@@ -1,8 +1,9 @@
 """Resource busy is an explicit admission contract, never a generic 429."""
 import io
 import json
+from contextlib import ExitStack
 import pytest
-from exactcut import cutting, cutting_http, mosaic_http, webserver
+from exactcut import cutting, cutting_http, mosaic_http, webserver, editor_resources
 
 
 @pytest.mark.parametrize('resource', ['compute', 'scan', 'frame'])
@@ -79,7 +80,7 @@ from test_phase2_preview_api import fixture
 
 @pytest.mark.parametrize('kind', ['cuts', 'mosaics'])
 @pytest.mark.parametrize('resource', ['scan', 'compute'])
-def test_scan_admission_failure_has_no_job_and_releases_earlier_locks(configured, monkeypatch, kind, resource):
+def test_busy_scan_is_persisted_without_waiting_request_threads_or_execution_leases(configured, monkeypatch, kind, resource):
     from exactcut import cutting_scan, mosaic_scan, mosaic_session
     bid, sid, _ = configured
     if kind == 'mosaics':
@@ -92,17 +93,20 @@ def test_scan_admission_failure_has_no_job_and_releases_earlier_locks(configured
         identifier = cutting_scan.identity(session, 'standard', cutting_scan.settings())
         path = cutting.session_path(bid, sid) / f'scan-{identifier}.json'
         start = lambda: cutting_scan.start(bid, sid, 'standard')
-    def unexpected(*a, **k): pytest.fail('no worker may start after admission rejection')
+    def unexpected(*a, **k): pytest.fail('HTTP admission must not create a waiting worker thread')
     monkeypatch.setattr(cutting_scan.threading.Thread, 'start', unexpected)
-    with cutting.lock_file(cutting.lock_root() / (resource + '.lock')):
-        with pytest.raises(cutting.ResourceBusy) as error:
-            start()
-        assert error.value.resource == resource
-        assert not path.exists()
-        with cutting.lock_file(path.with_suffix('.worker.lock')):
-            pass
+    with ExitStack() as leases:
+        role='scan' if resource=='scan' else 'preprocess'
+        for actor in ('busy-alpha','busy-beta'):leases.enter_context(editor_resources.acquire(role,actor))
+        job=start()
+        from exactcut import interactive_queue
+        from exactcut.util import read_json
+        assert job['status']=='queued' and read_json(path)['id']==job['id']
+        assert any(row['job']['id']==job['id'] for row in interactive_queue.snapshot()['pending'])
+        assert not interactive_queue.snapshot()['active']
+        with cutting.lock_file(path.with_suffix('.worker.lock')):pass
         if resource == 'compute':
-            with cutting.lock_file(cutting.lock_root() / 'scan.lock'):
+            with editor_resources.acquire('scan','admin'):
                 pass
 
 
@@ -159,7 +163,7 @@ def test_asset_and_batch_gates_never_advertise_retry(tmp_path):
 
 @pytest.mark.parametrize('kind', ['cuts', 'mosaics'])
 @pytest.mark.parametrize('resource', ['worker', 'batch'])
-def test_non_capacity_scan_admission_never_retryable(configured, monkeypatch, kind, resource):
+def test_worker_ownership_waits_but_http_batch_mutation_gate_still_rejects(configured, monkeypatch, kind, resource):
     from exactcut import cutting_scan, mosaic_scan, mosaic_session
     bid, sid, _ = configured
     if kind == 'mosaics':
@@ -173,13 +177,20 @@ def test_non_capacity_scan_admission_never_retryable(configured, monkeypatch, ki
         path = cutting.session_path(bid, sid) / f'scan-{identifier}.json'
         start = lambda: cutting_scan.start(bid, sid, 'standard')
     lock = path.with_suffix('.worker.lock') if resource == 'worker' else cutting.lock_root() / f'{bid}.lock'
-    with cutting.lock_file(lock):
-        with pytest.raises(cutting.CutError) as error:
-            start()
-        assert type(error.value) is cutting.CutError and error.value.status == 429
-        assert not path.exists()
-        with cutting.lock_file(cutting.lock_root() / 'scan.lock'):
-            pass
+    from test_cutting_api import call
+    from test_phase2_preview_api import serve
+    app=serve()
+    try:
+        with cutting.lock_file(lock):
+            code,value=call(app,'POST',f'/api/batches/{bid}/{kind}/{sid}/scan',
+                {'reset_at':''} if kind=='mosaics' else {'policy':'standard'})
+            if resource=='batch':
+                assert code==429 and 'code' not in value and 'retryable' not in value
+                assert not path.exists()
+            else:
+                assert code==202 and value['status']=='queued' and path.is_file()
+            with editor_resources.acquire('scan','admin'):pass
+    finally:app.shutdown();app.server_close()
 
 
 @pytest.mark.parametrize('module_name', ['cutting_scan', 'mosaic_scan', 'mosaic_locate', 'mosaic_render'])

@@ -118,7 +118,6 @@ def _gemini_images_json(client: Any, model: str, prompt: str, images: list[bytes
 
     contents = [types.Part.from_text(text=prompt)]
     contents.extend(types.Part.from_bytes(data=image, mime_type="image/jpeg") for image in images)
-    ai_rate.acquire()
     response = client.models.generate_content(
         model=model,
         contents=contents,
@@ -222,8 +221,6 @@ def editorial_preflight(project_dir: Path, request: Any, config: dict[str, Any],
                 write_json_atomic(shot_path, {'identity': identity, 'response': decision,
                                              'response_sha256': json_sha256(decision)})
                 break
-            except ResourceDeferred:
-                raise
             except Exception as exc:
                 last_error = exc
                 time.sleep(attempt + 1)
@@ -310,8 +307,6 @@ def final_video_gemini(video: Path, config: dict[str, Any], report_path: Path) -
             if file_state == "FAILED" or time.time() >= upload['uploaded_at'] + 1200:
                 raise SafetyError(f"Gemini无法处理成片，state={file_state}")
             raise ResourceDeferred(time.time() + 3, 'Gemini 正在处理成片，稍后继续安全检查')
-        # File lifecycle queries are not model requests. Charge immediately before inference.
-        ai_rate.acquire()
         response = client.models.generate_content(
             model=state["final_video_model"],
             contents=[types.Part.from_uri(file_uri=info.uri, mime_type="video/mp4"), types.Part.from_text(text=FINAL_VIDEO_PROMPT)],
@@ -325,7 +320,7 @@ def final_video_gemini(video: Path, config: dict[str, Any], report_path: Path) -
             "model": state["final_video_model"], **analysis,
         }
     except ResourceDeferred:
-        # Keep the remote handle and local checkpoint across processing/quota deferrals.
+        # Keep the remote handle and local checkpoint while the vendor processes it.
         raise
     except Exception as exc:
         report = {"checked_at": now_iso(), "video_sha256": digest, "policy_fingerprint": policy, "status": "unverified", "allowed": False, "error": str(exc)}

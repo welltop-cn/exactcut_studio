@@ -52,14 +52,14 @@ def test_input_rejected_before_model(monkeypatch, text):
 
 
 @pytest.mark.parametrize('time_format', ['', 'source_frames_v1'])
-def test_failure_releases_slot_and_does_not_fallback(monkeypatch, time_format):
+def test_failure_does_not_fallback_and_next_parse_can_run(monkeypatch, time_format):
     def fail(*a, **k):
         raise ValueError('AI 服务不可用')
     monkeypatch.setattr(m, 'interpret', fail)
     with pytest.raises(ValueError, match='AI 服务不可用'):
         m.read_clip_text('EP30 1:20-1:47', time_format=time_format)
-    assert m.SLOTS.acquire(blocking=False)
-    m.SLOTS.release()
+    with pytest.raises(ValueError, match='AI 服务不可用'):
+        m.read_clip_text('EP30 1:20-1:47', time_format=time_format)
 
 
 def test_api_auth_csrf_and_parse(app, monkeypatch):
@@ -75,7 +75,6 @@ def test_text_uses_existing_transport_with_its_own_schema(monkeypatch):
     import httpx
     monkeypatch.setattr(m, 'require_ai', lambda: None)
     monkeypatch.setattr(m, 'load_env_file', lambda path: None)
-    monkeypatch.setattr(m.ai_rate, 'acquire', lambda: None)
     monkeypatch.setenv('OPENAI_API_KEY', 'test-only')
     monkeypatch.setenv('OPENAI_BASE_URL', 'https://fixture.invalid/v1')
     monkeypatch.setenv('EXACTCUT_INTAKE_MODEL', 'fixture-model')

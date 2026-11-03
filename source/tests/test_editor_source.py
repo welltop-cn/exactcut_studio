@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 from exactcut import cutting, workflow, preview_oss
-from test_cutting_api import ready, fixture, call, serve
+from test_cutting_api import ready, fixture, call, serve, prepared
 
 
 @pytest.fixture
@@ -73,7 +73,8 @@ def test_http_local_source_and_access(ready,kind):
     try:
         base=f'/api/batches/{bid}/{kind}'
         status,session=call(app,'POST',base+'/open',{'request_id':rid,'source_sha256':sha})
-        assert status==200
+        assert status in {200,202}
+        session=prepared(app,base,session)
         assert session['capabilities']['oss_playback'] is False
         path=base+'/'+session['id']
         assert call(app,'GET',path+'/source-url',auth=False)[0]==401
@@ -116,7 +117,9 @@ def test_http_signing_cache_control_and_version_fence(ready,kind,monkeypatch):
     try:
         base=f'/api/batches/{bid}/{kind}'
         status,session=call(app,'POST',base+'/open',{'request_id':rid,'source_sha256':sha})
-        assert status==200 and session['capabilities']['oss_playback'] is True
+        assert status in {200,202}
+        session=prepared(app,base,session)
+        assert session['capabilities']['oss_playback'] is True
         url=base+'/'+session['id']+'/source-url'
         conn=HTTPConnection(*app.server_address,timeout=10)
         try:
@@ -130,3 +133,5 @@ def test_http_signing_cache_control_and_version_fence(ready,kind,monkeypatch):
         assert call(app,'GET',url)[0]==409
         assert bucket.sign_url.call_count==1
     finally:app.shutdown();app.server_close()
+
+from interactive_test_support import interactive_dispatcher

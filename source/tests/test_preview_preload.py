@@ -92,3 +92,40 @@ vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.ind
 '''
     result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_preparing_response_polls_until_signed_url_and_never_uses_local_source():
+    source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
+    script = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict');
+const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
+(async()=>{
+ let resolves=[],calls=0;
+ const message={textContent:''},retry={hidden:true};
+ const video={dataset:{previewRequest:'R1',previewBatch:'a'},isConnected:true,src:'',paused:true,currentTime:0,
+  pause(){},load(){},removeAttribute(){this.src=''},querySelectorAll(){return []},
+  closest(){return {querySelector:s=>s.includes('retry')?retry:message}}};
+ const ctx=vm.createContext({AbortController,DOMException,Date,encodeURIComponent,setTimeout,clearTimeout,
+  current:{id:'a',assets:[{request_id:'R1',preview:'/preview'}]},activeTab:'review',selectedId:'a',appUrl:p=>p,
+  $:id=>id==='workspace'?{hidden:false}:{querySelectorAll:()=>[video]},
+  fetch:()=>{calls++;return new Promise(r=>resolves.push(r))}});
+ vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
+ vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);
+ ctx.video=video;
+ const pending=vm.runInContext('loadPreview(video)',ctx);
+ while(resolves.length<1)await new Promise(r=>setTimeout(r,5));
+ resolves.shift()({ok:true,json:async()=>({status:'preparing',retry_after_ms:200,job_id:'x'})});
+ await new Promise(r=>setTimeout(r,30));
+ assert.equal(video.src,'','preparing must not attach a source');
+ assert.equal(calls,1);assert.equal(message.textContent,'正在准备预览视频…');
+ while(resolves.length<1)await new Promise(r=>setTimeout(r,5));
+ assert.equal(calls,2);
+ resolves.shift()({ok:true,json:async()=>({url:'https://oss.invalid/final',expires_in:900})});
+ await pending;
+ assert.equal(video.src,'https://oss.invalid/final');
+ assert.equal(video.dataset.previewState,'ready');
+ assert.equal(retry.hidden,true);
+})().catch(e=>{console.error(e);process.exitCode=1});
+'''
+    result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr

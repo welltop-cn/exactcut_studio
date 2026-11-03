@@ -20,7 +20,7 @@ def setup(configured):
 def poll(m,bid,sid):
     for _ in range(200):
         job=m.state(bid,sid)['report']
-        if job['status']!='running':return job
+        if job['status'] not in {'queued','running','cancelling'}:return job
         time.sleep(.02)
     pytest.fail('worker did not complete')
 
@@ -109,7 +109,7 @@ def test_running_reset_and_global_lease(configured,monkeypatch):
     try:
         assert entered.wait(2)
         assert m.start(bid,sid,'',force=True)['id']==job['id']
-        with pytest.raises(cutting.CutError):mosaic_locate.start(bid,sid,0,5,2,'')
+        other=mosaic_locate.start(bid,sid,0,5,2,'');assert other['status']=='queued'
         with pytest.raises(cutting.CutError):
             with cutting.batch_lease(bid,exclusive=True):pytest.fail('worker holds snapshot')
         session=sessions.read_session(bid,sid)
@@ -119,7 +119,7 @@ def test_running_reset_and_global_lease(configured,monkeypatch):
     path=sessions.session_path(bid,sid)/'scan.json'
     for _ in range(200):
         result=read_json(path)
-        if result['status']!='running':break
+        if result['status'] not in {'queued','running','cancelling'}:break
         time.sleep(.02)
     assert result['status']=='failed' and result['events']==[]
     with pytest.raises(cutting.CutError):m.state(bid,sid)
@@ -247,3 +247,5 @@ def test_scan_logs_lifecycle_and_request_context(configured,monkeypatch):
     assert entries['mosaic.scan_completed']['localized_count']==0
     assert entries['mosaic.localization_failed']['phase']=='region_detect'
     assert 'private-body' not in str(logged)
+
+from interactive_test_support import interactive_dispatcher

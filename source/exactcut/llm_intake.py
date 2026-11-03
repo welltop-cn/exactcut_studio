@@ -2,12 +2,10 @@
 from __future__ import annotations
 import json
 import os
-import threading
 from pathlib import Path
 from typing import Literal
 from zipfile import ZipFile
 import httpx
-from . import ai_rate
 from openpyxl import load_workbook
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from .intake import finish_draft
@@ -23,7 +21,6 @@ from .runtime import CODE_ROOT, data_root, require_ai, instance_marker, environm
 from .runtime import project_env_file
 
 ROOT = data_root()
-SLOTS = threading.BoundedSemaphore(1)
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra='forbid')
@@ -106,7 +103,6 @@ def interpret(payload, *, schema=Interpretation, instructions=SYSTEM, schema_nam
             'text':{'format':{'type':'json_schema','name':schema_name,'strict':True,
                               'schema':schema.model_json_schema()}}}
     try:
-        ai_rate.acquire()
         with httpx.Client(timeout=httpx.Timeout(85,connect=10)) as client:
             response = client.post(os.getenv('OPENAI_BASE_URL','https://api.openai.com/v1').rstrip('/')+'/responses',
                                    headers={'Authorization':f'Bearer {key}'}, json=body)
@@ -204,15 +200,10 @@ def read_clip_text(text, *, time_format=''):
     if len(lines) > 120:
         raise ValueError('一次最多 120 行，请拆分文本')
     frames = time_format == 'source_frames_v1'
-    if not SLOTS.acquire(blocking=False):
-        raise ValueError('AI 正在整理其他内容，请稍后再试')
-    try:
-        result = interpret(json.dumps({'lines': lines}, ensure_ascii=False),
-                           schema=FrameTextInterpretation if frames else TextInterpretation,
-                           instructions=FRAME_TEXT_SYSTEM if frames else TEXT_SYSTEM,
-                           schema_name='clip_text_frames' if frames else 'clip_text', subject='文本')
-    finally:
-        SLOTS.release()
+    result = interpret(json.dumps({'lines': lines}, ensure_ascii=False),
+                       schema=FrameTextInterpretation if frames else TextInterpretation,
+                       instructions=FRAME_TEXT_SYSTEM if frames else TEXT_SYSTEM,
+                       schema_name='clip_text_frames' if frames else 'clip_text', subject='文本')
     evidence = {line['line']: line['text'] for line in lines}
     if [number for item in result.items for number in item.source_lines] != list(evidence):
         return {'clips': [], 'errors': ['AI 未完整按顺序引用原文，请重新识别或拆分文本；未填入任何片段。']}
@@ -311,12 +302,7 @@ def grounded_segments(material, evidence):
 
 def read_excel(path, *, grouped=False):
     payload, evidence = workbook_payload(path)
-    if not SLOTS.acquire(blocking=False):
-        raise ValueError('AI 正在整理其他表格，请稍后再试')
-    try:
-        result = interpret(payload)
-    finally:
-        SLOTS.release()
+    result = interpret(payload)
     if not result.groups or not any(g.rows for g in result.groups):
         raise ValueError('未找到正式制作素材：示例和空白行不参与剪辑，请填写后再上传。' + '；'.join(result.warnings)[:500])
     if sum(len(g.rows) for g in result.groups)>200:

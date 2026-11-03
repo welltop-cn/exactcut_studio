@@ -1,12 +1,44 @@
 """Shared admission rules for pre-delivery edits and current-media changes."""
 from contextlib import contextmanager
+from dataclasses import dataclass
 from hashlib import sha256
 
 from .util import read_json
 
 
+@dataclass(frozen=True)
+class InteractiveReadPermit:
+    """Internal admission identity, never reconstructed from a client request."""
+    batch_id:str
+    session_id:str
+    request_id:str
+    job_id:str
+    source_sha256:str
+    reset_at:str
+    actor:str
+
+    @classmethod
+    def issue(cls,session,job):
+        from .cutting import CutError
+        if job.get('queued_task') or job.get('status') not in {'queued','running'}:raise CutError('交互只读许可仅用于已接收任务',503)
+        return cls(session['batch_id'],session['id'],session['request_id'],job['id'],session['source_sha256'],session.get('reset_at',''),job.get('actor','admin'))
+
+    def require(self,session,job):
+        from . import processing_cancel,accounts,workflow
+        from .cutting import CutError
+        processing_cancel.check()
+        actual=(session['batch_id'],session['id'],session['request_id'],job['id'],job['source_sha256'],job.get('reset_at',''),job.get('actor','admin'))
+        expected=(self.batch_id,self.session_id,self.request_id,self.job_id,self.source_sha256,self.reset_at,self.actor)
+        if actual!=expected or job.get('queued_task') or session['source_sha256']!=self.source_sha256 or session.get('reset_at','')!=self.reset_at:
+            raise CutError('交互任务的来源或许可已失效',409)
+        db=workflow.BATCHES.parent/'accounts.sqlite3'
+        if db.is_file():
+            user=accounts.get(db,self.actor)
+            if not user or not user.get('enabled') or not accounts.allowed(workflow.folder(self.batch_id),user):raise CutError('交互任务账号已停用或无权访问项目',403)
+
+
 @contextmanager
-def gate(path, request_id=None):
+def gate(path, request_id=None, *, allow_job=None, readonly=False):
     """Cross-process gate. Whole-batch writers exclude per-asset operations."""
     from .cutting import lock_file
     if request_id is not None and (not isinstance(request_id, str) or not request_id):
@@ -25,6 +57,7 @@ def gate(path, request_id=None):
                 asset = lock_file(directory / (path.name + '-' + key + '.lock'))
             except CutError as exc:
                 raise CutError('该素材正在执行其他操作，请稍后重试', 429) from exc
+        if not readonly:require_unfrozen(path,request_id,allow_job=allow_job)
         yield
     finally:
         if asset: asset.close()
@@ -43,9 +76,17 @@ def delivery_locked(entry):
     return not (entry.get('status') == 'publish_failed' and intent.get('status') == 'preparation_failed')
 
 
-def require_editable(path, request_id, *, source_sha=None):
+def require_unfrozen(path,request_id=None,*,allow_job=None):
+    from . import mosaic_queue
+    from .cutting import CutError
+    if mosaic_queue.blocked(path.name,request_id,allow_job):
+        raise CutError('素材已提交剪切打码，请取消任务或确认/放弃结果后再编辑',409)
+
+
+def require_editable(path, request_id, *, source_sha=None, allow_job=None, readonly=False):
     from . import workflow as w, material_versions as m, batch_control
     from .cutting import CutError
+    if not readonly:require_unfrozen(path,request_id,allow_job=allow_job)
     batch_control.ensure_editable(path, execution=True)
     record = w.result_records(path).get(request_id, {})
     if record.get('status') in {'fbbm_ready', 'fbbm_queued', 'upload_queued', 'uploading', 'unverified'} or record.get('publication') or record.get('fbbm'):
@@ -81,7 +122,7 @@ def require_editable(path, request_id, *, source_sha=None):
 
 def can_edit(path, request_id):
     try:
-        require_editable(path, request_id)
+        require_editable(path, request_id, readonly=True)
         return True
     except (ValueError, OSError, KeyError):
         return False

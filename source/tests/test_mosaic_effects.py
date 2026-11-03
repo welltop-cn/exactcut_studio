@@ -69,3 +69,64 @@ def test_effect_strength_scales_with_video_long_edge(strength,block,sigma,width,
     assert effects.transform(meta,{'strength':strength})==f'scale={max(1,width//size)}:{max(1,height//size)}:flags=area,scale={width}:{height}:flags=neighbor'
     for style in ('blur','soft_blur'):
         assert effects.transform(meta,{'style':style,'strength':strength})==f'gblur=sigma={sigma*ratio:g}:steps=2'
+
+def detail_source(path,frames=8,fps='30'):
+    # Fine spatial detail so a real gblur is visible in decoded pixels.
+    cutting.run(['ffmpeg','-y','-v','error','-f','lavfi','-i',f'testsrc2=size=112x64:rate={fps}',
+                 '-frames:v',str(frames),'-c:v','libx264','-pix_fmt','yuv420p',str(path)])
+    return path
+
+
+def mask_video(path,meta,white):
+    import subprocess
+    from exactcut.media import bounded_ffmpeg
+    raw=b''.join(bytes([255 if n in white else 0])*(meta['width']*meta['height'])
+                 for n in range(meta['frame_count']))
+    subprocess.run(bounded_ffmpeg(['ffmpeg','-y','-v','error','-f','rawvideo','-pix_fmt','gray',
+                    '-s',f"{meta['width']}x{meta['height']}",'-r',f"{meta['fps_num']}/{meta['fps_den']}",
+                    '-i','pipe:0','-c:v','ffv1',str(path)]),input=raw,capture_output=True,check=True)
+    return path
+
+
+def decode_frames(path,meta):
+    raw=cutting.run(['ffmpeg','-v','error','-i',str(path),'-f','rawvideo','-pix_fmt','rgb24','-'])
+    size=meta['width']*meta['height']*3
+    return [raw[i:i+size] for i in range(0,len(raw),size)]
+
+
+def render_layered(path,source,masks,graph,meta):
+    cutting.run(['ffmpeg','-y','-v','error','-i',str(source),*[arg for mask in masks for arg in ('-i',str(mask))],
+                 '-filter_complex',graph,'-map','[out]','-an','-c:v','ffv1',str(path)])
+    return decode_frames(path,meta)
+
+
+@pytest.mark.parametrize('style',['blur','soft_blur'])
+def test_layered_graph_blur_timeline_skips_frames_outside_source_intervals(style,tmp_path):
+    source=detail_source(tmp_path/'source.mp4');meta=cutting.probe_source(source)
+    mask=mask_video(tmp_path/'mask.mkv',meta,set(range(meta['frame_count'])))
+    appearance={'style':style,'strength':'heavy','expansion':'none'}
+    old=render_layered(tmp_path/'old.mkv',source,[mask],effects.layered_graph(meta,[appearance]),meta)
+    active=render_layered(tmp_path/'active.mkv',source,[mask],effects.layered_graph(meta,[appearance],[[(2,4)]]),meta)
+    off=render_layered(tmp_path/'off.mkv',source,[mask],effects.layered_graph(meta,[appearance],[[]]),meta)
+    assert len(old)==len(active)==len(off)==meta['frame_count']
+    for frame in range(meta['frame_count']):
+        if 2<=frame<4:
+            assert active[frame]==old[frame]
+            assert off[frame]!=old[frame]
+        else:
+            assert active[frame]!=old[frame],'gblur must be skipped outside the active interval'
+            assert active[frame]==off[frame],'inactive frames must stay pass-through'
+
+
+def test_layered_graph_intervals_keep_every_masked_frame_identical(tmp_path):
+    source=detail_source(tmp_path/'source.mp4');meta=cutting.probe_source(source)
+    first=mask_video(tmp_path/'first.mkv',meta,{1,2,5})
+    second=mask_video(tmp_path/'second.mkv',meta,{3,4,6,7})
+    appearances=[{'style':'blur','strength':'medium','expansion':'none'},
+                 {'style':'blur','strength':'heavy','expansion':'none'}]
+    intervals=[[(1,3),(5,6)],[(3,5),(6,8)]]
+    old=render_layered(tmp_path/'old.mkv',source,[first,second],effects.layered_graph(meta,appearances),meta)
+    new=render_layered(tmp_path/'new.mkv',source,[first,second],effects.layered_graph(meta,appearances,intervals),meta)
+    assert len(new)==len(old)==meta['frame_count']
+    for frame in range(meta['frame_count']):
+        assert new[frame]==old[frame]

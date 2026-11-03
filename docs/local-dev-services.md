@@ -1,5 +1,45 @@
 # 本地 dev 服务与专项测试交接
 
+## 2026-11-03：18883实际验收收尾，A最终FAIL待用户统一看
+
+- 当前PID97825（操作前实核），应用源码`05b2faf74e37e611f5b0a59065fb199e08786bae`，cwd为`cut-mosaic-18883-source-delivery/source`。原URL和data root不变，development/worker1/AI1、fetch0/外写0/PUBLISH0、OSS预览关闭、原MPS不变。此前PID15988/worker0记录为历史。
+- 用户授权仅下载101682 EP1–EP7并生成真实帧索引，七集共1,418,033,103字节、无hardlink。本地原片列表200/七集、原四条引用错误已消除；原项目revision68和422既有文件SHA保留，未自动替换。
+- 20条AI0普通真实输出QC/SHA/帧音频通过；双账号、同账号3项目及16待处理素材真实接收/完成，global render峰3。另1条AI1真实Hook语义输出`ai_semantic`且QC通过；自动画面检查仍被原production-only策略阻止，保留warning。
+- 双账号真实Gemini字幕98/99条cue completed，SAM/预览恢复播放通过；Gemini不消费原OpenAI桶，其他OpenAI6RPM/burst1仍生效。字幕路由和开发OpenAI两字段在全面idle、备份和屏障内一次正常维护，仅改已授权配置，runtime.json字节及源码不变。
+- B最终`9e2eb593cde7426ea32b8ada3aeb7f71`completed、6399帧/音频/SHA/Range/刷新后实际播放。A`2a567ce0a14642728cbc4458640b256c`删除30帧＋blur完整合成600秒超时；queue done只是调度终态，A仍FAIL，完整交付未完成。
+- 同源20秒候选命令诊断67.43→18.41秒、570解码帧及音频一致；没有改gblur应用代码/timeout/效果或重跑长片。用户决定“先记着，最后再看”，见[范围外项](verification/concurrency-followups-awaiting-approval.md)。
+- 夹具唯一修正`bbfa4f7`后固定全量2073passed/1skip/10既有警告693.90秒，原2072/1fail保留；live应用仍05。当前所有队列idle、执行槽全空、服务子进程0；FBBM upload/poll/publication全0，未发布或合并main。完整[逐变更覆盖矩阵](verification/18883-full-dev-acceptance-2026-11-03.md)明确区分实际18883、隔离dev、替身及未覆盖项。
+
+## 2026-11-03：18883资源调度候选已按授权更新
+
+- 父最终review通过后，确认全部用户active/queued及子进程为空，维护屏障内复查，再正常SIGTERM更新。当前PID15988（操作前仍须实核），加载`e2cbcc0`、应用源码`96c1aa5`，cwd为`cut-mosaic-resource-scheduling/source`。
+- 原用户数据根、账号/凭据、四素材、旧任务结果/冻结状态、ai-rate桶保留；336既有保护文件重启前后SHA相同。浏览器仅新增预期auth session，users逻辑哈希及其他既有文件不变。
+- runtime普通2/3/2/4推总11，final1，字幕2+30，交互各2，media5+final1/frame2/transfer2，FFmpeg4/交互2/SAM4/其他OpenAI6burst1。保留worker0和外写/发布/素材fetch禁用，原MPS及真实SAM/Gemini不变。交互dispatcher真实owner lease已验证，未为升级触发用户模型/生成。
+- 第一次静态核验漏认证401，已正常回旧代码/config，无DB恢复；纠正核验后重新空闲检查切换成功，失败备份保留。旧只读viewer及其他服务未动。
+- 用户入口仍为`http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5`。独立Chromium真实登录四入口、JS0，新静态资源字节一致。保持服务运行，等待父独立health核验；不自动打开识别编辑器或重提用户任务。
+- [升级记录](verification/frontend-background-user-upgrade-2026-11-03.md)及JSON；范围外确认问题无。生产未发布，main未合并。
+
+## 2026-11-02：资源调度固定候选独立验收（已退出）
+
+- 工作树`cut-mosaic-resource-scheduling`，源码候选`abd089fda3f2b60ed66e8d2359348d2f6860bd8b`；实际入口`exactcut.webserver.main`，私有启动器`source/.dev-state/resource-scheduling-20261102/launch_dev.py`。
+- 独立数据根`source/.dev-state/resource-scheduling-20261102/c3ef0f13/data`，同一根跨真实核心、补验及边界阶段保留；没有合并用户账号/草稿/媒体，也没有重置限流域。实际core浏览器入口曾为`resource-scheduling.localhost:62209/home/`，仅历史记录，当前不提供活链接。
+- 候选有效普通2/3/2/4总11、final1、字幕2+30、media5+final1及线程配置已比较。真实核心4次Gemini、7次六帧CPU SAM、普通FFmpeg3、完整A/B编码和独立Chromium恢复/播放；边界明确使用provider替身，不证明真实字幕/远端发布结果。
+- 所有本会话启动的临时dev已退出；最后服务PID59835已确认不存在，14个执行锁文件均可获取，交互pending/active均空。保留私有脚本、输入和全部证据，不靠重跑setup恢复旧实例。
+- 父review后的补丁源码`96c1aa5`另用同一配置和data root跑实际development main、ordinary worker0：冷cuts/mosaics准备与真实JPEG、维护等待、真实Hook缺片→补片重提均通过；普通入口仍503，新增付费请求0，服务退出码0。详见`review-worker0-dev.json`；不将旧abd089f模型混合实测标为新源码复测。
+- 18883、旧只读viewer及其他会话服务未更新或停止。新候选仍待父最终review，media5+1不能当作Linux生产容量核定。
+- 证据：[固定候选验收](verification/frontend-background-resource-scheduling-2026-11-02.md)及JSON；源码全量2049 passed/1 skipped/10既有警告。
+
+## 2026-11-02：交互并发实证与用户只读围观
+
+- 实现工作树：`/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-interactive-resources`；`feat/cut-mosaic-interactive-resources`。父review后，用户18883在空闲时一次正常SIGTERM升级到该已提交代码树c93dc49，新PID59032；原工作树clean、原数据根不变。334个保护文件在真实登录前SHA完全一致，详见 `docs/verification/cut-mosaic-interactive-user-upgrade-2026-11-02.json`。
+- 新独立数据根：上述树的 `source/.dev-state/interactive-real-20261102/data`；原材料仅复制，没有硬链接用户素材。真实Gemini/SAM、2认证交互用户、A/B最终串行、取消重提与完整音视频输出已验收；7次Gemini共用该data root的6RPM/burst2持久桶，不重置限流。
+- 自动验收实例随脚本完成关闭。用户要求围观后，另开只读 viewer；只允许登录、读取和打开已准备会话，不提交模型/最终任务，不启动dispatcher。
+- Paseo可见工作区「剪切打码 · 只读围观」：`wks_7ae28b03ffe1bd96`，服务 `viewer`，管理端口59038；代理URL `http://viewer--feat-cut-mosaic-interactive-resources--intera--98f3aff8.localhost:6767`。另保留直连只读端口51837，避免旧围观链接失效。均绑定127.0.0.1，不是公网入口；远端设备不能把自己的localhost当作本机。
+- 只读启动脚本在私有 `source/.dev-state/interactive-real-20261102/viewer.py`，管理配置在该目录paseo.json。围观凭据只在私有测试区和给用户的会话中提供，不提交。
+- 完整证据：`docs/verification/cut-mosaic-interactive-real-2026-11-02.md` 及JSON；CPU有界冒烟和本地同步搬运容量JSON单独记录。父独立45专项review通过后已完成本地18883交付；没有生产发布或Linux CPU容量认证。
+
+以下为此前盘点及约定：
+
 最后盘点：2026-10-13（Asia/Shanghai）。本记录区分已确认现状与后续约定，端口/PID/版本在操作前须重新检查。
 
 ## 已确定的使用方式
@@ -219,3 +259,25 @@ worktree 根为 `/Users/matao/.config/superpowers/worktrees/exact-cut-fbbm-hando
 真实 HTTP/Playwright 验证登录、六条素材、正确卡片/字段高亮、保存后聚焦、点击顶部提示定位、逐项纠正清除红色提示及刷新后保留初始错误。发现纳管保存期间输入框禁用导致过早聚焦失败，已改为操作恢复编辑状态后再聚焦；旧版/纳管两种回归及相关测试共18项通过。测试项目最终仍保留两处初始错误，未启动制作。已按用户要求用系统浏览器打开入口，服务保留供验收。
 
 用户要求扩大测试后，最终完整回归为1770 passed、1 skipped（既有 mosaic-only 比较条件），无失败；专项77项通过。补充修复特殊字符集号、空帧字段误判时间先后，以及复制纳管项目时持久化临时校验投影的问题，提交 `db4c684`。确认无活动任务/子进程后，8793 从已核验 PID 62449 重启为 PID 25659（操作前仍须重新核验），沿用原配置；healthz=ok/development、worker_alive=true，release `development-material-validation-db4c684`。重启前后测试项目 media-state.json SHA-256 一致；HTTP复核仍为6条素材、素材8的两处初始错误。用户编辑数据未重置，其他服务未动。
+
+## 2026-10-31 剪切打码后台队列（18883 临时实例已停止）
+
+D1 独立工作树 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue`，分支 `feat/cut-mosaic-background-queue`。使用指定 Python 3.12、独立合成视频/账号/配置，正式 worker、Gemini、外部写入与发布全部关闭；没有操作共享 8793/8801/8810/8821/8822。
+
+- 实际浏览器入口 `http://127.0.0.1:18883/home/#44856f4afe564766b8cc8ea8d5350a71`，启动器 `source/.dev-state/d1-mosaic-verified/start.py`，数据同目录 `data/`；历史 PID 15106。核验无 active/pending 后正常停止，端口已无监听，数据和私有登录信息保留。
+- `source/.dev-state/d1-mosaic-restart/` 为另一组独立合成数据；`restart_acceptance.py` 只管理自己 Popen 的服务。验证 queued 正常停服重启与 running/composing kill-9 重启，同 ID 继续处理且原片不变；结束后 wait 自有服务退出，再次核验18883无监听。
+- 真实 HTTP+Chromium+FFmpeg 验证关闭整个浏览器后完成、重新登录待确认、放弃保留参数、确认后以新 84 帧版本编辑；JS 错误为0。完整回归1921 passed / 1 skipped / 10既有fork警告，0失败。SAM跟踪推理使用明确mock遮罩，未声称真实SAM模型已验收。
+
+代码待父会话独立 review，未上线。公开截图、媒体哈希与逐项矩阵见[验证记录](verification/cut-mosaic-background-queue-2026-10-31.md)。操作任何历史 PID/入口前仍须重新核验。
+
+## 2026-10-31 四素材真实项目队列试用（18883 保留运行）
+
+用户明确要求现在开启本地dev并保留试用，优先使用此前已下载的真实项目。独立工作树仍为 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background-queue`，加载父 review 已通过的代码 `bfeab190d039aaef69278bd8afd76745146efb8e`；没有修改实现代码。
+
+- 用户入口：`http://mosaic-queue.localhost:18883/home/#0d6fdddb468348ad92e0cbd8f5de1db5`，名称「剪切打码后台队列测试 · 101682 · 四条真实素材（独立可编辑副本）」；账号 `mosaic_trial`，密码在私有0600 `source/.dev-state/cut-mosaic-user-trial-20261031/credentials.json`，不提交Git。
+- 当前 PID `71555`（后续操作前重新核验），指定Python3.12，cwd为本工作树source；启动器同私有目录 `start.py`，数据同目录 `data/`，日志 `server.log`。用户正在试用，不自动停止、重启或重新运行prepare覆盖数据。
+- 只从已有 release-review 本地副本复制四原片、四预览、必要结尾图片和4份身份匹配的完成字幕缓存；独立inode，无hardlink。源配置及原片不变，没有继承账号、任务或交付关联；来源清单在私有 `provenance.json`。
+- health=ok/development，release=development-mosaic-queue-user-bfeab19；正式worker/外部写入/发布/获取/扫描/SAM均关闭，队列默认1。手动固定打码、剪切及后续用户确认可用，字幕99/113/103/110句缓存可读，不生成新付费识别。
+- 已验证独立登录、4素材可编辑、8路视频Range206、4编辑器真实画面与首帧打开；JS错误0。交接前mosaic任务0、字幕pending/active0、制作jobs0、deliveries/outbox0，无预提交任务或草稿。保留原始可编辑状态供用户自行试用；其他服务未动。
+
+详细[试用准备与验证记录](verification/cut-mosaic-real-project-user-trial-2026-10-31.md)。真实视频、截图、数据、账号和密码均保留在私有忽略目录，不随Git分发。

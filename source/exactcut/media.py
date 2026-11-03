@@ -4,6 +4,8 @@ import json
 import re
 import subprocess
 import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 from typing import Any
 
@@ -13,16 +15,32 @@ from .util import load_config
 from . import diagnostics as diag
 
 
-def bounded_ffmpeg(command: list[str]) -> list[str]:
-    """Our media commands have one output; decoder options belong to each input."""
-    if not command or Path(command[0]).name != 'ffmpeg':
-        return command
+_encoder_budget=ContextVar("encoder_budget",default=None)
+
+
+@contextmanager
+def encoder_scope(threads):
+    if type(threads) is not int or not 1<=threads<=8:raise ValueError("encoder budget must be an integer from 1 to 8")
+    previous=_encoder_budget.get();token=_encoder_budget.set(min(threads,previous) if previous is not None else threads)
+    try:yield
+    finally:_encoder_budget.reset(token)
+
+
+def encoder_limit():
     section = load_config().get('media', {})
     if not isinstance(section, dict):
         raise ValueError('media 必须为对象')
     encoder_threads = section.get('encoder_threads', 4)
     if isinstance(encoder_threads, bool) or not isinstance(encoder_threads, int) or not 1 <= encoder_threads <= 8:
         raise ValueError('media.encoder_threads 必须为 1 到 8 的整数')
+    budget=_encoder_budget.get()
+    return min(encoder_threads,budget) if budget is not None else encoder_threads
+
+
+def bounded_ffmpeg(command: list[str]) -> list[str]:
+    """Our media commands have one output; decoder options belong to each input."""
+    if not command or Path(command[0]).name != 'ffmpeg':return command
+    encoder_threads=encoder_limit()
     bounded = [command[0], '-filter_threads', '1', '-filter_complex_threads', '1']
     for value in command[1:-1]:
         if value == '-i':
@@ -37,7 +55,11 @@ def run_checked(command: list[str], *, capture: bool = True, timeout: int = 3600
     tool = Path(command[0]).name
     diag.event('media.started', tool=tool, timeout_seconds=timeout)
     try:
-        result = subprocess.run(command, text=True, capture_output=capture, timeout=timeout)
+        from . import editor_resources,processing_cancel
+        # Full-frame indexing is long media; metadata probes use the short pool.
+        resource=editor_resources.stage('frame') if tool=='ffprobe' and '-show_frames' not in command else editor_resources.media_stage()
+        with resource:
+            result = processing_cancel.run(command, text=True, capture_output=capture, timeout=timeout)
     except subprocess.TimeoutExpired as exc:
         diag.event('media.timeout', level='error', tool=tool, timeout_seconds=timeout,
                    duration_ms=round((time.monotonic()-started)*1000))

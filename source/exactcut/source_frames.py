@@ -1,28 +1,13 @@
 """Source frame indexing and conversion to the existing millisecond timeline."""
 import json
+import time
 from bisect import bisect_left
 import math
 import re
-import threading
-from contextlib import contextmanager
 from fractions import Fraction
 
-from . import media, source_prefetch, workflow
+from . import media, source_prefetch, workflow, resource_locks
 from .util import json_sha256, read_json, write_json_atomic
-
-# Bound background indexing; never probe under the durable mutation lock.
-_SLOTS = threading.BoundedSemaphore(2)
-
-
-@contextmanager
-def _slot():
-    if not _SLOTS.acquire(blocking=False):
-        raise ValueError('准确帧资源繁忙，请稍后重试')
-    try:
-        yield
-    finally:
-        _SLOTS.release()
-
 
 def _video(drama, episode):
     try:
@@ -50,34 +35,65 @@ def prepare(path, draft, episode):
     key = json_sha256({'version': 1, 'drama': drama, 'episode': episode, 'signature': signature})
     target = path / 'source-picker' / key / 'index.json'
     if target.is_file():
-        return _public(read_json(target))
-    with _slot():
-        try:
-            result = media.run_checked(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
-                '-show_frames', '-show_streams', '-show_format', '-show_entries',
-                'frame=pts,key_frame:stream=time_base,avg_frame_rate,duration,start_time:format=start_time,duration',
-                '-of', 'json', str(video)], timeout=180)
-            probe = json.loads(result.stdout)
-            stream = probe['streams'][0]
-            frames = probe['frames']
-            clock = Fraction(stream['time_base'])
-            origin = Fraction(probe['format']['start_time'])
-            pts = [int(f['pts']) for f in frames]
-            times = [math.floor((p * clock - origin) * 1000) for p in pts]
-            end = (Fraction(stream['start_time']) + Fraction(stream['duration']) - origin) * 1000
-            duration = math.ceil(end)
-            if not times or len(times) > 1_000_000 or times[0] < 0 or any(a >= b for a, b in zip(times, times[1:])) or duration <= times[-1]:
-                raise ValueError('unsupported timestamps')
-            doc = {'key': key, 'drama': drama, 'episode': episode,
-                   'signature': signature, 'fps': stream['avg_frame_rate'],
-                   'times_ms': times, 'duration_ms': duration, 'pts': pts,
-                   'keyframes': [i for i, f in enumerate(frames) if f['key_frame']],
-                   'time_base': str(clock), 'origin': str(origin)}
-            if _fingerprint(video) != signature:
-                raise ValueError('source changed')
-            write_json_atomic(target, doc)
-        except (RuntimeError, OSError, KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
-            raise ValueError('正片帧索引暂不可用，请重新准备正片后重试') from None
+        return _public(_load(path,key)[0])
+    from . import cutting, editor_resources
+    from .stage_results import ResourceDeferred
+    phase='lock'
+    try:
+        with resource_locks.hold('source-index',key):
+            phase='build'
+            if target.is_file():return _public(_load(path,key)[0])
+            # Projects retain their existing index.json layout. Reuse a validated
+            # same-video index already published by another project under this key.
+            for cached in workflow.BATCHES.glob('*/source-picker/'+key+'/index.json'):
+                if any(part.is_symlink() for part in (cached,cached.parent,cached.parent.parent)):continue
+                try:
+                    doc,_,_=_load(cached.parents[2],key)
+                    if doc.get('key')!=key or doc.get('signature')!=signature:continue
+                except (OSError,ValueError,KeyError,TypeError):continue
+                source_prefetch.ensure_editable(path)
+                if _fingerprint(video)!=signature:raise ValueError('正片已变化，请重新准备帧索引')
+                write_json_atomic(target,doc);return _public(doc)
+            # Never hold the identity lock while waiting for a media slot: probe
+            # admission first, defer the job if the pool is busy, then probe.
+            try:
+                lease=editor_resources.acquire('media')
+            except cutting.ResourceBusy:
+                raise ResourceDeferred(time.time()+.5) from None
+            with editor_resources.reservation(('media',lease)):
+                try:
+                    result = media.run_checked(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
+                        '-show_frames', '-show_streams', '-show_format', '-show_entries',
+                        'frame=pts,key_frame:stream=time_base,avg_frame_rate,duration,start_time:format=start_time,duration',
+                        '-of', 'json', str(video)], timeout=180)
+                    probe = json.loads(result.stdout)
+                    stream = probe['streams'][0]
+                    frames = probe['frames']
+                    clock = Fraction(stream['time_base'])
+                    origin = Fraction(probe['format']['start_time'])
+                    pts = [int(f['pts']) for f in frames]
+                    times = [math.floor((p * clock - origin) * 1000) for p in pts]
+                    end = (Fraction(stream['start_time']) + Fraction(stream['duration']) - origin) * 1000
+                    duration = math.ceil(end)
+                    if not times or len(times) > 1_000_000 or times[0] < 0 or any(a >= b for a, b in zip(times, times[1:])) or duration <= times[-1]:
+                        raise ValueError('unsupported timestamps')
+                    doc = {'key': key, 'drama': drama, 'episode': episode,
+                           'signature': signature, 'fps': stream['avg_frame_rate'],
+                           'times_ms': times, 'duration_ms': duration, 'pts': pts,
+                           'keyframes': [i for i, f in enumerate(frames) if f['key_frame']],
+                           'time_base': str(clock), 'origin': str(origin)}
+                    if _fingerprint(video) != signature:
+                        raise ValueError('source changed')
+                    write_json_atomic(target, doc)
+                except ResourceDeferred:
+                    raise
+                except (RuntimeError, OSError, KeyError, IndexError, TypeError, ValueError, ZeroDivisionError):
+                    raise ValueError('正片帧索引暂不可用，请重新准备正片后重试') from None
+    except TimeoutError:
+        # Contention on the identity lock is transient; the job keeps its place.
+        if phase=='lock':
+            raise ResourceDeferred(time.time()+.5) from None
+        raise
     return _public(doc)
 
 

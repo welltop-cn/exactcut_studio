@@ -9,6 +9,7 @@ import time
 from . import cutting, cutting_scan as scan, mosaic_session as sessions, cutting_access, workflow, diagnostics
 from .stage_results import ResourceDeferred
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
+from . import editor_resources, processing_cancel
 
 PROMPT = '''识别当前图片中可能需要人工打码复核的敏感裸露或色情化身体区域，只框出可见区域。
 普通穿衣、正常拥抱、单纯露肩或腿不应仅凭皮肤面积判定。只描述可见事实，不推测身份或年龄。
@@ -44,16 +45,13 @@ def checked_candidates(text,meta):
 
 
 def detect(jpeg,meta,cfg,key,*,deadline=None):
+    editor_resources.release_reservation()
     from google import genai
     from google.genai import types
     client=genai.Client(api_key=key,http_options=types.HttpOptions(timeout=cfg['request_timeout_ms'],retry_options=types.HttpRetryOptions(attempts=1)))
     try:
         deadline=min(deadline,time.monotonic()+180) if deadline is not None else time.monotonic()+180
-        with diagnostics.span('mosaic.region_rate_wait',private_error=True,model=cfg['model']):
-            while True:
-                if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:raise cutting.CutError('区域识别等待超时，请重试')
-                try:scan.ai_rate.acquire();break
-                except ResourceDeferred as exc:time.sleep(min(1,max(.05,exc.not_before-time.time())))
+        if time.monotonic()+cfg['request_timeout_ms']/1000>deadline:raise cutting.CutError('区域识别等待超时，请重试')
         with diagnostics.span('mosaic.region_request',private_error=True,model=cfg['model'],timeout_ms=cfg['request_timeout_ms']):
             response=client.models.generate_content(model=cfg['model'],contents=[types.Part.from_bytes(data=jpeg,mime_type='image/jpeg'),types.Part.from_text(text=PROMPT)],
                 config=types.GenerateContentConfig(response_mime_type='application/json',response_schema=deepcopy(SCHEMA)))
@@ -80,15 +78,18 @@ def recover(path):
     if job['status']=='running':
         try:lease=cutting.lock_file(path.with_suffix('.worker.lock'))
         except cutting.CutError:return job
-        lease.close();job.update(status='failed',error='上次区域识别已中断，请重新识别');write_json_atomic(path,job)
+        lease.close();processing_cancel.recover_interrupted(job,'上次区域识别已中断，请重新识别');write_json_atomic(path,job)
     return job
 
 
-def current(bid,sid,job):
+def current(bid,sid,job,*,permit=None,readonly=False):
     session=sessions.read_session(bid,sid)
+    if permit is not None:
+        if not isinstance(permit,cutting_access.InteractiveReadPermit):raise cutting.CutError("无效交互任务许可",409)
+        permit.require(session,job)
     cutting.require_reset(session,job['reset_at'])
     if session['source_sha256']!=job['source_sha256']:raise cutting.CutError('原片版本已变化，请重新打开',409)
-    cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
+    cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'],readonly=readonly or permit is not None)
     return session
 
 
@@ -98,42 +99,33 @@ def state(bid,sid,jid):
     with cutting.lock_file(path.parent/'locate-state.lock',blocking=True):
         job=recover(path)
         if not job:raise cutting.CutError('区域识别任务不存在',404)
-        current(bid,sid,job)
+        current(bid,sid,job,readonly=True)
         return job
 
 
-def start(bid,sid,start,end,seed,reset_at):
+def start(bid,sid,start,end,seed,reset_at,*,actor='admin'):
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
         session=sessions.read_session(bid,sid);validate(session,start,end,seed,reset_at)
         cutting_access.require_editable(workflow.folder(bid),session['request_id'],source_sha=session['source_sha256'])
         if not scan.enabled():raise cutting.CutError('区域识别未启用；请配置本机识别凭据',503)
-        cfg=scan.settings();key=scan.credential();jid=identity(session,start,end,seed,cfg)
+        cfg=scan.settings();scan.credential();jid=identity(session,start,end,seed,cfg)
         path=sessions.session_path(bid,sid)/f'locate-{jid}.json'
         with cutting.lock_file(path.parent/'locate-state.lock',blocking=True):
             previous=recover(path)
-            if previous and previous['status'] in ('running','completed'):return previous
-            leases=[]
-            try:
-                for target,shared,resource in [(cutting.lock_root()/'scan.lock',False,'scan'),(path.with_suffix('.worker.lock'),False,None),(cutting.lock_root()/f'{bid}.lock',True,None)]:
-                    leases.append(cutting.lock_file(target,shared=shared,resource=resource))
-                job={'schema_version':1,'id':jid,'status':'running','source_sha256':session['source_sha256'],'reset_at':session.get('reset_at',''),
-                     'start':start,'end':end,'seed_frame':seed,'model':cfg['model'],'candidates':[],'created_at':now_iso(),'progress':'正在识别所选帧','notice':NOTICE}
-                write_json_atomic(path,job)
-            except Exception:
-                for lease in reversed(leases):lease.close()
-                raise
-    # Start only after releasing admission/state locks: even a cached-frame response
-    # may complete immediately, and final validation needs the same admission gate.
-    try:
-        threading.Thread(target=copy_context().run,args=(_work,bid,sid,path,job,cfg,key,leases),daemon=True).start()
-    except Exception:
-        for lease in reversed(leases):lease.close()
-        raise
+            if previous and previous['status'] in ('queued','running','completed'):return previous
+            job={'schema_version':1,'id':jid,'status':'queued','actor':actor,'source_sha256':session['source_sha256'],'reset_at':session.get('reset_at',''),
+                 'start':start,'end':end,'seed_frame':seed,'model':cfg['model'],'candidates':[],'created_at':now_iso(),'progress':'区域识别已接收，等待处理','notice':NOTICE}
+            from . import interactive_queue
+            interactive_queue.enqueue('locate',session,path,job,cfg,state_lock=path.parent/'locate-state.lock')
     return job
 
+def _work(bid,sid,path,job,cfg,key,leases,permit=None):
+    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases), editor_resources.encoding():
+        _work_scoped(bid,sid,path,job,cfg,key,leases,permit)
 
-def _work(bid,sid,path,job,cfg,key,leases):
+
+def _work_scoped(bid,sid,path,job,cfg,key,leases,permit=None):
     started=time.monotonic();phase='source_validate'
     diagnostics.bind(batch_id=bid,session_id=sid,job_id=job['id'],model=cfg['model'])
     diagnostics.event('mosaic.locate_started',frame=job['seed_frame'])
@@ -141,7 +133,7 @@ def _work(bid,sid,path,job,cfg,key,leases):
         with cutting.lock_file(path.parent/'locate-state.lock',blocking=True):
             saved=read_json(path);saved.update(fields);write_json_atomic(path,saved)
     try:
-        session=current(bid,sid,job);source=path.parent/'source.mp4'
+        session=current(bid,sid,job,permit=permit);source=path.parent/'source.mp4'
         diagnostics.bind(request_id=session['request_id'])
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败，未进行识别')
         phase='frame_extract'
@@ -150,11 +142,13 @@ def _work(bid,sid,path,job,cfg,key,leases):
         phase='region_detect'
         candidates=detect(jpeg,session['metadata'],cfg,key)
         phase='final_validate'
-        with cutting_access.gate(workflow.folder(bid),session['request_id']):
-            current(bid,sid,job)
+        with cutting_access.gate(workflow.folder(bid),session['request_id'],readonly=permit is not None):
+            current(bid,sid,job,permit=permit)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败，结果已失效')
             update(candidates=candidates,status='completed',completed_at=now_iso(),progress='区域识别完成，请人工复核')
         diagnostics.event('mosaic.locate_completed',candidate_count=len(candidates),duration_ms=round((time.monotonic()-started)*1000))
+    except ResourceDeferred:
+        raise
     except Exception as exc:
         diagnostics.event('mosaic.locate_failed',level='error',phase=phase,duration_ms=round((time.monotonic()-started)*1000),error=diagnostics.private_exception(exc))
         update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '区域识别失败，请重试；原成片未修改')

@@ -1,0 +1,396 @@
+{
+  "schema_version": 1,
+  "source_revision": "96c1aa555e35c394178723afd7d65e22c0142597",
+  "baseline": "9b4b2bb",
+  "full_regression": {
+    "passed": 2057,
+    "skipped": 1,
+    "existing_fork_warnings": 10,
+    "seconds": 673.17,
+    "source_revision": "96c1aa555e35c394178723afd7d65e22c0142597",
+    "log": "/tmp/d1-resource-full-96c1aa5.log",
+    "status": "passed"
+  },
+  "entry": "exactcut.webserver.main",
+  "effective_profile": {
+    "ordinary": {
+      "fetch": 2,
+      "render": 3,
+      "upload": 2,
+      "poll": 4,
+      "max_active_children": 11,
+      "enabled": true
+    },
+    "remaining_openai_budget": {
+      "requests_per_minute": 6,
+      "burst": 1
+    },
+    "interactive_execution": {
+      "preview_tasks": 2,
+      "scan_tasks": 2,
+      "preprocess_tasks": 2,
+      "media_tasks": 5,
+      "final_media_tasks": 1,
+      "frame_tasks": 2,
+      "transfer_tasks": 2,
+      "encoder_threads": 2
+    },
+    "mosaic_final": 1,
+    "subtitles": {
+      "max_active_tasks": 2,
+      "max_queued_tasks": 30
+    },
+    "ffmpeg_threads": 4,
+    "sam_threads": 4
+  },
+  "configuration_comparison": "same-version candidate production baseline; no claim of online runtime inspection",
+  "differences": [
+    "ephemeral port, loopback bind, fresh persistent private data root",
+    "test accounts and separately declared real/fake credentials",
+    "CPU device; same business limits, model processing settings and thread limits",
+    "external publish/upload disabled; provider doubles explicitly labelled in boundary phase"
+  ],
+  "real_core": {
+    "real_gemini_requests": 4,
+    "gemini_bucket_unchanged": true,
+    "source_files_unchanged": true,
+    "foreground_latency_seconds": {
+      "count": 44,
+      "p50": 0.004839938133955002,
+      "p95": 0.037153208162635565,
+      "max": 0.0861577088944614
+    },
+    "resource_maxima": {
+      "media": 5,
+      "final_media": 1,
+      "frame": 2,
+      "preview": 2,
+      "scan": 2,
+      "transfer": 0
+    },
+    "maximum_long_media": 6,
+    "maximum_ordinary_ffmpeg": 3,
+    "rss_sum_peak_kib": 6899808,
+    "cpu_ps_average_sum_peak": 968.1,
+    "minimum_disk_available_bytes": 5158707777536,
+    "final_outputs": [
+      {
+        "request_id": "20260902-01",
+        "job_id": "91f99d55b0194ce5b26409c2d10a3235",
+        "metadata": {
+          "fps_num": 30,
+          "fps_den": 1,
+          "frame_count": 6187,
+          "width": 1080,
+          "height": 1920,
+          "has_audio": true
+        },
+        "sha256": "50aba331b68708c087466e8f344c8cd82021912102987a3f721ffe5e744826d2",
+        "audio_streams": 1
+      },
+      {
+        "request_id": "queue-second",
+        "job_id": "5fb021b6688540bbb922ab3ce13abeeb",
+        "metadata": {
+          "fps_num": 30,
+          "fps_den": 1,
+          "frame_count": 60,
+          "width": 160,
+          "height": 96,
+          "has_audio": true
+        },
+        "sha256": "53f7ad9fd9be3ac0382eb7d5e11c7ac2e94952e08c469063640340a72bee9d42",
+        "audio_streams": 1
+      }
+    ]
+  },
+  "sam": {
+    "executions": 7,
+    "target_frames_per_execution": 6,
+    "same_account_three_material_mask_overlap_seconds": 7.599335247,
+    "two_user_mask_overlap_seconds": 11.843183236,
+    "samples_with_real_mask_overlap_and_ordinary_ffmpeg3_and_media5_final1": 9
+  },
+  "ordinary_output_count": 3,
+  "ordinary_output_statuses": [
+    "qc_passed",
+    "qc_passed",
+    "qc_passed"
+  ],
+  "browser": {
+    "status": "passed",
+    "entry": "http://resource-scheduling.localhost:62209/home/#2327060d1a494fb49cb77ba7c4908536",
+    "api_mocks": false,
+    "model_mocks": false,
+    "source_frames_mocked": false,
+    "queued_text": "预览已排队，可返回继续编辑；后台轮到后自动处理。",
+    "reopened_and_resumed": true,
+    "editing_not_disabled": true,
+    "playback_seconds": 0.061907,
+    "javascript_errors": [],
+    "preview_job_id": "96f72c3d6449a38375060414214014a5"
+  },
+  "boundaries": {
+    "provider_doubles": [
+      "OpenAI response transport for intake",
+      "Gemini response for subtitle queue only",
+      "catalog remote subprocess"
+    ],
+    "text_excel": {
+      "provider_calls_concurrent": 4,
+      "blank_while_provider_blocked_seconds": 0.04825650015845895,
+      "same_bucket_unchanged": true,
+      "http_statuses": [
+        200,
+        200,
+        201,
+        201
+      ]
+    },
+    "subtitles": {
+      "active": 2,
+      "pending": 30,
+      "accepted": 32,
+      "thirty_third_status": 429,
+      "duplicate_did_not_grow_pending": true,
+      "pending_fifo": true,
+      "completed": 32,
+      "provider_double": true,
+      "actual_proxy_ffmpeg": true
+    },
+    "hook_and_frame_recovery": {
+      "hook_receipts": 6,
+      "duplicate_ids_reused": true,
+      "actor_from_session": true,
+      "maintenance_pending": 7,
+      "after_restart_same_frame_receipt": true,
+      "changed_input": "superseded",
+      "other_hook_jobs_completed": 5,
+      "cold_frame_final": "200 JPEG",
+      "dispatcher_source": "real actual dev main"
+    },
+    "ordinary_admission": {
+      "accepted": 12,
+      "http_status": 202,
+      "persisted_pending_or_running": 12,
+      "remote_provider_double": true,
+      "completed": 12,
+      "ordinary_render3_actual_ffmpeg_proof": "verified-real-dev-evidence.json"
+    },
+    "real_gemini_call_count_unchanged": true
+  },
+  "evidence_root": "/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-resource-scheduling/source/.dev-state/resource-scheduling-20261102/c3ef0f13",
+  "scenario_separation": {
+    "core_first_attempt": "real mixed execution recorded; controller later sent wrong C SHA and received protected409",
+    "completion_followup": "C correct-version open/save and natural A/B completion; controller awaited wrong legacy aggregate result path",
+    "read_only_verification": "authoritative workflow.result_records and real encoded media verified, no app/source/result edits",
+    "preserved_attempts": [
+      "attempts/02-controller-wrong-c-sha",
+      "attempts/03-legacy-result-path",
+      "attempts/04-intake-provider-fixture-template",
+      "attempts/05-missing-double-subtitle-key"
+    ]
+  },
+  "capacity_status": "media5 + dedicated final1 is representative Mac functional evidence only; not Linux/long-mask maximum-capacity certification or production approval",
+  "deployment": {
+    "user_18883_updated": true,
+    "parent_final_review": "passed before explicit local upgrade authorization",
+    "production_deployment": false,
+    "upgrade_evidence": "frontend-background-user-upgrade-2026-11-03.json",
+    "parent_independent_post_update_health": "pending"
+  },
+  "model_configuration_comparison": {
+    "baseline": "explicit candidate model settings from known runtime, not current online runtime",
+    "all_cutting_processing_settings_equal_after_declared_environment_exceptions": true,
+    "candidate_model_settings_sha256": "fa616361399aa85263aa971115e5ec7b10cc6389068a0a2ea4ca743bf67fdb3e",
+    "declared_exceptions": {
+      "device": {
+        "known_baseline": "mps",
+        "dev": "cpu"
+      },
+      "external_oss_playback": {
+        "known_baseline": null,
+        "dev": false
+      }
+    },
+    "candidate_business_profile": {
+      "ordinary": {
+        "fetch": 2,
+        "render": 3,
+        "upload": 2,
+        "poll": 4,
+        "max_active_children": 11,
+        "enabled": true
+      },
+      "remaining_openai_budget": {
+        "requests_per_minute": 6,
+        "burst": 1
+      },
+      "interactive_execution": {
+        "preview_tasks": 2,
+        "scan_tasks": 2,
+        "preprocess_tasks": 2,
+        "media_tasks": 5,
+        "final_media_tasks": 1,
+        "frame_tasks": 2,
+        "transfer_tasks": 2,
+        "encoder_threads": 2
+      },
+      "mosaic_final": 1,
+      "subtitles": {
+        "max_active_tasks": 2,
+        "max_queued_tasks": 30
+      },
+      "ffmpeg_threads": 4,
+      "sam_threads": 4
+    },
+    "effective_development_profile": {
+      "ordinary": {
+        "fetch": 2,
+        "render": 3,
+        "upload": 2,
+        "poll": 4,
+        "max_active_children": 11,
+        "enabled": true
+      },
+      "remaining_openai_budget": {
+        "requests_per_minute": 6,
+        "burst": 1
+      },
+      "interactive_execution": {
+        "preview_tasks": 2,
+        "scan_tasks": 2,
+        "preprocess_tasks": 2,
+        "media_tasks": 5,
+        "final_media_tasks": 1,
+        "frame_tasks": 2,
+        "transfer_tasks": 2,
+        "encoder_threads": 2
+      },
+      "mosaic_final": 1,
+      "subtitles": {
+        "max_active_tasks": 2,
+        "max_queued_tasks": 30
+      },
+      "ffmpeg_threads": 4,
+      "sam_threads": 4
+    }
+  },
+  "owned_service_shutdown": {
+    "execution_lock_files_checked": 14,
+    "busy_execution_locks": [],
+    "interactive_pending": 0,
+    "interactive_active": 0,
+    "last_owned_service_pid": 59835,
+    "last_owned_service_alive": false
+  },
+  "real_core_source_revision": "abd089fda3f2b60ed66e8d2359348d2f6860bd8b",
+  "boundary_source_revision": "abd089fda3f2b60ed66e8d2359348d2f6860bd8b",
+  "parent_review_patches": {
+    "ordinary_worker_independence": "81d66ac",
+    "hook_source_identity": "96c1aa5",
+    "main_red": {
+      "failed_worker0": 2,
+      "passed_worker1": 2,
+      "log": "/tmp/d1-main-worker-disabled-red.log"
+    },
+    "main_lifecycle_green": {
+      "passed": 14,
+      "seconds": 9.02,
+      "log": "/tmp/d1-main-worker-disabled-green.log"
+    },
+    "hook_red": {
+      "failed": 3,
+      "log": "/tmp/d1-hook-source-identity-red.log"
+    },
+    "hook_related_green": {
+      "passed": 48,
+      "seconds": 20.96,
+      "log": "/tmp/d1-hook-source-identity-current.log"
+    },
+    "parent_independent_tests": {
+      "passed": 14,
+      "seconds": 12.79
+    },
+    "actual_development_worker0": {
+      "revision": "96c1aa555e35c394178723afd7d65e22c0142597",
+      "entry": "exactcut.webserver.main",
+      "environment": "development",
+      "ordinary_worker_enabled": false,
+      "provider_doubles": false,
+      "source": "parent review regressions only; old mixed model evidence remains abd089f",
+      "status": "passed",
+      "effective_profile": {
+        "ordinary": {
+          "fetch": 2,
+          "render": 3,
+          "upload": 2,
+          "poll": 4,
+          "max_active_children": 11,
+          "enabled": true
+        },
+        "remaining_openai_budget": {
+          "requests_per_minute": 6,
+          "burst": 1
+        },
+        "interactive_execution": {
+          "preview_tasks": 2,
+          "scan_tasks": 2,
+          "preprocess_tasks": 2,
+          "media_tasks": 5,
+          "final_media_tasks": 1,
+          "frame_tasks": 2,
+          "transfer_tasks": 2,
+          "encoder_threads": 2
+        },
+        "mosaic_final": 1,
+        "subtitles": {
+          "max_active_tasks": 2,
+          "max_queued_tasks": 30
+        },
+        "ffmpeg_threads": 4,
+        "sam_threads": 4
+      },
+      "editors": [
+        {
+          "family": "cuts",
+          "preparation": "202->completed",
+          "frame": "202->200 JPEG"
+        },
+        {
+          "family": "mosaics",
+          "preparation": "202->completed",
+          "frame": "202->200 JPEG"
+        }
+      ],
+      "hook": {
+        "first_layout_only": true,
+        "same_draft_after_arrival_new_receipt": true,
+        "new_result_has_frame": true,
+        "old_input_current": false,
+        "unchanged_source_reuses_receipt": true
+      },
+      "ordinary_requests_rejected_503": true,
+      "new_paid_model_requests": 0,
+      "server_exit_code": 0
+    },
+    "new_full_regression": {
+      "passed": 2057,
+      "skipped": 1,
+      "existing_fork_warnings": 10,
+      "seconds": 673.17,
+      "source_revision": "96c1aa555e35c394178723afd7d65e22c0142597",
+      "log": "/tmp/d1-resource-full-96c1aa5.log",
+      "status": "passed"
+    },
+    "evidence_boundary": "Old real model/CPU mixed evidence remains abd089f; new patch rechecks actual main worker0 and real Hook/frame paths without repeating paid model load."
+  },
+  "prior_full_regression": {
+    "passed": 2049,
+    "skipped": 1,
+    "existing_fork_warnings": 10,
+    "seconds": 660.13,
+    "log": "/tmp/d1-resource-scheduling-full-abd089f.log",
+    "source_revision": "abd089fda3f2b60ed66e8d2359348d2f6860bd8b"
+  }
+}

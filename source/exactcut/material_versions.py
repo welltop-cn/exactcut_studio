@@ -241,7 +241,19 @@ def _mutation(path, data, action, operation):
         if data.get('revision') != state['revision']:
             raise ValueError('项目已在其他页面更新，请刷新后重试')
         before_versions, before_deliveries, before_assets = set(state['versions']), set(state['deliveries']), set(state['assets'])
+        frozen_before=copy.deepcopy(state)
         operation(state)
+        from . import mosaic_queue
+        from .cutting_access import require_unfrozen
+        for item in mosaic_queue.load()['tasks']:
+            if item['batch_id']!=path.name or not mosaic_queue.blocked(path.name,item['request_id']):continue
+            rid=item['request_id']
+            metadata=lambda s:{k:v for k,v in s['draft'].items() if k!='rows'}
+            if (state['assets'].get(rid)!=frozen_before['assets'].get(rid)
+                    or state['control']!=frozen_before['control'] or state['deleted_at']!=frozen_before['deleted_at']
+                    or metadata(state)!=metadata(frozen_before)
+                    or any(v.get('asset_id')==rid and v!=frozen_before['versions'].get(k) for k,v in state['versions'].items())):
+                require_unfrozen(path,rid)
         state['revision'] += 1
         state['updated_at'] = now_iso()
         message = {'confirm': '内容已确认，等待制作', 'pause': '已请求暂停',
@@ -371,7 +383,7 @@ def reserved_names(path):
 
 def confirm(path, data):
     from .cutting_access import gate
-    with gate(path):
+    with gate(path,readonly=True):
         return _confirm(path, data)
 
 
