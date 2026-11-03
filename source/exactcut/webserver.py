@@ -1320,7 +1320,14 @@ class Handler(BaseHTTPRequestHandler):
                         options = {'receipt': receipt} if receipt else {}
                         if original: options['download_name'] = output.name
                         options['save_receipt'] = lambda receipt: preview_oss.save_media_receipt(path / 'production', request_id, record, output, receipt, original=original)
-                        result = preview_oss.signed_preview(output, batch_id, request_id, **options)
+                        result = preview_oss.signed_preview(output, batch_id, request_id, wait=False, **options)
+                    except preview_oss.PreviewBusy:
+                        # Existing local playback must never wait for an upload slot.
+                        diag.event('preview.oss_deferred', level='info', batch_id=batch_id)
+                        if original:
+                            return self.stream_video(output)
+                        from urllib.parse import quote
+                        return self.respond(200, {'url': f'/api/batches/{batch_id}/preview/{quote(request_id, safe="")}', 'expires_in': 0})
                     except Exception as exc:
                         # Never include SDK request URLs/signatures in client errors or logs.
                         diag.event('preview.oss_failed', level='warning', batch_id=batch_id, error_type=type(exc).__name__)

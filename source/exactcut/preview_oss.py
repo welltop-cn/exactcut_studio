@@ -1,4 +1,5 @@
 """Private preview copies. Never delete objects or modify bucket-wide settings."""
+from contextlib import contextmanager
 from pathlib import Path
 import shutil
 import tempfile
@@ -7,10 +8,36 @@ from urllib.parse import quote
 
 from .runtime import environment
 from .util import file_sha256, load_config, env
-from . import diagnostics as diag, resource_locks, editor_resources
+from . import cutting, diagnostics as diag, resource_locks, editor_resources
 
 # Restricted namespaces: configuration cannot redirect writes into delivery keys.
 PREFIX = 'exactcut-previews/production'
+HTTP_OBJECT_LOCK_TIMEOUT = 2.0
+
+
+class PreviewBusy(RuntimeError):
+    """Existing local playback must not wait for a transfer slot or object lock."""
+
+
+@contextmanager
+def _transfer_stage(wait):
+    if wait:
+        with editor_resources.stage('transfer'): yield
+        return
+    try: lease = editor_resources.acquire('transfer')
+    except cutting.ResourceBusy:
+        raise PreviewBusy('预览上传正在等待传输资源') from None
+    with lease: yield
+
+
+@contextmanager
+def _object_lock(keys, wait):
+    try:
+        with resource_locks.hold('oss-object', keys, timeout=180 if wait else HTTP_OBJECT_LOCK_TIMEOUT):
+            yield
+    except TimeoutError:
+        if not wait: raise PreviewBusy('预览对象正在准备') from None
+        raise
 
 
 def object_prefix():
@@ -36,9 +63,9 @@ def _connect():
     return bucket
 
 
-def signed_preview(video: Path, batch_id: str, request_id: str, *, bucket=None, receipt=None, download_name=None, save_receipt=None):
+def signed_preview(video: Path, batch_id: str, request_id: str, *, bucket=None, receipt=None, download_name=None, save_receipt=None, wait=True):
     bucket = bucket if bucket is not None else _connect()
-    verified = _ensure_uploaded(video, batch_id, request_id, bucket=bucket, receipt=receipt)
+    verified = _ensure_uploaded(video, batch_id, request_id, bucket=bucket, receipt=receipt, wait=wait)
     if save_receipt:
         save_receipt(verified)
     options = {}
@@ -109,7 +136,7 @@ def _identity(video):
     return [stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns]
 
 
-def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, receipt=None):
+def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, receipt=None, wait=True):
     if not re.fullmatch(r'[0-9a-f]{32}', batch_id):
         raise ValueError('无效项目编号')
     request_key = quote(request_id, safe='')
@@ -125,7 +152,7 @@ def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, rec
     before = _identity(video)
     with tempfile.TemporaryDirectory(prefix='.oss-preview-', dir=video.parent) as directory:
         snapshot = Path(directory) / 'preview.mp4'
-        with editor_resources.stage('transfer'):
+        with _transfer_stage(wait):
             shutil.copyfile(video, snapshot)
             if _identity(video) != before:
                 raise ValueError('成片正在更新，请稍后重试')
@@ -133,7 +160,7 @@ def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, rec
         key = prefix + digest + '.mp4'
         # The complete remote identity avoids fixed shards and same-prefix
         # collisions. A second process rechecks existence after the first put.
-        with resource_locks.hold('oss-object',[bucket.endpoint,bucket.bucket_name,key]), editor_resources.stage('transfer'):
+        with _object_lock([bucket.endpoint,bucket.bucket_name,key],wait), _transfer_stage(wait):
             if not bucket.object_exists(key):
                 try:
                     result = bucket.put_object_from_file(key, str(snapshot), headers={
