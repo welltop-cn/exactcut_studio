@@ -258,7 +258,7 @@
         scanReport=state.report;
         const events=scanReport?.status==='completed' ? scanReport.risk_events : [];
         if(scanReport?.status==='completed')ingestSuggestions(events);else paintRiskMarkers();
-        $('cutScanStatus').textContent=!state.enabled?'本机未启用识别，可手动选片段。':!scanReport?'暂无识别记录':scanReport&&['queued','running','cancelling'].includes(scanReport.status)?(scanReport.progress||'已接收，等待后台处理…'):['failed','cancelled','superseded'].includes(scanReport?.status)?EditorBusy.message(scanReport.error||scanReport.progress,'本次识别未完成'):events.length?'勾选要删除的片段；AI 建议仅供参考。':'本次抽样未发现疑似内容，仍请检查视频。';
+        $('cutScanStatus').textContent=!state.enabled?'本机未启用识别，可手动选片段。':!scanReport?'暂无识别记录':scanReport&&['queued','running','cancelling'].includes(scanReport.status)?(scanReport.progress||'已接收，等待后台处理…'):['failed','cancelled','superseded'].includes(scanReport?.status)?EditorBusy.message(scanReport.error||scanReport.progress,scanReport?.status==='failed'?'识别未完成，请重试':'本次识别未完成'):events.length?'勾选要删除的片段；AI 建议仅供参考。':'本次抽样未发现疑似内容，仍请检查视频。';
         if (!['queued','running','cancelling'].includes(scanReport?.status)) { $('cutScan').disabled=!state.enabled; return; }
         await new Promise(r=>setTimeout(r,1500)); if(!valid())return; state=await api(base+'/scan/standard');
       }
