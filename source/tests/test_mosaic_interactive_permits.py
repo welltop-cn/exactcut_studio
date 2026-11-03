@@ -15,8 +15,7 @@ def test_pre_admitted_read_task_finishes_after_same_asset_final_is_queued(ready,
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch);session=sessions.open_session(bid,rid,sha)
     entered=threading.Event();finish=threading.Event();path=None
     def wait():entered.set();assert finish.wait(8)
-    def scan(src,meta,cfg,policy,key,progress,compute,**kwargs):
-        if compute is not None:compute.close()
+    def scan(src,meta,cfg,policy,key,progress,**kwargs):
         wait();return {'risk_events':[],'warnings':[]}
     def locate(*args,**kwargs):wait();return []
     def infer(src,directory,meta,target,cfg):wait();return make_track(directory,target,meta)['result']
@@ -128,8 +127,7 @@ def test_legacy_cut_preparation_is_independent_of_final_compute(ready):
 @pytest.mark.integration
 def test_legacy_cut_scan_does_not_wait_for_final_compute(ready,tmp_path,monkeypatch):
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch);session=cutting.open_session(bid,rid,sha)
-    def scan(src,meta,cfg,policy,key,progress,compute,**kwargs):
-        if compute is not None:compute.close()
+    def scan(src,meta,cfg,policy,key,progress,**kwargs):
         return {'risk_events':[],'warnings':[]}
     monkeypatch.setattr(cutting_scan,'detect',scan)
     with cutting.lock_file(cutting.lock_root()/'compute.lock'):

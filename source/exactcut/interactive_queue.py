@@ -139,9 +139,7 @@ def initial_resource(entry):
     if entry['kind'] in {'mosaic_frame','cut_frame'}:return None
     if entry['kind'] in {'mosaic_prepare','cut_prepare','preview_oss'}:return 'transfer'
     if entry['kind']=='hook':return None  # Starts with cache/semantic work; media is a later bounded stage.
-    if entry['kind']=='locate':
-        if (report(entry).parent/'frames'/(str(entry['job']['seed_frame'])+'.jpg')).is_file():return None
-        return 'frame'
+    if entry['kind'] in {'track','locate'}:return None
     return 'media'
 
 
@@ -226,7 +224,6 @@ class Dispatcher:
                         lease=editor_resources.acquire(resource,entry['actor']);leases.append(lease);initial=(resource,lease)
                     leases.append(cutting.lock_file(path.with_suffix('.worker.lock')))
                     leases.append(cutting.lock_file(cutting.lock_root()/(entry['session']['batch_id']+'.lock'),shared=True))
-                    if entry['kind'] in {'mosaic_scan','cut_scan'}:leases.append(editor_resources.acquire('preprocess',entry['actor']))
                 except cutting.CutError as exc:
                     for lease in reversed(leases):lease.close()
                     if exc.status!=429:raise
