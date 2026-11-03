@@ -1367,6 +1367,8 @@ if __name__ == '__main__':
     load_env_file(project_env_file())
     diag.configure()
     diag.install_logging()
+    from . import editor_resources
+    editor_resources.production_process()
     if sys.argv[1] == 'media-upload':
         from .stage_results import run_child
         from .material_workers import retry_media_upload

@@ -229,5 +229,7 @@ if __name__ == '__main__':
     from . import diagnostics as diag
     diag.configure()
     diag.install_logging()
+    from . import editor_resources
+    editor_resources.production_process()
     from .stage_results import run_child
     raise SystemExit(run_child(run, sys.argv[1], sys.argv[2]))
