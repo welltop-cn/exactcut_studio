@@ -974,11 +974,12 @@ def test_unedited_rescan_updates_and_manual_clip_survives(editor):
 
 
 def test_saved_time_drives_generation_and_keeps_ai_original(editor):
+    editor.evaluate('session.capabilities.tracking=true')
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-proposal]').click()
     editor.locator('[data-scan-event]').click();editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
     editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicConfirm').click()
-    editor.evaluate("""() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.timeBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.timeBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
     editor.locator('#mosaicBatchStart').click()
     assert editor.evaluate('timeBody.targets[0].start')==40
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
