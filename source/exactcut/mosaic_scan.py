@@ -79,7 +79,7 @@ def _work_scoped(bid,sid,path,job,cfg,key,leases,permit=None):
         diagnostics.bind(request_id=session['request_id'])
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败，未进行识别')
         phase='video_detect'
-        result=scan.detect(source,session['metadata'],{**cfg,'max_refine_events':0},'standard',key,lambda message:update(progress=message),leases[-1],deadline=deadline)
+        result=scan.detect(source,session['metadata'],{**cfg,'max_refine_events':0},'standard',key,lambda message:update(progress=message),deadline=deadline)
         diagnostics.event('mosaic.scan_detected',event_count=len(result['risk_events']))
         phase='localization'
         locate.current(bid,sid,job,permit=permit)

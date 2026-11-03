@@ -38,8 +38,7 @@ def terminal(path):
 def test_scan_admission_and_completion_while_final_compute_remains_held(ready,tmp_path,monkeypatch):
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch)
     session=sessions.open_session(bid,rid,sha)
-    def detect(source,meta,cfg,policy,key,progress,compute,**kwargs):
-        if compute is not None:compute.close()
+    def detect(source,meta,cfg,policy,key,progress,**kwargs):
         return {'risk_events':[],'warnings':[]}
     monkeypatch.setattr(cutting_scan,'detect',detect)
     with cutting.lock_file(cutting.lock_root()/'compute.lock'):
@@ -104,8 +103,7 @@ def test_two_authenticated_users_enter_model_work_concurrently(ready,tmp_path,mo
             entered.append(time.monotonic())
             if len(entered)==2:both.set()
         assert finish.wait(8),'test worker was not released'
-    def detect(source,meta,cfg,policy,key,progress,compute,**kwargs):
-        if compute is not None:compute.close()
+    def detect(source,meta,cfg,policy,key,progress,**kwargs):
         barrier();return {'risk_events':[],'warnings':[]}
     def infer(source,directory,meta,target,cfg):
         barrier();return make_track(directory,target,meta)['result']

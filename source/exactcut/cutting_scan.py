@@ -110,7 +110,7 @@ def refine_window(event, meta):
     return sorted(set(round(left+j*(right-left)/(size-1)) for j in range(size))),left,end
 
 
-def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
+def detect(source, meta, cfg, policy, key, progress, *, deadline=None):
     from google import genai
     from google.genai import types
     deadline=deadline if deadline is not None else time.monotonic()+1200
@@ -135,13 +135,11 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
         with tempfile.TemporaryDirectory(prefix='scan-proxy-',dir=source.parent) as directory:
             proxy=Path(directory)/'proxy.mp4'
             progress('正在准备检测视频')
-            try:
-                if time.monotonic()+120>deadline:raise cutting.CutError('本次识别用时过长，未完成，请重试')
-                with diagnostics.span('scan.proxy',private_error=True):
-                    cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-an','-vf',
-                        'scale=540:540:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=15',
-                        '-c:v','libx264','-preset','veryfast','-crf','28','-movflags','+faststart',str(proxy)],120)
-            finally:compute.close()
+            if time.monotonic()+120>deadline:raise cutting.CutError('本次识别用时过长，未完成，请重试')
+            with diagnostics.span('scan.proxy',private_error=True):
+                cutting.run(['ffmpeg','-y','-v','error','-i',str(source),'-an','-vf',
+                    'scale=540:540:force_original_aspect_ratio=decrease:force_divisible_by=2,fps=15',
+                    '-c:v','libx264','-preset','veryfast','-crf','28','-movflags','+faststart',str(proxy)],120)
             diagnostics.event('scan.proxy_ready',bytes=proxy.stat().st_size,video_duration_ms=duration,sample_fps=cfg['coarse_fps'])
             if proxy.stat().st_size>18*1024**2:raise cutting.CutError('检测代理过大，请使用更短成片')
             progress('正在识别疑似画面（视频抽样）')
@@ -246,7 +244,7 @@ def _work_scoped(path,session,report,cfg,key,leases,permit=None):
         current()
         source=path.parent/'source.mp4'
         if file_sha256(source)!=session['source_sha256']:raise cutting.CutError('原片校验失败，未进行识别')
-        result=detect(source,session['metadata'],cfg,report['policy'],key,lambda message:update(progress=message),leases[-1])
+        result=detect(source,session['metadata'],cfg,report['policy'],key,lambda message:update(progress=message))
         current()
         update(**result,status='completed',completed_at=now_iso(),progress='识别完成，请复核疑似区间')
     except ResourceDeferred:

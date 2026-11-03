@@ -105,12 +105,11 @@ def test_detector_preserves_coarse_on_provider_refinement_failure(tmp_path, monk
         Path(command[-1]).write_bytes(b'proxy')
     monkeypatch.setattr(cutting,'run',run)
     source=tmp_path/'source.mp4';source.write_bytes(b'fixture')
-    compute=(tmp_path/'compute').open('w')
     cfg={'model':'fixture','coarse_fps':2,'max_refine_events':8,'request_timeout_ms':1000}
-    result=scan.detect(source,META,cfg,'standard','fixture-key',lambda _:None,compute)
+    result=scan.detect(source,META,cfg,'standard','fixture-key',lambda _:None)
     assert result['risk_events'][0]['start_frame']==1
     assert result['risk_events'][0]['refinement']=='inconclusive'
-    assert result['warnings'] and compute.closed and closed
+    assert result['warnings'] and closed
     names=[name for name,_ in logged]
     assert 'scan.proxy.completed' in names and 'scan.model_request.completed' in names
     assert 'scan.rate_wait.completed' not in names
