@@ -11,6 +11,14 @@ from . import mosaic_effects as effects, processing_cancel, editor_resources, di
 from .util import load_config, read_json, write_json_atomic, json_sha256, file_sha256, now_iso
 
 
+SAM_BASE_SECONDS=60
+SAM_SECONDS_PER_FRAME=4
+
+
+def sam_timeout(frame_count):
+    return SAM_BASE_SECONDS+SAM_SECONDS_PER_FRAME*max(1,int(frame_count))
+
+
 def settings():
     return load_config().get('cutting', {}).get('tracking', {})
 
@@ -144,7 +152,7 @@ def run_tracker(source,directory,meta,target,cfg):
     env=os.environ.copy()
     env['PYTHONPATH']=os.pathsep.join([str(Path(__file__).resolve().parents[1]),*cfg.get('dependency_paths',[])])
     with (directory/'worker.log').open('wb') as log:
-        result=processing_cancel.run([sys.executable,'-m','exactcut.mosaic_sam2',str(directory/'request.json')],env=env,stdout=log,stderr=log,timeout=900)
+        result=processing_cancel.run([sys.executable,'-m','exactcut.mosaic_sam2',str(directory/'request.json')],env=env,stdout=log,stderr=log,timeout=sam_timeout(target['end']-target['start']))
     if result.returncode:
         try:
             with (directory/'worker.log').open('rb') as log:
