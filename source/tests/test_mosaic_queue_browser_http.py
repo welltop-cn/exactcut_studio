@@ -1,6 +1,7 @@
 """End-to-end synthetic media, real HTTP, real Chromium and real FFmpeg."""
+from contextlib import ExitStack
 import pytest
-from exactcut import accounts, cutting, workflow, mosaic_queue as queue, material_versions
+from exactcut import accounts, cutting, editor_resources, workflow, mosaic_queue as queue, material_versions
 from exactcut.util import file_sha256
 from test_cutting_api import ready
 from test_phase2_preview_api import fixture, serve
@@ -18,7 +19,9 @@ def test_browser_close_relogin_discard_and_confirm_real_media(ready):
     accounts.initialize(app.auth_db,app.password)
     base=f'http://127.0.0.1:{app.server_port}'
     dispatcher=queue.Dispatcher(.01);dispatcher.start()
-    lease=cutting.lock_file(cutting.lock_root()/'compute.lock');errors=[]
+    stack=ExitStack();errors=[]
+    for _ in range(editor_resources.settings()['final_media_tasks']):
+        stack.enter_context(editor_resources.acquire('final_media'))
     def login(browser):
         context=browser.new_context(viewport={'width':1440,'height':1000})
         response=context.request.post(base+'/api/login',data={'username':'admin','password':app.password},headers={'X-Exactcut-Request':'1'})
@@ -53,8 +56,9 @@ def test_browser_close_relogin_discard_and_confirm_real_media(ready):
                 context.close();browser.close()
                 tasks=queue.load()['tasks'];assert len(tasks)==2
                 assert queue.report(tasks[0])['status']=='cancelled'
-                assert queue.report(tasks[1])['status']=='queued'
-                lease.close()
+                # The dispatcher may already be waiting at the first final media stage.
+                assert queue.report(tasks[1])['status'] in {'queued','running'}
+                stack.close()
                 done=wait(bid,tasks[1]['session_id'],tasks[1]['id']);assert done['status']=='completed'
                 # No browser is alive when the worker produces its completed report.
                 assert file_sha256(workflow.preview_file(bid,rid2)[0])==sha
@@ -80,6 +84,6 @@ def test_browser_close_relogin_discard_and_confirm_real_media(ready):
                 context.close()
             finally:browser.close()
     finally:
-        lease.close();dispatcher.stop(timeout=None);app.shutdown();app.server_close()
+        stack.close();dispatcher.stop(timeout=None);app.shutdown();app.server_close()
 
 from interactive_test_support import interactive_dispatcher

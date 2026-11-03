@@ -12,7 +12,6 @@ from . import mosaic_effects as effects, processing_cancel
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 from . import mosaic_queue as queue
 import uuid
-import time
 from contextlib import nullcontext
 from .runtime import mutation_lock, maintenance_file
 from . import editor_resources,mosaic_mps
@@ -219,18 +218,14 @@ def execute(item,stop_event):
     bid,sid=item['batch_id'],item['session_id'];path=queue.job_path(item);leases=[]
     try:
         leases.append(cutting.lock_file(path.with_suffix('.worker.lock')))
-        # Cancellation remains responsive while other compute users hold the lease.
-        while True:
-            job=read_json(path)
-            if job.get('cancel_requested'):
-                with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
-                    job=read_json(path);job.update(status='cancelled',progress='已停止生成，参数已保留');write_json_atomic(path,job)
-                return
-            if job['status'] in {'completed','failed','cancelled'}:return
-            if stop_event.is_set():return 'deferred'
-            try:
-                leases.append(cutting.lock_file(cutting.lock_root()/'compute.lock',resource='compute'));break
-            except cutting.CutError:time.sleep(.1)
+        # Check admission state once; final media stages wait for their own slot.
+        job=read_json(path)
+        if job.get('cancel_requested'):
+            with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+                job=read_json(path);job.update(status='cancelled',progress='已停止生成，参数已保留');write_json_atomic(path,job)
+            return
+        if job['status'] in {'completed','failed','cancelled'}:return
+        if stop_event.is_set():return 'deferred'
         user=accounts.get(workflow.BATCHES.parent/'accounts.sqlite3',item['actor'])
         if not user or not user.get('enabled') or not accounts.allowed(workflow.folder(bid),user):raise cutting.CutError('发起账号已停用或无权访问项目',403)
         with cutting_access.gate(workflow.folder(bid),item['request_id'],allow_job=item['id']):

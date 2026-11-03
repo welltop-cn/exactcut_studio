@@ -1,10 +1,11 @@
+from contextlib import ExitStack
 import base64
 import json
 import time
 from http.client import HTTPConnection
 
 import pytest
-from exactcut import cutting, workflow as w, webserver as web
+from exactcut import editor_resources, cutting, workflow as w, webserver as web
 from exactcut.util import write_json_atomic, file_sha256
 from test_phase2_preview_api import fixture, serve
 from test_cutting import make_video, frame_numbers
@@ -166,9 +167,9 @@ def test_busy_failure_recovery_and_delete_lease(ready, monkeypatch):
     try:
         assert entered.wait(2)
         assert cutting.start_render(bid, sid, [[10, 11]])['id'] == first['id']
-        with pytest.raises(cutting.CutError) as error:
-            cutting.start_render(bid, sid, [[20, 21]])
-        assert error.value.status == 429
+        # A second recipe is accepted and waits for the final slot instead of a 429.
+        second = cutting.start_render(bid, sid, [[20, 21]])
+        assert second['status'] == 'running' and second['id'] != first['id']
         with pytest.raises(cutting.CutError):
             with cutting.batch_lease(bid, exclusive=True):
                 pytest.fail('deletion must wait for active cutting')
@@ -176,9 +177,9 @@ def test_busy_failure_recovery_and_delete_lease(ready, monkeypatch):
         finish.set()
     for _ in range(100):
         data = cutting.get_session(bid, sid)
-        if data['jobs'][0]['status'] == 'failed': break
+        if all(job['status'] == 'failed' for job in data['jobs']): break
         time.sleep(.05)
-    assert data['jobs'][0]['status'] == 'failed'
+    assert [job['status'] for job in data['jobs']] == ['failed', 'failed']
     assert 'private' not in data['jobs'][0]['error']
     assert original.is_file() and file_sha256(original) == sha
     # A recorded running job without a live lock simulates restart. POST itself recovers it.
@@ -189,9 +190,9 @@ def test_busy_failure_recovery_and_delete_lease(ready, monkeypatch):
     assert retried['status'] == 'running'
     for _ in range(200):
         data = cutting.get_session(bid, sid)
-        if data['jobs'][0]['status'] != 'running': break
+        if cutting.get_job(data, retried['id'])['status'] != 'running': break
         time.sleep(.05)
-    assert data['jobs'][0]['status'] == 'ready'
+    assert cutting.get_job(data, retried['id'])['status'] == 'ready'
     batch_control.write(w.folder(bid), {'archived': True, 'paused': True})
     w.delete_batch(bid, bid)
     assert not (w.BATCHES/bid).exists()
@@ -237,8 +238,10 @@ def test_source_stream_works_while_compute_and_frame_locks_busy(ready, kind):
             'request_id': rid, 'source_sha256': sha})
         assert status in {200,202}
         session=prepared(app,base,session)
-        with cutting.lock_file(cutting.lock_root()/'compute.lock'), \
+        with ExitStack() as stack, \
                 cutting.lock_file(cutting.lock_root()/'frame.lock'):
+            for _ in range(editor_resources.settings()['final_media_tasks']):
+                stack.enter_context(editor_resources.acquire('final_media'))
             status, video = call(app, 'GET', base+'/'+session['id']+'/source')
         assert status == 200
         assert video == source.read_bytes()
