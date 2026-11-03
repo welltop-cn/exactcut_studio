@@ -94,7 +94,7 @@ def test_index_defers_without_starting_probe_or_holding_identity_lock_when_media
     calls=[]
     original=source_frames.media.run_checked
     monkeypatch.setattr(source_frames.media,'run_checked',lambda *a,**kw:(calls.append(a),original(*a,**kw))[1])
-    def short_wait(kind,actor='admin',*,timeout=1800):
+    def short_wait(kind,actor='admin',*,timeout=None):
         try:return editor_resources.acquire(kind,actor)
         except editor_resources.cutting.ResourceBusy:
             raise editor_resources.cutting.CutError('等待处理资源超时，请重试',503)

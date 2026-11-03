@@ -28,7 +28,7 @@ def _verified(directory,target):
 
 @contextmanager
 def _key_lease(root,key,validate):
-    deadline=time.monotonic()+910
+    deadline=time.monotonic()+tracking.sam_timeout(300)+10
     while True:
         processing_cancel.check();validate()
         try:

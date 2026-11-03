@@ -68,14 +68,19 @@ def acquire(kind,actor='admin'):
     raise cutting.ResourceBusy('frame' if kind=='frame' else 'compute')
 
 
-def wait(kind,actor='admin',*,timeout=1800):
-    """Only bounded existing workers may wait during a stage transition."""
-    deadline=time.monotonic()+timeout
+def wait(kind,actor='admin',*,timeout=None):
+    """Wait indefinitely in a cancellation scope when timeout is None.
+
+    Outside a cancellation scope, None keeps the 1800-second limit. An explicit
+    timeout always sets the limit, including inside a cancellation scope.
+    """
+    if timeout is None and not processing_cancel.scoped():timeout=1800
+    deadline=None if timeout is None else time.monotonic()+timeout
     while True:
         processing_cancel.check()
         try:return acquire(kind,actor)
         except cutting.ResourceBusy:
-            if time.monotonic()>=deadline:raise cutting.CutError('等待处理资源超时，请重试',503)
+            if deadline is not None and time.monotonic()>=deadline:raise cutting.CutError('等待处理资源超时，请重试',503)
             time.sleep(.05)
 
 
