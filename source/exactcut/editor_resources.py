@@ -13,7 +13,7 @@ from .runtime import data_root
 from .util import load_config
 
 _ROLES={'preview':('preview_tasks',2),'scan':('scan_tasks',2),'preprocess':('preprocess_tasks',2),
-        'media':('media_tasks',5),'final_media':('final_media_tasks',1),'frame':('frame_tasks',2),'transfer':('transfer_tasks',2)}
+        'media':('media_tasks',5),'final_media':('final_media_tasks',1),'frame':('frame_tasks',2)}
 _active=ContextVar('editor_execution_stages',default=frozenset())
 _leases=ContextVar('editor_execution_leases',default={})
 _reserved=ContextVar('editor_initial_resource',default=None)

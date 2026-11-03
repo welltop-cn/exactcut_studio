@@ -137,7 +137,7 @@ def _run(entry,leases):
 
 def initial_resource(entry):
     if entry['kind'] in {'mosaic_frame','cut_frame'}:return None
-    if entry['kind'] in {'mosaic_prepare','cut_prepare','preview_oss'}:return 'transfer'
+    if entry['kind'] in {'mosaic_prepare','cut_prepare','preview_oss'}:return None
     if entry['kind']=='hook':return None  # Starts with cache/semantic work; media is a later bounded stage.
     if entry['kind']=='locate':
         if (report(entry).parent/'frames'/(str(entry['job']['seed_frame'])+'.jpg')).is_file():return None

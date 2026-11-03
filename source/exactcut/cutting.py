@@ -393,7 +393,6 @@ def open_session(batch_id, request_id, source_sha256):
         path = session_path(batch_id, sid)
         if (path/'session.json').is_file():
             return get_session(batch_id, sid)
-        from . import editor_resources
         with lock_file(lock_root()/('cut-prepare-'+sid+'.lock'),blocking=True):
             if (path/'session.json').is_file():
                 return get_session(batch_id, sid)
@@ -403,11 +402,10 @@ def open_session(batch_id, request_id, source_sha256):
             path.mkdir(parents=True, exist_ok=True)
             temporary = path/'source.partial.mp4'
             try:
-                with editor_resources.stage('transfer'):
-                    with diagnostics.span('editor.prepare.copy', private_error=True):
-                        shutil.copyfile(source, temporary)
-                    with diagnostics.span('editor.prepare.hash', private_error=True):
-                        copied_sha = file_sha256(temporary)
+                with diagnostics.span('editor.prepare.copy', private_error=True):
+                    shutil.copyfile(source, temporary)
+                with diagnostics.span('editor.prepare.hash', private_error=True):
+                    copied_sha = file_sha256(temporary)
                 if copied_sha != source_sha256:
                     raise CutError('原成片内容已变化，请重新打开剪切', 409)
                 meta = probe_source(temporary)
