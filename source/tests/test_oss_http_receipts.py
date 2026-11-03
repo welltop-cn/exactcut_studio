@@ -140,12 +140,12 @@ def _dispatcher():
         instance.stop(timeout=None)
 
 
-def _held_transfers():
+def _held_preprocess():
     from contextlib import ExitStack
     from exactcut import editor_resources
     stack = ExitStack()
-    for _ in range(editor_resources.settings()['transfer_tasks']):
-        stack.enter_context(editor_resources.acquire('transfer'))
+    for _ in range(editor_resources.settings()['preprocess_tasks']):
+        stack.enter_context(editor_resources.acquire('preprocess'))
     return stack
 
 
@@ -187,17 +187,17 @@ def test_missing_receipt_returns_preparing_then_signs_after_background_upload(ap
         assert '/preview/R1' not in result['url']
 
 
-def test_full_transfer_slots_queue_background_work_then_complete(app, tmp_path, monkeypatch):
+def test_full_preprocess_slots_queue_background_work_then_complete(app, tmp_path, monkeypatch):
     import time
     bucket = ControlledBucket(); bucket.release.set()
     headers, batch_id, _, video, digest, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
     with _dispatcher() as dispatcher:
-        with _held_transfers():
+        with _held_preprocess():
             started = time.monotonic()
             status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
             assert status == 202 and time.monotonic() - started < 1.5
             time.sleep(.2)
-            assert dispatcher.active_workers == 0           # queued on the transfer pool, not an HTTP wait
+            assert dispatcher.active_workers == 0           # queued on the preprocess role
             assert len(snapshot()['pending']) == 1
         status, _, body = _poll_signed(app, headers, batch_id)
     assert json.loads(body)['expires_in'] == 900 and len(bucket.puts) == 1
@@ -224,7 +224,7 @@ def test_valid_receipt_signs_fast_without_queueing(app, tmp_path, monkeypatch):
     headers, batch_id, directory, video, digest, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
     _seed_receipt(batch_id, directory, video, bucket)
     signs = len(bucket.signs)
-    with _held_transfers():
+    with _held_preprocess():
         status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
     assert status == 200 and json.loads(body)['expires_in'] == 900
     assert len(bucket.signs) == signs + 1 and len(bucket.puts) == 1
@@ -237,7 +237,7 @@ def test_source_change_supersedes_old_preparation_and_uploads_new_copy(app, tmp_
     bucket = ControlledBucket(); bucket.release.set()
     headers, batch_id, directory, video, digest, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
     with _dispatcher():
-        with _held_transfers():
+        with _held_preprocess():
             status, _, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
             assert status == 202
             video.write_bytes(b'new source after preparation was queued')

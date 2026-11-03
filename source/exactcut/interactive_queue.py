@@ -139,7 +139,7 @@ def _run(entry,leases):
 
 def initial_resource(entry):
     if entry['kind'] in {'mosaic_frame','cut_frame'}:return None
-    if entry['kind'] in {'mosaic_prepare','cut_prepare','preview_oss'}:return 'transfer'
+    if entry['kind'] in {'mosaic_prepare','cut_prepare','preview_oss'}:return None
     if entry['kind']=='hook':return None  # Starts with cache/semantic work; media is a later bounded stage.
     if entry['kind'] in {'track','locate'}:return None
     return 'media'
