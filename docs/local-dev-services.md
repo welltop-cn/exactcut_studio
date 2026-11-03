@@ -281,3 +281,11 @@ D1 独立工作树 `/Users/matao/.paseo/worktrees/1kps4qs6/cut-mosaic-background
 - 已验证独立登录、4素材可编辑、8路视频Range206、4编辑器真实画面与首帧打开；JS错误0。交接前mosaic任务0、字幕pending/active0、制作jobs0、deliveries/outbox0，无预提交任务或草稿。保留原始可编辑状态供用户自行试用；其他服务未动。
 
 详细[试用准备与验证记录](verification/cut-mosaic-real-project-user-trial-2026-10-31.md)。真实视频、截图、数据、账号和密码均保留在私有忽略目录，不随Git分发。
+
+2026-10-30 友好提示语：修复 Pydantic 校验异常全文直接进入表单的问题。缺失图片改为「素材 2 · 结尾画面：请上传结尾图片，或将结尾画面改为“不添加”」，并标红/定位实际结尾控件；时长、文案和字号等错误提供中文说明。旧版/纳管真实浏览器上传图片或取消结尾、保存刷新均验证，相关117项通过。提交 `5980929`。确认无活动任务和子进程后，8793 从核验 PID 25659 重启为 PID 11167，沿用原配置，healthz=ok/development、worker_alive=true、release `development-material-validation-5980929`。验收项目状态文件重启前后 SHA 一致；没有重置用户项目。其他端口未动。
+
+## 2026-11-02 用户可见错误提示排查（8793 保留运行）
+
+用户要求检查其他入口。提交 `3f2ef04` 统一公共 HTTP 主提示与前端错误格式化，避免弹窗拼入技术详情；制作横幅、剪切/打码、字幕、登录和制作小助手补齐底层/历史异常显示保护。状态码、诊断编号、脱敏详情和显式资源重试契约保留。完整回归1929通过、1个既有条件跳过；最后的文件/连接错误分类另有98项专项通过。
+
+通过私有 reload.py 核验原 PID 11167 的 cwd/监听、无活动任务/子进程后，8793 重启为 PID 86115（后续操作须重查），沿用原开发配置；release `development-material-validation-3f2ef04`，healthz=ok/development、worker_alive=true。原测试项目 media-state.json 重启前后 SHA 一致。真实 HTTP/Chromium 复核健康、非法请求提示和含技术异常的 toast，页面无 JS 错误；没有重置用户项目或启动制作。其他端口未动。详见 `docs/verification/public-error-copy-audit-2026-11-02.md`。

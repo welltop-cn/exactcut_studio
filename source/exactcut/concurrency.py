@@ -10,8 +10,8 @@ def ai_settings(config):
     values = config.get('ai', {})
     if not isinstance(values, dict):
         raise ValueError('concurrency.ai 必须为对象')
-    rate = values.get('requests_per_minute', 6)
-    burst = values.get('burst', 1)
+    rate = values.get('requests_per_minute', 60)
+    burst = values.get('burst', 5)
     if isinstance(rate, bool) or not isinstance(rate, (int, float)) or not math.isfinite(rate) or rate <= 0:
         raise ValueError('concurrency.ai.requests_per_minute 必须为有限正数')
     if isinstance(burst, bool) or not isinstance(burst, int) or burst < 1:

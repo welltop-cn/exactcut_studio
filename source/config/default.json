@@ -6,7 +6,7 @@
     "render": 3,
     "upload": 2,
     "poll": 4,
-    "ai": {"requests_per_minute": 6, "burst": 1}
+    "ai": {"requests_per_minute": 60, "burst": 5}
   },
   "logging": {
     "enabled": true,
