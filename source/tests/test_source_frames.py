@@ -6,6 +6,8 @@ from exactcut import source_frames, workflow as w, webserver as web
 from test_web_base_path import app, login, request
 from test_source_prefetch import draft_with
 
+pytestmark = pytest.mark.integration
+
 
 def make_video(path, vfr=False, offset=False):
     path.parent.mkdir(parents=True, exist_ok=True)

@@ -5,6 +5,8 @@ from test_mosaic_ui import editor as mosaic_editor, open_editor
 from test_preview_subtitles_ui import page as subtitle_page
 from test_source_frame_ui import frame_page
 
+pytestmark = pytest.mark.ui
+
 RAW = '处理失败：1 validation error for InternalTask input_value={} /srv/private/source.mp4'
 
 

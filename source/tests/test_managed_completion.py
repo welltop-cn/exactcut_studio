@@ -6,6 +6,7 @@ import pytest
 from exactcut import workflow as w
 from test_workflow import workspace
 from test_material_versions import enrolled, token, enable_fixture_delivery, candidate_job, rendered
+from browser_support import shared_playwright
 
 
 def delivered():
@@ -27,6 +28,7 @@ def assert_status(m, path, expected):
     return detail
 
 
+@pytest.mark.integration
 def test_all_current_versions_delivered_complete_detail_and_sidebar(workspace):
     m, path, _ = delivered()
     detail = assert_status(m, path, 'complete')
@@ -34,6 +36,7 @@ def test_all_current_versions_delivered_complete_detail_and_sidebar(workspace):
     assert detail['assets'][0]['video_id'] == 'fixture-video'
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('delivery_status,expected', [
     ('pending', 'publishing'), ('upload_queued', 'publishing'), ('uploading', 'publishing'),
     ('fbbm_queued', 'publishing'), ('publish_failed', 'publish_failed'), ('unverified', 'unverified')])
@@ -44,6 +47,7 @@ def test_incomplete_delivery_keeps_existing_status(workspace, delivery_status, e
     assert_status(m, path, expected)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('candidate_status,expected', [(None, 'review'), ('queued', 'queued'),
     ('processing', 'producing'), ('failed', 'partial'), ('promoted', 'review')])
 def test_old_delivery_does_not_complete_new_work(workspace, candidate_status, expected):
@@ -64,6 +68,7 @@ def test_old_delivery_does_not_complete_new_work(workspace, candidate_status, ex
         assert '待确认制作' in detail['runtime']['message']
 
 
+@pytest.mark.integration
 def test_partial_delivery_deleted_material_and_empty_project(workspace):
     m, path, state = delivered()
     draft = copy.deepcopy(state['draft'])
@@ -91,13 +96,14 @@ def test_partial_delivery_deleted_material_and_empty_project(workspace):
     assert_status(m, path, 'draft')
 
 
+@pytest.mark.ui
 def test_review_checkbox_tracks_delivery_without_rebuilding_card():
     playwright = pytest.importorskip('playwright.sync_api')
     web = Path(__file__).parents[1] / 'exactcut/web'
     html = re.sub(r'<script src="[^"]+"></script>', '', (web / 'index.html').read_text())
     source = (web / 'app.js').read_text()
     render = source[source.index('function renderAssets()'):source.index('async function refreshBatches()')]
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page()
@@ -126,6 +132,7 @@ def test_review_checkbox_tracks_delivery_without_rebuilding_card():
             browser.close()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('media', [False, True])
 @pytest.mark.parametrize('control', ['active', 'paused', 'archived', 'deleted'])
 def test_lightweight_sidebar_matches_detail_snapshot(workspace, media, control):

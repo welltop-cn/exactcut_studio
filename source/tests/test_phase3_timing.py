@@ -5,6 +5,8 @@ from exactcut import timing_review as review
 from exactcut.intake import timing_explanation
 from test_phase2_timing import manifest
 
+pytestmark = pytest.mark.integration
+
 
 def video(tmp_path,seconds=4,color='navy'):
     path=tmp_path/'source/videos/EP1.mp4';path.parent.mkdir(parents=True,exist_ok=True)

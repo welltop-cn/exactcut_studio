@@ -1,7 +1,10 @@
 from test_phase1_recovery import workspace
+import pytest
 from test_preview_oss import Bucket
 from exactcut import workflow as w, preview_oss, media_backfill, result_store
 from exactcut.util import file_sha256, write_json_atomic
+
+pytestmark = pytest.mark.integration
 
 
 def test_backfill_dry_run_uploads_both_once_and_preserves_existing_records(workspace,monkeypatch):

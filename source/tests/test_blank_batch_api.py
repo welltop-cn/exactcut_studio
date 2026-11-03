@@ -8,6 +8,7 @@ import pytest
 
 from exactcut import webserver as server
 from exactcut import workflow as w
+from browser_support import shared_playwright
 
 
 @pytest.fixture
@@ -126,6 +127,7 @@ def test_ending_thumbnail_is_small_and_original_is_unchanged(app):
     assert call(app, 'GET', f'/api/batches/{bid}/ending-image/{rid}')[2] == original
 
 
+@pytest.mark.ui
 def test_ending_preview_uses_lazy_thumbnail_in_hidden_editor():
     import io
     from pathlib import Path
@@ -134,7 +136,7 @@ def test_ending_preview_uses_lazy_thumbnail_in_hidden_editor():
     source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
     markup = next(line for line in source.splitlines() if line.startswith('function endingSettings('))
     stream = io.BytesIO(); Image.new('RGB', (20, 30)).save(stream, 'WEBP')
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         try:
             page = browser.new_page()

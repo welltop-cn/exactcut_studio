@@ -46,6 +46,7 @@ def readonly_clients(url='https://fixture.invalid/video', material='123', status
     return feishu, cf
 
 
+@pytest.mark.integration
 def test_controlled_poll_keeps_receipt_after_timeout_and_never_ingests(workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     original = copy.deepcopy(entry['intent'])
@@ -65,6 +66,7 @@ def test_controlled_poll_keeps_receipt_after_timeout_and_never_ingests(workspace
         feishu.create_or_reuse.assert_not_called(); feishu.update.assert_not_called(); oss.assert_not_called()
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('mutation', ['no_material', 'record_conflict', 'sha_conflict', 'url_conflict'])
 def test_controlled_entry_rejects_missing_or_conflicting_receipts(workspace, mutation):
     batch, path, rid, video, record, entry = uncertain(workspace)
@@ -77,6 +79,7 @@ def test_controlled_entry_rejects_missing_or_conflicting_receipts(workspace, mut
     assert read_json(path / 'publications.json')[rid]['status'] == 'unverified'
 
 
+@pytest.mark.integration
 def test_controlled_poll_revalidates_remote_url_before_cf_query(workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     w.queue_verify_delivery(batch['id'], rid, record['output_sha256'])
@@ -87,6 +90,7 @@ def test_controlled_poll_revalidates_remote_url_before_cf_query(workspace):
     assert read_json(path / 'publications.json')[rid]['status'] == 'unverified'
 
 
+@pytest.mark.integration
 def test_prevalidated_approval_checks_identity_without_second_hash(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch)
     evidence = stage_results.digest_evidence(video)
@@ -94,6 +98,8 @@ def test_prevalidated_approval_checks_identity_without_second_hash(workspace):
         w.queue_publish(batch['id'], request['request_id'], record['output_sha256'], _evidence=evidence)
 
 
+@pytest.mark.flaky_fs
+@pytest.mark.integration
 def test_prevalidated_approval_rejects_same_size_restored_mtime_change(workspace):
     import os
     batch = imported(); path, request, video, record = complete_asset(batch)
@@ -133,6 +139,7 @@ def post(server, route, data, *, csrf=True, auth=True, session=None):
     finally: connection.close()
 
 
+@pytest.mark.integration
 def test_verification_http_is_idempotent_staged_poll_with_readonly_queue_position(api, workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     route = '/api/batches/' + batch['id'] + '/verify-delivery'
@@ -146,6 +153,7 @@ def test_verification_http_is_idempotent_staged_poll_with_readonly_queue_positio
     assert jobs[0]['action'] == 'verify-delivery'
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('condition,expected', [('unauth',401), ('csrf',403), ('worker',503), ('maintenance',503), ('nonadmin',403), ('archived',400)])
 def test_verification_http_respects_control_boundaries(api, workspace, monkeypatch, condition, expected):
     batch, path, rid, video, record, entry = uncertain(workspace)
@@ -160,6 +168,7 @@ def test_verification_http_respects_control_boundaries(api, workspace, monkeypat
     assert not list(web.stored_jobs())
 
 
+@pytest.mark.integration
 def test_http_approval_hash_releases_global_lock_for_other_user(api, workspace, monkeypatch):
     import threading, time
     batch = imported(); path, request, video, record = complete_asset(batch)
@@ -193,6 +202,7 @@ def test_http_approval_hash_releases_global_lock_for_other_user(api, workspace, 
     assert {job['actor'] for job in web.stored_jobs()} == {'alice', 'bob'}
 
 
+@pytest.mark.integration
 def test_verification_fences_ordinary_upload_after_failed_readonly_query(workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     # A poll receipt may be available even when publication was not finalized.
@@ -209,6 +219,7 @@ def test_verification_fences_ordinary_upload_after_failed_readonly_query(workspa
     with pytest.raises(ValueError, match='核实'): w.queue_publish(batch['id'], rid, record['output_sha256'])
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('field,value', [('material_id','999'), ('record_id','other')])
 def test_readonly_mode_cannot_replace_saved_receipt_identity(workspace, field, value):
     batch, path, rid, video, record, entry = uncertain(workspace)
@@ -221,6 +232,7 @@ def test_readonly_mode_cannot_replace_saved_receipt_identity(workspace, field, v
     assert read_json(path / 'publications.json')[rid]['status'] == 'unverified'
 
 
+@pytest.mark.integration
 def test_missing_remote_material_id_stays_unverified_without_ingest(workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     w.queue_verify_delivery(batch['id'], rid, record['output_sha256'])
@@ -237,6 +249,7 @@ def test_legacy_dryrun_only_remains_safe(tmp_path):
     assert execute.call_args.kwargs['publish_dry_run'] is True
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('condition,code', [('maintenance',503), ('access',404), ('archive',400), ('file',400), ('state',409)])
 def test_http_approval_rechecks_after_hash(api, workspace, monkeypatch, condition, code):
     import os
@@ -272,6 +285,7 @@ def test_guarded_auth_retry_stops_after_one_login_or_unknown_response(failure):
         assert request.call_count == (2 if failure == 'second_auth' else 1)
 
 
+@pytest.mark.integration
 def test_readonly_mode_survives_delayed_reentry_and_dead_process(api, workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     data = {'request_id': rid, 'sha256': record['output_sha256']}
@@ -295,6 +309,7 @@ def test_readonly_mode_survives_delayed_reentry_and_dead_process(api, workspace)
     assert read_json(path / 'publications.json')[rid]['verification_only']['material_id'] == '123'
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('change', ['arbitrary_ids', 'sha', 'same_batch', 'token_payload'])
 def test_verification_http_rejects_unsafe_or_conflicting_intake(api, workspace, change):
     batch, path, rid, video, record, entry = uncertain(workspace)
@@ -309,6 +324,7 @@ def test_verification_http_rejects_unsafe_or_conflicting_intake(api, workspace, 
     assert code==400
 
 
+@pytest.mark.integration
 def test_verification_accepts_beyond_ten_without_losing_source_binding_or_idempotence(api,workspace):
     batch,path,rid,video,record,entry=uncertain(workspace)
     original=video.read_bytes()
@@ -323,6 +339,7 @@ def test_verification_accepts_beyond_ten_without_losing_source_binding_or_idempo
     assert len(list(web.stored_jobs()))==11 and video.read_bytes()==original
 
 
+@pytest.mark.integration
 def test_lost_readonly_marker_never_falls_back_to_ordinary_poll(workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     w.queue_verify_delivery(batch['id'], rid, record['output_sha256'])
@@ -333,6 +350,7 @@ def test_lost_readonly_marker_never_falls_back_to_ordinary_poll(workspace):
         ordinary.assert_not_called()
 
 
+@pytest.mark.integration
 def test_verification_admin_action_audited_once_for_lost_response(api, workspace, monkeypatch):
     batch, path, rid, video, record, entry = uncertain(workspace)
     def authorized(self): self.user = {'username': 'admin', 'role': 'admin'}; return True
@@ -345,6 +363,7 @@ def test_verification_admin_action_audited_once_for_lost_response(api, workspace
         audit.assert_called_once_with(api.auth_db, 'admin', 'verify-delivery', batch['id'])
 
 
+@pytest.mark.integration
 def test_readonly_local_launch_failure_can_retry_only_saved_poll(api, workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     route = '/api/batches/' + batch['id'] + '/verify-delivery'

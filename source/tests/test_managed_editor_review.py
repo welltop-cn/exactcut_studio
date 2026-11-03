@@ -1,4 +1,5 @@
 """Browser regressions for editing while managed workers advance revisions."""
+import pytest
 from pathlib import Path
 import subprocess
 
@@ -49,6 +50,7 @@ from test_workflow import workspace
 from test_material_versions import enrolled
 
 
+@pytest.mark.integration
 def test_managed_review_preserves_duration_and_public_hook_details(workspace):
     m, path, state = enrolled(media=True)
     record = next(iter(state['versions'].values()))['record']
@@ -131,6 +133,7 @@ assert.equal(current.id,'b');assert.equal(current.draft.text,'new project');
 """)
 
 
+@pytest.mark.integration
 def test_managed_projection_redacts_events_and_current_delivery_errors(workspace):
     from exactcut.util import read_json, write_json_atomic
     m, path, state = enrolled(media=True)

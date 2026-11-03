@@ -2,6 +2,9 @@ import re
 from pathlib import Path
 
 import pytest
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 
 
 def test_long_sidebar_scroll_stays_in_list_and_right_content_can_scroll():
@@ -9,7 +12,7 @@ def test_long_sidebar_scroll_stays_in_list_and_right_content_can_scroll():
     html = (Path(__file__).parents[1] / 'exactcut/web/index.html').read_text()
     html = re.sub(r'<script src="[^"]+"></script>', '', html)
 
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         try:
             browser = p.chromium.launch(headless=True)
         except playwright.Error:
@@ -69,7 +72,7 @@ def test_sidebar_items_are_compact_without_hiding_details_or_actions():
       <div class="batch-actions"><button class="secondary">复原</button><button class="secondary danger">删除</button></div>
     </div>'''
 
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         try:
             browser = p.chromium.launch(headless=True)
         except playwright.Error:

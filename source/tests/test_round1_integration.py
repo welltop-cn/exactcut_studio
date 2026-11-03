@@ -12,6 +12,8 @@ from exactcut.util import file_sha256, json_sha256, read_json, write_json_atomic
 from test_workflow import workspace, imported
 from test_linux_release import ops
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def chain(workspace, monkeypatch):

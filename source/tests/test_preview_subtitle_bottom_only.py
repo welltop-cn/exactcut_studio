@@ -9,6 +9,7 @@ from exactcut.media import ffprobe
 from exactcut.util import file_sha256
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('height',[80,82,1080])
 def test_proxy_excludes_the_upper_picture_and_keeps_source_unchanged(tmp_path,height):
     source=tmp_path/'source.mp4';proxy=tmp_path/'proxy.mp4'

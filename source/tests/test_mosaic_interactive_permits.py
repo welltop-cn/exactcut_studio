@@ -9,6 +9,7 @@ from test_mosaic_interactive_admission import enable_models,terminal
 from test_mosaic_render import make_track
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('operation',['scan','locate','preview'])
 def test_pre_admitted_read_task_finishes_after_same_asset_final_is_queued(ready,tmp_path,monkeypatch,operation):
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch);session=sessions.open_session(bid,rid,sha)
@@ -44,6 +45,7 @@ def test_pre_admitted_read_task_finishes_after_same_asset_final_is_queued(ready,
         if path:terminal(path)
 
 
+@pytest.mark.integration
 def test_worker_infrastructure_failure_is_not_successful_unmasked_preview(ready,tmp_path,monkeypatch):
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch);session=sessions.open_session(bid,rid,sha)
     def broken(*args,**kwargs):raise cutting.CutError('SAM worker infrastructure failure',503)
@@ -55,6 +57,7 @@ def test_worker_infrastructure_failure_is_not_successful_unmasked_preview(ready,
     assert file_sha256(source)==sha
 
 
+@pytest.mark.integration
 def test_legacy_single_track_stop_releases_owned_preview_budget(ready,tmp_path,monkeypatch):
     from test_cutting_api import call
     from test_phase2_preview_api import serve
@@ -81,6 +84,7 @@ def test_legacy_single_track_stop_releases_owned_preview_budget(ready,tmp_path,m
         app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_reset_cancels_pre_admitted_legacy_track(ready,tmp_path,monkeypatch):
     from exactcut import processing_cancel
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch);session=sessions.open_session(bid,rid,sha)
@@ -111,6 +115,7 @@ def test_cancel_intent_survives_interactive_worker_loss(tmp_path,module):
     assert module.recover(path)['status']=='cancelled'
 
 
+@pytest.mark.integration
 def test_legacy_cut_preparation_is_independent_of_final_compute(ready):
     from exactcut import cutting
     bid,rid,sha,source=ready
@@ -120,6 +125,7 @@ def test_legacy_cut_preparation_is_independent_of_final_compute(ready):
         assert session['source_sha256']==sha
 
 
+@pytest.mark.integration
 def test_legacy_cut_scan_does_not_wait_for_final_compute(ready,tmp_path,monkeypatch):
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch);session=cutting.open_session(bid,rid,sha)
     def scan(src,meta,cfg,policy,key,progress,compute,**kwargs):

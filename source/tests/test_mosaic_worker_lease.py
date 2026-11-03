@@ -21,6 +21,7 @@ def test_cancel_scope_child_holds_worker_lease_until_actual_exit(tmp_path):
         if child.poll() is None:child.kill();child.wait()
 
 
+@pytest.mark.integration
 def test_abrupt_owner_exit_cannot_recover_over_live_ffmpeg(tmp_path,monkeypatch):
     import json,time
     from exactcut import workflow,mosaic_queue as queue
@@ -53,6 +54,7 @@ os._exit(0)
     assert queue.claim()['id']==item['id']
 
 
+@pytest.mark.integration
 def test_actual_worker_child_stops_when_server_owner_dies(tmp_path):
     import time
     worker=tmp_path/'owned.lock';pidfile=tmp_path/'pid';output=tmp_path/'partial.mp4'

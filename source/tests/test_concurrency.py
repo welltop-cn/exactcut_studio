@@ -89,6 +89,7 @@ def test_reconcile_resumes_multiple_lanes_with_running_render(runner):
         assert kill.call_args_list == [((456, signal.SIGCONT),), ((789, signal.SIGCONT),)]
 
 
+@pytest.mark.integration
 def test_upload_exits_without_polling_and_poll_queries_once(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
@@ -122,6 +123,7 @@ def test_fetch_completion_queues_one_render_and_poll_reschedules(runner):
     assert saved['status'] == 'queued' and saved['not_before'] > before
 
 
+@pytest.mark.integration
 def test_render_uses_fetch_cache_without_project_video_links(workspace, monkeypatch):
     batch = imported(); workflow.start_batch(batch['id'], batch['revision'])
     cache = workspace / 'source-cache'; monkeypatch.setenv('EXACTCUT_SOURCE_ROOT', str(cache))
@@ -180,6 +182,7 @@ def test_staged_dead_fetch_recovery_does_not_interrupt_successor(runner):
     assert len([j for j in web.stored_jobs() if j.get('phase') == 'render' and j['status'] == 'queued']) == 1
 
 
+@pytest.mark.integration
 def test_retry_poll_persists_deadline_and_times_out(workspace):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']
     workflow.queue_publish(batch['id'], rid, record['output_sha256'])
@@ -207,6 +210,7 @@ def test_nonbatch_render_blocks_stopped_batch_resume(runner):
     assert control.read(path)['suspended']
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('phase,status', [('poll', 'fbbm_queued'), ('upload', 'uploading')])
 def test_failed_staged_delivery_can_retry_original_record(workspace, monkeypatch, phase, status):
     batch = imported(); path, request, video, record = complete_asset(batch); rid = request['request_id']

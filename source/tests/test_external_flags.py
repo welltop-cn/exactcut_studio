@@ -13,6 +13,7 @@ TEMPLATE = ROOT / 'templates/精确剪辑_FBBM_填写模板.xlsx'
 VIDEO_NAME = '20260101_typea_zhang_agent_1_#101573#.mp4'
 
 
+@pytest.mark.integration
 def test_old_switch_does_not_open_new_clients(monkeypatch, tmp_path):
     monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'production')
     monkeypatch.setenv('EXACTCUT_ALLOW_EXTERNAL_WRITES', '1')
@@ -59,6 +60,7 @@ def test_feature_flags_follow_only_the_new_switches(monkeypatch):
     assert runtime.feature_flags() == {'publish': False, 'material_fetch': False, 'ai': True}
 
 
+@pytest.mark.integration
 def test_review_sha_rejected_before_publish_flag_or_publications(tmp_path, monkeypatch):
     monkeypatch.setenv('EXACTCUT_DATA_ROOT', str(tmp_path))
     monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'production')

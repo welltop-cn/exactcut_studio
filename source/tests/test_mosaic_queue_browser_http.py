@@ -5,6 +5,9 @@ from exactcut.util import file_sha256
 from test_cutting_api import ready
 from test_phase2_preview_api import fixture, serve
 from test_mosaic_queue_integration import second_asset, wait
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.integration
 
 
 def test_browser_close_relogin_discard_and_confirm_real_media(ready):
@@ -32,7 +35,7 @@ def test_browser_close_relogin_discard_and_confirm_real_media(ready):
         page.locator('#mosaicAddSubmit').click();page.locator('#mosaicBatchStart').click()
         page.locator('#mosaicProcessing').wait_for()
     try:
-        with playwright.sync_playwright() as p:
+        with shared_playwright() as p:
             browser=p.chromium.launch(headless=True)
             try:
                 context,page=login(browser)

@@ -14,6 +14,8 @@ from test_phase2_preview_api import fixture,call
 from test_cutting_api import ready
 from test_blank_batch_api import call as binary_call
 
+pytestmark = pytest.mark.integration
+
 MAIN = '''
 import os
 from pathlib import Path

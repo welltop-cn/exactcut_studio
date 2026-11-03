@@ -7,6 +7,8 @@ from exactcut.util import file_sha256
 from test_phase2_preview_api import fixture,serve,call
 from test_cutting_api import ready
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('family',['cuts','mosaics'])
 def test_open_persists_while_copy_resources_full_then_real_snapshot_completes(ready,family):

@@ -32,6 +32,7 @@ def blocked_delivery(workspace):
     return batch['id'], rid, record['output_sha256'], original
 
 
+@pytest.mark.integration
 def test_offline_verification_is_readonly_and_resolves_bound_history(isolated):
     from exactcut import maintenance_verify
     bid, rid, sha, original = blocked_delivery(isolated)
@@ -47,6 +48,7 @@ def test_offline_verification_is_readonly_and_resolves_bound_history(isolated):
     with pytest.raises(ValueError): w.queue_publish(bid, rid, sha)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('condition', ['no-maintenance', 'worker-enabled', 'bad-sha'])
 def test_offline_verification_fail_closed_before_query(isolated, monkeypatch, condition):
     from exactcut import maintenance_verify
@@ -61,6 +63,7 @@ def test_offline_verification_fail_closed_before_query(isolated, monkeypatch, co
     assert read_json(w.folder(bid) / 'publications.json') == before
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('remote', ['syncing', 'mismatch', 'timeout'])
 def test_offline_unready_or_unknown_keeps_guard_for_explicit_retry(isolated, remote):
     from exactcut import maintenance_verify
@@ -76,6 +79,7 @@ def test_offline_unready_or_unknown_keeps_guard_for_explicit_retry(isolated, rem
     cf.ingest.assert_not_called(); cf.resync.assert_not_called(); feishu.update.assert_not_called()
 
 
+@pytest.mark.integration
 def test_ready_receipt_before_local_resolution_crash_can_resume(isolated, monkeypatch):
     from exactcut import maintenance_verify
     bid, rid, sha, original = blocked_delivery(isolated)
@@ -89,6 +93,7 @@ def test_ready_receipt_before_local_resolution_crash_can_resume(isolated, monkey
     assert read_json(web.JOBS / (original['id'] + '.json'))['status'] == 'interrupted'
 
 
+@pytest.mark.integration
 def test_first_upgrade_failure_recovers_without_old_application_api(ops, isolated, monkeypatch, capsys):
     root = isolated / 'deployment'
     engine = setup_target(ops, root, capable=True)
@@ -145,6 +150,7 @@ def test_oneoff_command_uses_fixed_image_without_web_entrypoint(ops, tmp_path, m
     assert result['status'] == 'queried'
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('fault', ['poll', 'complete'])
 def test_oneoff_local_failure_can_retry_without_stranded_queue(isolated, monkeypatch, fault):
     from exactcut import maintenance_verify
@@ -183,6 +189,7 @@ def test_maintenance_manager_guards_and_restores_on_error(ops, tmp_path, conditi
     assert ops.read(tmp_path / 'current.json')['version'] == 'old'
 
 
+@pytest.mark.integration
 def test_maintenance_application_cli_requires_once_and_returns_pending_exit(isolated, monkeypatch, capsys):
     from exactcut import maintenance_verify
     bid, rid, sha, _ = blocked_delivery(isolated)
@@ -197,6 +204,7 @@ def test_maintenance_application_cli_requires_once_and_returns_pending_exit(isol
     assert 'unverified' in capsys.readouterr().out
 
 
+@pytest.mark.integration
 def test_maintenance_disk_refusal_stays_explicitly_retryable(isolated, monkeypatch):
     from exactcut import maintenance_verify, storage
     bid, rid, sha, _ = blocked_delivery(isolated)
@@ -210,6 +218,7 @@ def test_maintenance_disk_refusal_stays_explicitly_retryable(isolated, monkeypat
         assert maintenance_verify.verify_delivery(bid, rid, sha)['status'] == 'verified'
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('legacy_recovered', [False, True])
 def test_offline_verification_repairs_missing_handoff_job(isolated, legacy_recovered):
     from exactcut import maintenance_verify

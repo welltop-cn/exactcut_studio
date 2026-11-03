@@ -190,6 +190,7 @@ def multiple_batch(chain, count, drama='101460', owner='alice'):
     return w.detail(batch['id'])
 
 
+@pytest.mark.integration
 def test_six_requests_fill_global_render_capacity(chain):
     chain.limits.update(render=4, per_project=2)
     batch = multiple_batch(chain, 6)
@@ -203,6 +204,7 @@ def test_six_requests_fill_global_render_capacity(chain):
     assert len(w.result_records(w.folder(batch['id']))) == 6
 
 
+@pytest.mark.integration
 def test_two_projects_fill_four_render_slots(chain):
     chain.limits.update(render=4, per_project=2, max_active_children=8)
     a = multiple_batch(chain, 2)
@@ -221,6 +223,7 @@ def finish_specific(chain, job, code):
     chain.tick()
 
 
+@pytest.mark.integration
 def test_one_failed_render_keeps_siblings_running_and_finishes_remaining(chain, monkeypatch):
     from exactcut import result_store
     chain.limits.update(render=2, per_project=2)
@@ -244,6 +247,7 @@ def test_one_failed_render_keeps_siblings_running_and_finishes_remaining(chain, 
     assert w.runtime(path)['status'] == 'partial'
 
 
+@pytest.mark.integration
 def test_crash_one_request_requeues_it_without_clearing_sibling(chain):
     from exactcut import result_store
     chain.limits.update(render=2, per_project=2)
@@ -265,6 +269,7 @@ def test_crash_one_request_requeues_it_without_clearing_sibling(chain):
     assert all(j.get('phase') == 'render' for j, _, _ in chain.owned.values())
 
 
+@pytest.mark.integration
 def test_same_batch_render_upload_poll_execute_independently(chain):
     chain.limits.update(render=2, per_project=2, max_active_children=8)
     batch = multiple_batch(chain, 4)
@@ -303,6 +308,7 @@ def test_evidence_pending_fences_only_own_request(runner, monkeypatch):
         close_logs(owned)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('mutation', ['heartbeat', 'result', 'legacy_result', 'publication', 'children', 'target'])
 def test_approval_snapshot_tracks_target_and_allows_sibling_progress(api, workspace, monkeypatch, mutation):
     from exactcut import result_store
@@ -331,6 +337,7 @@ def test_approval_snapshot_tracks_target_and_allows_sibling_progress(api, worksp
     assert code == (409 if mutation == 'target' else 202), body
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('rid,expected', [('R-sibling', 202), ('target', 400), (None, 400)])
 def test_verify_delivery_gate_blocks_target_or_legacy_but_allows_sibling(api, workspace, rid, expected):
     from test_round1_delivery import post, uncertain
@@ -366,6 +373,7 @@ def test_stopped_render_residents_hold_global_slots_and_upload_keeps_capacity(ru
         close_logs(owned)
 
 
+@pytest.mark.integration
 def test_parallel_approval_ignores_shared_render_message(api, workspace, monkeypatch):
     from test_round1_delivery import post
     from test_workflow import imported, complete_asset

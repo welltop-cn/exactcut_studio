@@ -1,4 +1,7 @@
 from test_clip_text_ui import page, parse
+import pytest
+
+pytestmark = pytest.mark.ui
 
 
 def test_clip_effect_controls_and_invalidation(page):

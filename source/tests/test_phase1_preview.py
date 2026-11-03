@@ -6,6 +6,8 @@ from exactcut.util import write_json_atomic, file_sha256
 from exactcut.media import run_checked, ffprobe
 import pytest
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.skipif(not shutil.which('ffmpeg'), reason='requires ffmpeg')
 def test_lightweight_preview_preserves_master_and_publishing_path(workspace):

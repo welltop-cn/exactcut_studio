@@ -1,4 +1,5 @@
 """New optional effects preserve pre-upgrade preview/output identities."""
+import pytest
 from copy import deepcopy
 from exactcut import orchestrator, hook_presentation as display
 from exactcut.models import BatchManifest, CutRequest
@@ -31,6 +32,7 @@ def test_approved_old_preview_remains_usable(tmp_path):
     assert display.approved_preview(tmp_path,r,[i.model_dump(mode='json') for i in r.timeline],[])==doc['decision']
 
 
+@pytest.mark.integration
 def test_finished_old_output_survives_retry_without_render(tmp_path,monkeypatch):
     r=request();write_json_atomic(tmp_path/'project.json',{'project_id':'101573','excluded_episodes':[]})
     m=BatchManifest(drama_id='101573',drama_title='fixture',source_workbook='fixture.xlsx',business_date='20261013',author='test',requests=[r])
@@ -59,6 +61,7 @@ def test_active_effects_change_identity_but_disabled_defaults_do_not(tmp_path):
     assert display.preview_identity(r,flash,[])!=baseline
 
 
+@pytest.mark.integration
 def test_output_identity_changes_for_active_caption_and_flash(tmp_path):
     from exactcut.models import SegmentCaption
     video=tmp_path/'source/videos/EP1.mp4';video.parent.mkdir(parents=True);video.write_bytes(b'source')
@@ -78,6 +81,7 @@ def test_output_identity_changes_for_active_caption_and_flash(tmp_path):
     assert orchestrator._request_fingerprint(tmp_path,r,{})!=flash
 
 
+@pytest.mark.integration
 def test_edited_current_survives_batch_retry(tmp_path,monkeypatch):
     r=request();write_json_atomic(tmp_path/'project.json',{'project_id':'101573','excluded_episodes':[]})
     m=BatchManifest(drama_id='101573',drama_title='fixture',source_workbook='fixture.xlsx',business_date='20261013',author='test',requests=[r])

@@ -40,6 +40,7 @@ def frame(path, index):
     return Image.open(io.BytesIO(result.stdout)).convert('RGB')
 
 
+@pytest.mark.integration
 def test_real_effect_render_preserves_frames_audio_and_base(tmp_path):
     source = tmp_path/'source/videos/EP1.mp4'
     source.parent.mkdir(parents=True)
@@ -83,6 +84,7 @@ def test_real_effect_render_preserves_frames_audio_and_base(tmp_path):
     assert updated['segment_effects']['identity'] != result['segment_effects']['identity']
 
 
+@pytest.mark.integration
 def test_effect_fallback_joins_video_by_frame_count_not_audio_padding(tmp_path):
     render = load_config()['render']; render.update(width=108, height=192, fps=24, preset='ultrafast')
     units = []
@@ -99,6 +101,7 @@ def test_effect_fallback_joins_video_by_frame_count_not_audio_padding(tmp_path):
     assert ImageStat.Stat(frame(output, 12)).mean[2] > 240
 
 
+@pytest.mark.integration
 def test_combined_effects_keep_hook_above_white_and_warn_on_overlap(tmp_path, monkeypatch):
     from exactcut.segment_effects import effect_plan
     source = tmp_path/'source.mp4'

@@ -7,6 +7,8 @@ import pytest
 from exactcut import cutting, workflow, preview_oss
 from test_cutting_api import ready, fixture, call, serve, prepared
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.fixture
 def source_case(tmp_path, monkeypatch):

@@ -105,6 +105,7 @@ def test_paths_and_duplicate_filenames_are_rejected(workspace):
         w.start_batch(other['id'], 1)
 
 
+@pytest.mark.integration
 def test_only_qc_passed_exact_preview_can_be_published(workspace):
     batch = imported()
     path, request, video, record = complete_asset(batch)
@@ -120,6 +121,7 @@ def test_only_qc_passed_exact_preview_can_be_published(workspace):
         w.preview_file(batch['id'], rid)
 
 
+@pytest.mark.integration
 def test_publish_is_separate_and_reuses_remote_record_on_retry(workspace, monkeypatch):
     batch = imported()
     path, request, video, record = complete_asset(batch)
@@ -140,6 +142,7 @@ def test_publish_is_separate_and_reuses_remote_record_on_retry(workspace, monkey
         w.queue_publish(batch['id'], rid, record['output_sha256'])
 
 
+@pytest.mark.integration
 def test_feedback_persists_exact_asset_version(workspace):
     batch = imported()
     path, request, video, record = complete_asset(batch)
@@ -164,6 +167,7 @@ def test_production_does_not_publish_and_uses_separate_outputs(workspace):
         assert w.runtime(w.folder(batch['id']))['status'] == 'review'
 
 
+@pytest.mark.integration
 def test_eight_available_episodes_are_complete_and_missing_required_blocks(workspace, monkeypatch):
     cache_root = workspace / 'sources'
     monkeypatch.setenv('EXACTCUT_SOURCE_ROOT', str(cache_root))
@@ -199,6 +203,7 @@ def test_eight_available_episodes_are_complete_and_missing_required_blocks(works
     assert 'Downloads/auto-cut' not in text and '.openclaw' not in text
 
 
+@pytest.mark.integration
 def test_download_keeps_legacy_video_and_cache_hit(workspace, monkeypatch):
     from exactcut.models import BatchManifest, CutRequest, TimelineItem
     cache_root = workspace / 'sources'
@@ -241,6 +246,7 @@ def test_download_keeps_legacy_video_and_cache_hit(workspace, monkeypatch):
     assert (cached / 'EP2.mp4').read_bytes() == b'cached'
 
 
+@pytest.mark.integration
 def test_download_reports_current_episode_progress_and_resets_after_completion(workspace, monkeypatch):
     import exactcut.source_cache as source_cache
     from exactcut.models import BatchManifest, CutRequest, TimelineItem
@@ -301,6 +307,7 @@ def test_download_reports_current_episode_progress_and_resets_after_completion(w
     assert runtime['download_speed_bps'] is None
 
 
+@pytest.mark.integration
 def test_authenticated_video_range_and_feedback_http(workspace):
     import threading
     import requests
@@ -472,6 +479,7 @@ def test_pause_archive_http_and_execution_guards(workspace):
         server.server_close()
 
 
+@pytest.mark.integration
 def test_permanent_delete_only_archived_batch_and_preserves_shared_files(workspace):
     from exactcut import batch_control
     batch = imported()
@@ -585,6 +593,7 @@ def test_accounts_http_isolation_sessions_and_management(workspace):
         server.shutdown();server.server_close()
 
 
+@pytest.mark.integration
 def test_can_queue_sibling_while_uploading_and_preserve_both(workspace):
     batch = imported()
     path, request, video, record = complete_asset(batch)

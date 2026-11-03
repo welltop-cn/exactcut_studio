@@ -28,6 +28,7 @@ def card(text='Later', duration=1000):
     return {'type': 'title_card', 'text': text, 'duration_ms': duration}
 
 
+@pytest.mark.integration
 def test_sparse_black_title_card_passes_with_timeline(frame_qc):
     inspect, size, path = frame_qc
     _make_card_png(path/'card.png', 'Later', *size)
@@ -38,6 +39,7 @@ def test_sparse_black_title_card_passes_with_timeline(frame_qc):
     assert not inspect(image)['allowed']  # No general relaxation for episode frames.
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('hook_only', [False, True])
 def test_missing_card_text_is_not_exempted(frame_qc, hook_only):
     inspect, size, _ = frame_qc
@@ -49,6 +51,7 @@ def test_missing_card_text_is_not_exempted(frame_qc, hook_only):
     assert 'title card text is missing or unreadable' in result['errors']
 
 
+@pytest.mark.integration
 def test_black_episode_is_rejected_even_when_followed_by_card(frame_qc):
     inspect, size, _ = frame_qc
     result = inspect(Image.new('RGB', size, 'black'), [
@@ -56,6 +59,7 @@ def test_black_episode_is_rejected_even_when_followed_by_card(frame_qc):
     assert 'first frame is black' in result['errors']
 
 
+@pytest.mark.integration
 def test_short_card_does_not_exempt_sample_in_following_episode(frame_qc):
     inspect, size, _ = frame_qc
     result = inspect(Image.new('RGB', size, 'black'), [
@@ -63,6 +67,7 @@ def test_short_card_does_not_exempt_sample_in_following_episode(frame_qc):
     assert 'first frame is black' in result['errors']
 
 
+@pytest.mark.integration
 def test_card_still_checks_duration_and_normal_video_passes(frame_qc):
     inspect, size, path = frame_qc
     _make_card_png(path/'card.png', 'Later', *size)
@@ -81,6 +86,7 @@ def test_specific_qc_guidance(error,title):
     assert result['code']=='qc'
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('text,hook,duration', [
     ('Later','',1000), ('稍后','Concurrent test\n1',1000),
     ('稍后','Concurrent test\n1',18000),
@@ -113,6 +119,7 @@ def test_real_encoded_sparse_card_passes_production_pipeline(tmp_path, text, hoo
     assert abs(float(video['duration'])*1000-duration)<=1000/config['render']['fps']+1
 
 
+@pytest.mark.integration
 def test_sample_can_land_in_card_after_short_episode(frame_qc):
     inspect, size, path=frame_qc
     _make_card_png(path/'card.png','Later',*size)

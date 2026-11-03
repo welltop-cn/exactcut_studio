@@ -37,6 +37,7 @@ class Bucket:
         return 'https://fixture.invalid/' + key + '?signature=fixture'
 
 
+@pytest.mark.integration
 def test_private_content_addressed_upload_is_reused_without_overwrite(tmp_path):
     path = tmp_path / 'preview.mp4'; path.write_bytes(b'video')
     bucket = Bucket()
@@ -53,6 +54,7 @@ def test_private_content_addressed_upload_is_reused_without_overwrite(tmp_path):
     assert bucket.objects[key][0] == b'video'
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('damage', ['acl', 'hash', 'size'])
 def test_existing_object_mismatch_is_rejected_without_modification(tmp_path, damage):
     path = tmp_path / 'preview.mp4'; path.write_bytes(b'video')
@@ -73,6 +75,7 @@ def test_nonproduction_never_connects_to_oss(monkeypatch):
     assert not preview_oss.enabled()
 
 
+@pytest.mark.integration
 def test_generated_preview_upload_receipt_allows_sign_only(tmp_path, monkeypatch):
     batch = tmp_path / ('a'*32) / 'production'
     path = batch / 'previews/video.mp4'; path.parent.mkdir(parents=True);path.write_bytes(b'video')
@@ -90,6 +93,7 @@ def test_generated_preview_upload_receipt_allows_sign_only(tmp_path, monkeypatch
     assert len(bucket.puts) == 1
 
 
+@pytest.mark.integration
 def test_generated_preview_upload_failure_preserves_local_master_and_records_retry(tmp_path, monkeypatch):
     batch = tmp_path / ('a'*32) / 'production'
     path = batch / 'previews/video.mp4'; path.parent.mkdir(parents=True);path.write_bytes(b'video')
@@ -104,6 +108,7 @@ def test_generated_preview_upload_failure_preserves_local_master_and_records_ret
     assert 'secret' not in record['preview_oss_error']
 
 
+@pytest.mark.integration
 def test_receipt_hot_path_does_not_hash_or_query_oss(tmp_path, monkeypatch):
     video=tmp_path/'preview.mp4';video.write_bytes(b'video');bucket=Bucket()
     receipt=preview_oss._ensure_uploaded(video,'a'*32,'R1',bucket=bucket)
@@ -112,6 +117,7 @@ def test_receipt_hot_path_does_not_hash_or_query_oss(tmp_path, monkeypatch):
     assert preview_oss.signed_preview(video,'a'*32,'R1',bucket=bucket,receipt=receipt)['expires_in']==900
 
 
+@pytest.mark.integration
 def test_upload_reads_snapshot_not_replaced_source(tmp_path, monkeypatch):
     video=tmp_path/'preview.mp4';video.write_bytes(b'first');bucket=Bucket()
     # Reproduce filesystems whose timestamp resolution hides rapid same-size writes.
@@ -128,6 +134,7 @@ def test_upload_reads_snapshot_not_replaced_source(tmp_path, monkeypatch):
     assert next(iter(bucket.objects.values()))[0] == b'first'
 
 
+@pytest.mark.integration
 def test_original_download_uses_private_master_and_signed_attachment(tmp_path):
     video=tmp_path/'正式成片.mp4';video.write_bytes(b'original master');bucket=Bucket();seen={}
     def sign(method,key,expires,params=None):
@@ -141,6 +148,7 @@ def test_original_download_uses_private_master_and_signed_attachment(tmp_path):
     assert "filename*=UTF-8''" in seen['params']['response-content-disposition']
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('namespace', ['production', 'test'])
 def test_fbbm_reuses_private_master_by_server_side_copy(tmp_path,monkeypatch,namespace):
     monkeypatch.setattr(preview_oss, 'load_config', lambda: {'preview': {'namespace': namespace}})
@@ -175,6 +183,7 @@ def test_fbbm_reuses_private_master_by_server_side_copy(tmp_path,monkeypatch,nam
     bucket.put_object_from_file.assert_not_called()
 
 
+@pytest.mark.integration
 def test_fbbm_reuses_existing_copy_with_head_metadata(tmp_path, monkeypatch):
     from exactcut.publish import OssPublisher, guarded_delivery
     from unittest.mock import Mock
@@ -207,6 +216,7 @@ def test_namespace_rejects_other_destinations(monkeypatch, value):
         preview_oss.object_prefix()
 
 
+@pytest.mark.integration
 def test_namespace_upload_never_reuses_production_receipt(tmp_path, monkeypatch):
     class TestBucket(Bucket):
         def put_object_from_file(self, key, filename, headers):
@@ -227,6 +237,7 @@ def test_namespace_upload_never_reuses_production_receipt(tmp_path, monkeypatch)
     assert '/exactcut-previews/test/' in result['url']
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('namespace', ['production', 'test'])
 def test_managed_receipt_accepts_only_configured_preview_namespace(tmp_path, monkeypatch, namespace):
     from exactcut.material_workers import _receipt

@@ -32,6 +32,7 @@ def test_guarded_material_read_relogs_once(code):
         assert login.call_count == 1 and request.call_count == 2
 
 
+@pytest.mark.integration
 def test_poll_never_calls_ingest_even_without_material_id(api, workspace):
     batch, path, rid, video, record, entry = uncertain(workspace)
     entry.update(status='fbbm_queued', intent={'status': 'verified'})

@@ -1,12 +1,15 @@
 """Deterministic media events, real browser promise and lifecycle scheduling."""
 from pathlib import Path
 import pytest
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
 def player():
     pw=pytest.importorskip('playwright.sync_api')
-    with pw.sync_playwright() as p:
+    with shared_playwright() as p:
         browser=p.chromium.launch(headless=True)
         page=browser.new_page()
         page.goto('about:blank')

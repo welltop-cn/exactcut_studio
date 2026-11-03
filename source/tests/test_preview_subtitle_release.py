@@ -46,6 +46,7 @@ def test_pending_preview_tasks_survive_a_code_switch(ops,tmp_path):
     assert path.read_bytes()==before
 
 
+@pytest.mark.integration
 def test_maintenance_pauses_pending_dispatch_without_losing_tasks(configured,dispatcher):
     maintenance=queue.state_dir()/'maintenance.json'
     write_json_atomic(maintenance,{'reason':'release'})
@@ -58,6 +59,7 @@ def test_maintenance_pauses_pending_dispatch_without_losing_tasks(configured,dis
     assert ran.wait(2)
 
 
+@pytest.mark.integration
 def test_admission_rechecks_maintenance_under_shared_release_barrier(configured,monkeypatch):
     bid,rid,sha,_=configured
     @contextmanager

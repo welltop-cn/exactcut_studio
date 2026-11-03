@@ -9,6 +9,7 @@ from test_mosaic_interactive_admission import call_as
 from test_blank_batch_api import call as raw_call
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('family',['cuts','mosaics'])
 def test_frame_get_queues_while_short_pool_full_and_serves_hot_bytes(ready,family):
     from test_phase2_preview_api import call
@@ -45,6 +46,7 @@ def _wait_job(module,bid,sid,jid,statuses=('completed','failed','cancelled'),sec
         time.sleep(.02)
 
 
+@pytest.mark.integration
 def test_queued_frame_waits_for_busy_cache_and_other_cache_progresses(ready,monkeypatch):
     import json,threading
     from pathlib import Path

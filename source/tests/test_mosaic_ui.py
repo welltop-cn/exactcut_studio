@@ -5,6 +5,9 @@ from pathlib import Path
 
 import pytest
 from PIL import Image
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
@@ -14,11 +17,11 @@ def editor():
     html = re.sub(r'<script src="[^"]+"></script>', '', (root/'index.html').read_text())
     jpeg = io.BytesIO()
     Image.new('RGB', (160, 96), '#555555').save(jpeg, 'JPEG')
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         context=browser.new_context(viewport={'width':1440,'height':900})
         page=context.new_page()
-        page.set_default_timeout(3000)
+        page.set_default_timeout(10000)  # headroom for parallel runs; passing waits are unaffected
         page.route('**/*', lambda r: r.fulfill(body=html, content_type='text/html'))
         page.route('**/frame/*', lambda r: r.fulfill(body=jpeg.getvalue(), content_type='image/jpeg'))
         page.goto('http://fixture.test/')

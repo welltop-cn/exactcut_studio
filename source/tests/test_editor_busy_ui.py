@@ -1,12 +1,15 @@
 """Resource retry scheduler, tested with browser fake timers and synthetic responses."""
 from pathlib import Path
 import pytest
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
 def page():
     pw = pytest.importorskip('playwright.sync_api')
-    with pw.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.clock.install()

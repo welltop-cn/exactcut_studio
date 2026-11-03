@@ -9,7 +9,7 @@ from exactcut import renderer
 from exactcut.media import ffprobe, run_checked
 from exactcut.util import load_config
 
-pytestmark = pytest.mark.skipif(not shutil.which('ffmpeg'), reason='requires ffmpeg')
+pytestmark = [pytest.mark.integration, pytest.mark.skipif(not shutil.which('ffmpeg'), reason='requires ffmpeg')]
 
 
 def frame_hashes(path, stream='v:0'):

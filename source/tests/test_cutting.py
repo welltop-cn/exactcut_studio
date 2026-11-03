@@ -41,6 +41,7 @@ def test_range_contract():
             cutting.normalize_ranges(ranges, 90)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('audio,fps', [(True, '30'), (False, '30000/1001')])
 def test_actual_frames_removed_without_changing_original(tmp_path, audio, fps):
     source = make_video(tmp_path/'source.mp4', fps=fps, audio=audio)
@@ -65,6 +66,7 @@ def test_actual_frames_removed_without_changing_original(tmp_path, audio, fps):
         assert abs(len(samples)/44100-79/30) < 2048/44100
 
 
+@pytest.mark.integration
 def test_many_cuts_and_head_tail_preserve_exact_order(tmp_path):
     source = make_video(tmp_path/'many.mp4', frames=120, fps='30000/1001')
     deleted = [[i, i+1] for i in range(0, 114, 3)] + [[119, 120]]
@@ -75,6 +77,7 @@ def test_many_cuts_and_head_tail_preserve_exact_order(tmp_path):
     assert frame_numbers(output) == expected
 
 
+@pytest.mark.integration
 def test_rejects_variable_frame_timestamps(tmp_path):
     source = make_video(tmp_path/'source.mp4', audio=False)
     variable = tmp_path/'variable.mp4'
@@ -84,6 +87,7 @@ def test_rejects_variable_frame_timestamps(tmp_path):
         cutting.probe_source(variable)
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('fps', ['25', '30', '30000/1001', '60000/1001'])
 def test_fast_frame_window_matches_sequential_decode(tmp_path, monkeypatch, fps):
     from PIL import Image
@@ -164,6 +168,7 @@ def test_mosaic_rejects_bad_boxes_and_empty_edit():
         cutting.render_video(Path('missing.mp4'), Path('out.mp4'), [], meta)
 
 
+@pytest.mark.integration
 def test_mosaic_pixelates_marked_box_without_removing_frames(tmp_path):
     source = checker_video(tmp_path / 'checker.mp4', audio=True)
     original = file_sha256(source)

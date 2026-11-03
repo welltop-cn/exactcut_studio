@@ -1,4 +1,5 @@
 import io
+import pytest
 import json
 import subprocess
 from PIL import Image
@@ -19,6 +20,7 @@ def source(tmp_path):
     return p
 
 
+@pytest.mark.integration
 def test_samples_late_hook_frames_and_vision_avoids_late_face(tmp_path,monkeypatch):
     source(tmp_path);work=tmp_path/'work';work.mkdir()
     timeline=[{'type':'episode','episode':'EP1','start_ms':0,'end_ms':6000}]
@@ -52,6 +54,7 @@ def test_schedule_covers_card_edit_source_offsets_and_indexed_shot_changes(tmp_p
     assert schedule[-1][0]==4950
 
 
+@pytest.mark.integration
 def test_full_episode_preview_has_resolved_identity_and_index_change_invalidates_approval(tmp_path):
     source(tmp_path);work=tmp_path/'work';work.mkdir()
     r=CutRequest(request_id='R1',seq=1,output_filename='test.mp4',hook_text='She returned!',

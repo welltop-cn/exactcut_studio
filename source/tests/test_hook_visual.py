@@ -35,6 +35,7 @@ def test_long_copy_is_rejected_instead_of_truncated(tmp_path):
         render_personalized_hook_png('word ' * 150, tmp_path, decision)
 
 
+@pytest.mark.integration
 @pytest.mark.skipif(not shutil.which('ffmpeg'), reason='requires ffmpeg')
 def test_overlay_preserves_duration_audio_and_fades(tmp_path):
     source = tmp_path / 'source.mp4'

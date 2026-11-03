@@ -6,6 +6,8 @@ from test_source_frames import source, make_video
 from test_web_base_path import app
 from test_source_frame_timecode import frame_clip
 
+pytestmark = pytest.mark.integration
+
 
 def indexed_project(source, managed=False):
     _, item, _, video = source

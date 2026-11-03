@@ -57,6 +57,7 @@ def polling_entry(workspace):
     return batch, path, rid, entry
 
 
+@pytest.mark.integration
 def test_transient_poll_switches_to_readonly_and_recovers_without_submission(workspace):
     batch, path, rid, entry = polling_entry(workspace)
     with patch.object(publish, 'sync_record_once', side_effect=publish.TransientDeliveryReadError('读取飞书记录失败：1255001')) as sync:
@@ -75,6 +76,7 @@ def test_transient_poll_switches_to_readonly_and_recovers_without_submission(wor
     assert saved['status'] == 'fbbm_ready' and not saved.get('error')
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('missing', [True, False])
 def test_read_retry_never_bypasses_missing_or_conflicting_binding(workspace, missing):
     batch, path, rid, entry = polling_entry(workspace)
@@ -88,6 +90,7 @@ def test_read_retry_never_bypasses_missing_or_conflicting_binding(workspace, mis
     assert read_json(path / 'publications.json')[rid]['status'] == ('fbbm_queued' if missing else 'unverified')
 
 
+@pytest.mark.integration
 def test_temporary_query_stops_at_original_deadline(workspace):
     batch, path, rid, entry = polling_entry(workspace)
     entry.update(verification_only=w.verification_binding(entry), poll_started=1)
@@ -116,6 +119,7 @@ def test_fbbm_timeout_classification_does_not_replay_write(method, path):
         assert request.call_count == 1
 
 
+@pytest.mark.integration
 def test_repeated_read_failures_preserve_deadline_and_clear_notice_when_syncing(workspace):
     batch, path, rid, entry = polling_entry(workspace)
     with patch.object(publish, 'sync_record_once', side_effect=publish.TransientDeliveryReadError('temporary')):
@@ -139,6 +143,7 @@ def test_read_retry_guidance_does_not_request_reupload():
     assert '无需重新上传' in result['action']
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize("paused", [False, True])
 def test_managed_read_retry_banner_matches_query_state(workspace, monkeypatch, paused):
     from test_material_versions import enrolled, token

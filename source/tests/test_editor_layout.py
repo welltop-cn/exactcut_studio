@@ -1,13 +1,16 @@
 import re
 import pytest
 from pathlib import Path
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 root=Path(__file__).parents[1]/'exactcut/web'
 html=re.sub(r'<script src="[^"]+"></script>','',(root/'index.html').read_text())
 js='\n'.join(l for l in (root/'app.js').read_text().splitlines() if not l.startswith('(async()=>{try{const initial='))
 
 @pytest.mark.parametrize('mode', ['clips','composition','text'])
 def test_grouped_editor_preserves_fields_and_delegated_events(mode):
-    with pytest.importorskip('playwright.sync_api').sync_playwright() as p:
+    with shared_playwright() as p:
         browser=p.chromium.launch(headless=True)
         page=browser.new_page(viewport={'width':1280,'height':1000}); errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
         page.route('**/*',lambda route:route.fulfill(body=html,content_type='text/html'));page.goto('http://fixture.test');page.add_script_tag(content=(root/'editor-busy.js').read_text());page.add_script_tag(content=js)

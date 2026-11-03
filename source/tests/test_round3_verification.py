@@ -8,6 +8,8 @@ from test_workflow import workspace
 from test_round1_delivery import api, uncertain, post, readonly_clients
 from test_round1_integration import chain
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('status', ['waiting_resource', 'queued', 'running', 'completed', 'future-wait'])
 def test_durable_verification_is_not_an_orphan(api, workspace, status):

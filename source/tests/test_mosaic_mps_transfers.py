@@ -26,6 +26,7 @@ def test_mps_transfer_scope_forces_copy_completion_and_restores_original_on_erro
     assert Tensor.to is original
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('device',['mps','cpu'])
 def test_pre_fix_mps_cache_is_recomputed_but_cpu_legacy_cache_still_works(ready,tmp_path,monkeypatch,device):
     bid,session,target,cfg=setup(ready,tmp_path,monkeypatch);cfg={**cfg,'device':device};root=sessions.session_path(bid,session['id'])

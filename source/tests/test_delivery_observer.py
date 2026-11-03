@@ -49,6 +49,7 @@ from exactcut import workflow as w
 from exactcut.util import read_json
 
 
+@pytest.mark.integration
 def test_query_outage_before_worker_assigns_id_is_retryable(workspace, monkeypatch):
     batch, path, rid, _, _, entry = uncertain(workspace)
     entry['status'] = 'fbbm_queued'
@@ -81,6 +82,7 @@ def test_normal_poll_rejects_changed_url_before_accepting_result(clients):
         publish.sync_record_once('record', expected_url='https://other.invalid/video')
 
 
+@pytest.mark.integration
 @pytest.mark.parametrize('recovery', ['finish', 'restart'])
 @pytest.mark.parametrize('material_id', ['', '123'])
 def test_observer_process_exit_requeues(workspace, monkeypatch, recovery, material_id):

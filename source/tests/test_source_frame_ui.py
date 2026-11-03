@@ -2,6 +2,9 @@
 import re
 from pathlib import Path
 import pytest
+from browser_support import shared_playwright
+
+pytestmark = pytest.mark.ui
 ROOT = Path(__file__).parents[1] / 'exactcut/web'
 
 @pytest.fixture
@@ -9,7 +12,7 @@ def frame_page():
     playwright = pytest.importorskip('playwright.sync_api')
     html = re.sub(r'<script src="[^"]+"></script>', '', (ROOT / 'index.html').read_text())
     script = '\n'.join(line for line in (ROOT / 'app.js').read_text().splitlines() if not line.startswith('(async()=>{try{const initial='))
-    with playwright.sync_playwright() as p:
+    with shared_playwright() as p:
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         def route(req):

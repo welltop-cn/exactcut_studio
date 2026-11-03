@@ -76,6 +76,7 @@ def test_ensure_rejects_out_of_range_ids(tmp_path, monkeypatch):
         cache.ensure('101049', ['EP500'])
 
 
+@pytest.mark.integration
 def test_cache_hit_records_reused_local_episodes(tmp_path, monkeypatch):
     source = tmp_path / 'sources'
     monkeypatch.setenv('EXACTCUT_SOURCE_ROOT', str(source))
@@ -112,6 +113,7 @@ def test_cache_hit_records_reused_local_episodes(tmp_path, monkeypatch):
         assert '.openclaw' not in text
 
 
+@pytest.mark.integration
 def test_require_space_on_source_root_and_evict_oldest(tmp_path, monkeypatch):
     monkeypatch.setenv('EXACTCUT_DATA_ROOT', str(tmp_path))
     monkeypatch.setenv('EXACTCUT_ENVIRONMENT', 'test')
@@ -254,6 +256,7 @@ def test_episode_lock_releases_on_process_exit(tmp_path, monkeypatch):
         fcntl.flock(handle, fcntl.LOCK_UN)
 
 
+@pytest.mark.integration
 def test_fingerprint_releases_shared_lock(tmp_path, monkeypatch):
     root = tmp_path / 'sources'
     monkeypatch.setenv('EXACTCUT_SOURCE_ROOT', str(root))
@@ -313,6 +316,7 @@ def _fetch_env(monkeypatch, root, tmp_path):
     monkeypatch.setenv('EXACTCUT_ALLOW_MATERIAL_FETCH', '1')
 
 
+@pytest.mark.integration
 def test_growing_oss_temp_file_counts_as_progress(tmp_path, monkeypatch):
     root = tmp_path / 'sources'
     _fetch_env(monkeypatch, root, tmp_path)
@@ -392,6 +396,7 @@ def test_stalled_oss_temp_file_times_out_and_keeps_partial(tmp_path, monkeypatch
     assert (root / '101573' / 'EP1.mp4.part.tmp-abcdefghijkl').read_bytes() == b'partial'
 
 
+@pytest.mark.integration
 def test_hung_fetch_clears_part_and_next_episode_continues(tmp_path, monkeypatch):
     root = tmp_path / 'sources'
     monkeypatch.setenv('EXACTCUT_SOURCE_ROOT', str(root))

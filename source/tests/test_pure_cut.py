@@ -8,6 +8,8 @@ from exactcut.orchestrator import execute_batch
 from exactcut.media import run_checked
 from exactcut.util import load_config, write_json_atomic, read_json
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.skipif(not shutil.which('ffmpeg'), reason='requires ffmpeg')
 def test_exact_cut_without_indexes_or_model_keys(tmp_path, monkeypatch):

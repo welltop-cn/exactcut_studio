@@ -3,6 +3,8 @@ from exactcut.intake import validate_draft
 import pytest
 from test_source_frame_ui import frame_page
 
+pytestmark = pytest.mark.ui
+
 
 def invalid_editor(page):
     page.evaluate('''() => {

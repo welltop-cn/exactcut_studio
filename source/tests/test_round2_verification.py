@@ -6,6 +6,8 @@ from exactcut.util import read_json, write_json_atomic
 from test_workflow import workspace
 from test_round1_delivery import api, uncertain, post, readonly_clients
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('fault', ['save', 'detail'])
 def test_publication_handoff_failure_can_retry_same_verification(api, workspace, monkeypatch, fault):

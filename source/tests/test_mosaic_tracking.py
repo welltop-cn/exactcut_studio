@@ -31,6 +31,7 @@ from exactcut import mosaic_session as sessions
 from test_mosaic_locate import poll
 
 
+@pytest.mark.integration
 def test_tracking_http_reuses_and_preserves_source(configured,monkeypatch):
     bid,cut_sid,source=configured
     cut=cutting.read_session(bid,cut_sid)
@@ -66,6 +67,7 @@ def test_tracking_http_reuses_and_preserves_source(configured,monkeypatch):
     finally:app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_failure_is_safe_and_reset_invalidates_job(configured,monkeypatch):
     from exactcut.util import write_json_atomic
     bid,cut_sid,_=configured;cut=cutting.read_session(bid,cut_sid)

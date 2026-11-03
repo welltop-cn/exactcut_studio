@@ -7,6 +7,8 @@ from exactcut.util import read_json,write_json_atomic
 from test_cutting_api import ready
 from test_phase2_preview_api import fixture
 
+pytestmark = pytest.mark.integration
+
 
 @pytest.mark.parametrize('owners',[('alpha','beta'),('alpha','alpha')])
 def test_two_preview_execution_slots_are_independent_of_final_and_have_no_account_quota(ready,owners):

@@ -56,6 +56,7 @@ for (const row of [{hook_options:{duration_ms:20000}}, {composition:{opening:{du
     subprocess.run(['node', '-e', script], check=True, capture_output=True, text=True)
 
 
+@pytest.mark.integration
 def test_twenty_second_hook_preserves_frames_audio_and_fades_at_end(tmp_path, monkeypatch):
     source, output, png = (tmp_path / name for name in ('source.mp4', 'output.mp4', 'hook.png'))
     run_checked(['ffmpeg', '-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=blue:s=108x192:r=30',

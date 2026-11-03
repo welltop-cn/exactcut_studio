@@ -46,6 +46,7 @@ def test_invalid_storage_limit_fails_before_render_or_cleanup(tmp_path, monkeypa
         storage.require_space(tmp_path)
 
 
+@pytest.mark.integration
 def test_source_cache_quota_stops_download_when_active_material_cannot_be_evicted(tmp_path, monkeypatch):
     runtime_config(tmp_path, monkeypatch, source_cache_gib=1, episode_budget_gib=0.5)
     root = tmp_path / 'data/sources/101460'
