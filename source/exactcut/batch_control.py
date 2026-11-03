@@ -218,8 +218,11 @@ def resident_identity(job, process=None):
 
 def change(path, action):
     diag.event('batch.control_requested', batch_id=path.name, action=action)
-    from .cutting_access import gate
-    with LOCK, gate(path):
+    from .cutting_access import require_unfrozen
+    # Only the cut/mosaic freeze applies here, not the media gate: legacy production
+    # stages hold that gate for the whole stage, and pause/archive must reach them.
+    with LOCK:
+        require_unfrozen(path)
         control = read(path)
         state = read_json(path / 'runtime.json')
         if action == 'pause':
