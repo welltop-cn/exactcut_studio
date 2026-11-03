@@ -459,9 +459,16 @@ async function loadPreview(video,{resume=false,position=0}={}){
  retry.hidden=true;message.textContent='正在准备预览视频…';
  const timer=setTimeout(()=>controller.abort(),90000);
  try{
-  const response=await fetch(appUrl(`/api/batches/${id}/preview-url/${encodeURIComponent(video.dataset.previewRequest)}`),{signal:controller.signal,cache:'no-store'});
-  if(!response.ok)throw Error('预览暂时不可用，请重试');
-  const result=await response.json();
+  let result;
+  for(;;){
+   const response=await fetch(appUrl(`/api/batches/${id}/preview-url/${encodeURIComponent(video.dataset.previewRequest)}`),{signal:controller.signal,cache:'no-store'});
+   if(!response.ok)throw Error('预览暂时不可用，请重试');
+   result=await response.json();
+   if(!result||result.status!=='preparing')break;
+   message.textContent='正在准备预览视频…';
+   await new Promise((resolve,reject)=>{const wait=setTimeout(()=>{controller.signal.removeEventListener('abort',stop);resolve()},Math.max(250,Number(result.retry_after_ms)||1500));const stop=()=>{clearTimeout(wait);reject(new DOMException('Aborted','AbortError'))};controller.signal.addEventListener('abort',stop,{once:true})});
+   if(controller.signal.aborted||!previewIsActive(video,id))return;
+  }
   if(controller.signal.aborted||!previewIsActive(video,id))return;
   video.dataset.previewState='ready';video.dataset.expiresAt=result.expires_in?String(Date.now()+result.expires_in*1000):'';
   const renew=(resume=!video.paused)=>{const savedPosition=video.currentTime||0;video.onplay=null;video.onseeking=null;video.onerror=null;video.pause();video.removeAttribute('src');video.load();delete video.dataset.previewState;loadPreview(video,{resume,position:savedPosition})};

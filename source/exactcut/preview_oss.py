@@ -5,8 +5,8 @@ import tempfile
 import re
 from urllib.parse import quote
 
-from .runtime import environment
-from .util import file_sha256, load_config, env
+from .runtime import data_root, environment
+from .util import file_sha256, json_sha256, load_config, env, now_iso, read_json
 from . import diagnostics as diag, resource_locks, editor_resources
 
 # Restricted namespaces: configuration cannot redirect writes into delivery keys.
@@ -47,6 +47,44 @@ def object_prefix():
 
 def enabled():
     return environment() == 'production' and load_config().get('preview', {}).get('oss_enabled', True)
+
+
+def prepare_async(batch_id, request_id, video, record, *, original, actor):
+    """Queue one bounded, persistent OSS copy; never copy/upload on the request."""
+    from . import cutting, interactive_queue
+    identity = _identity(video)
+    preview_sha = (record.get('preview') or {}).get('sha256')
+    jid = json_sha256({'batch_id': batch_id, 'request_id': request_id, 'original': bool(original),
+                       'identity': identity, 'output_sha256': record.get('output_sha256'),
+                       'preview_sha256': preview_sha})[:32]
+    root = data_root() / '.web-state/preview-oss'; root.mkdir(parents=True, exist_ok=True)
+    path = root / (jid + '.json')
+    session = {'batch_id': batch_id, 'id': request_id, 'request_id': request_id,
+               'source_sha256': record.get('output_sha256', '')}
+    job = {'schema_version': 1, 'id': jid, 'status': 'queued', 'actor': actor,
+           'batch_id': batch_id, 'request_id': request_id, 'original': bool(original),
+           'identity': identity, 'output_sha256': record.get('output_sha256'),
+           'preview_sha256': preview_sha, 'created_at': now_iso(), 'progress': '正在准备 OSS 预览'}
+    with cutting.lock_file(root / 'state.lock', blocking=True):
+        interactive_queue.enqueue('preview_oss', session, path, job, {}, state_lock=root / 'state.lock')
+        return read_json(path)
+
+
+def run_queued(entry, leases):
+    from . import interactive_queue, workflow
+    job = read_json(interactive_queue.report(entry))
+    batch_id, request_id = job['batch_id'], job['request_id']; original = bool(job['original'])
+    output, record = workflow.preview_file(batch_id, request_id, lightweight=not original)
+    preview_sha = (record.get('preview') or {}).get('sha256')
+    if (_identity(output) != job['identity'] or record.get('output_sha256') != job['output_sha256']
+            or (not original and preview_sha != job['preview_sha256'])):
+        interactive_queue._update(entry, status='superseded', completed_at=now_iso(),
+                                  progress='成片已变化，将为新成片重新准备')
+        return
+    receipt = record.get('original_oss') if original else (record.get('preview') or {}).get('oss')
+    verified = _ensure_uploaded(output, batch_id, request_id, bucket=_connect(), receipt=receipt)
+    save_media_receipt(workflow.folder(batch_id) / 'production', request_id, record, output, verified, original=original)
+    interactive_queue._update(entry, status='completed', completed_at=now_iso(), progress='OSS 预览已就绪')
 
 
 def _connect():

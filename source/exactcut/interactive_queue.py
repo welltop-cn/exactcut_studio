@@ -11,7 +11,7 @@ from .runtime import data_root,mutation_lock,maintenance_file
 from .util import read_json,write_json_atomic,json_sha256,now_iso
 
 ROLES={'mosaic_scan':'scan','cut_scan':'scan','locate':'scan','track':'preview','clip':'preview','hook':'preview',
-       'mosaic_prepare':'preprocess','cut_prepare':'preprocess','mosaic_frame':'frame','cut_frame':'frame'}
+       'mosaic_prepare':'preprocess','cut_prepare':'preprocess','preview_oss':'preprocess','mosaic_frame':'frame','cut_frame':'frame'}
 TERMINAL={'completed','failed','cancelled','superseded'}
 
 
@@ -59,7 +59,7 @@ def enqueue(kind,session,path,job,cfg,*,state_lock,payload=None):
     entry={'task_id':task_id,'kind':kind,'role':ROLES[kind],'actor':actor,'session':session,
            'report':relative(path),'state_lock':relative(state_lock),'job':{**job,'status':'queued'},
            'diagnostics':{key:value for key,value in diagnostics.current().items() if key in {'trace_id','client_request_id','request_id','batch_id','session_id','job_id'}},
-           'config':cfg,'payload':payload or {},'permit':None if kind in {'hook','mosaic_prepare','cut_prepare'} else asdict(cutting_access.InteractiveReadPermit.issue(session,{**job,'status':'queued'}))}
+           'config':cfg,'payload':payload or {},'permit':None if kind in {'hook','mosaic_prepare','cut_prepare','preview_oss'} else asdict(cutting_access.InteractiveReadPermit.issue(session,{**job,'status':'queued'}))}
     with locked():
         state=load()
         for previous in list(state['pending']+state['active']):
@@ -106,6 +106,9 @@ def _run(entry,leases):
     if kind in {'mosaic_prepare','cut_prepare'}:
         from . import editor_preparation
         return editor_preparation.run(entry,leases)
+    if kind=='preview_oss':
+        from . import preview_oss
+        return preview_oss.run_queued(entry,leases)
     if kind=='hook':
         from . import hook_preview
         return hook_preview.run_queued(entry,leases)
@@ -134,7 +137,7 @@ def _run(entry,leases):
 
 def initial_resource(entry):
     if entry['kind'] in {'mosaic_frame','cut_frame'}:return None
-    if entry['kind'] in {'mosaic_prepare','cut_prepare'}:return 'transfer'
+    if entry['kind'] in {'mosaic_prepare','cut_prepare','preview_oss'}:return 'transfer'
     if entry['kind']=='hook':return None  # Starts with cache/semantic work; media is a later bounded stage.
     if entry['kind']=='locate':
         if (report(entry).parent/'frames'/(str(entry['job']['seed_frame'])+'.jpg')).is_file():return None
@@ -173,7 +176,7 @@ class Dispatcher:
                 lease.close();job=read_json(report(entry)) if report(entry).is_file() else entry['job']
                 if job.get('cancel_requested'):interrupted.append((entry,'cancelled'))
                 elif job.get('status') in TERMINAL:continue
-                elif entry['kind'] in {'clip','track','mosaic_prepare','cut_prepare','mosaic_frame','cut_frame'} or job.get('status')=='queued':state['pending'].append(entry);interrupted.append((entry,'queued'))
+                elif entry['kind'] in {'clip','track','mosaic_prepare','cut_prepare','preview_oss','mosaic_frame','cut_frame'} or job.get('status')=='queued':state['pending'].append(entry);interrupted.append((entry,'queued'))
                 else:interrupted.append((entry,'failed'))
             state['active']=live;state['pending'].sort(key=lambda row:row['order']);save(state)
         for entry,status in interrupted:

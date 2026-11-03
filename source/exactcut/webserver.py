@@ -1322,12 +1322,13 @@ class Handler(BaseHTTPRequestHandler):
                         options['save_receipt'] = lambda receipt: preview_oss.save_media_receipt(path / 'production', request_id, record, output, receipt, original=original)
                         result = preview_oss.signed_preview(output, batch_id, request_id, wait=False, **options)
                     except preview_oss.PreviewBusy:
-                        # Existing local playback must never wait for an upload slot.
-                        diag.event('preview.oss_deferred', level='info', batch_id=batch_id)
-                        if original:
-                            return self.stream_video(output)
-                        from urllib.parse import quote
-                        return self.respond(200, {'url': f'/api/batches/{batch_id}/preview/{quote(request_id, safe="")}', 'expires_in': 0})
+                        # No valid receipt: queue a bounded OSS copy and let the
+                        # client poll; never upload, stream locally or sign here.
+                        job = preview_oss.prepare_async(batch_id, request_id, output, record,
+                                                        original=original, actor=self.user['username'])
+                        diag.event('preview.oss_preparing', level='info', batch_id=batch_id)
+                        return self.respond(202, {'status': 'preparing', 'retry_after_ms': 1500,
+                                                  'job_id': job.get('id')}, retry_after=2)
                     except Exception as exc:
                         # Never include SDK request URLs/signatures in client errors or logs.
                         diag.event('preview.oss_failed', level='warning', batch_id=batch_id, error_type=type(exc).__name__)

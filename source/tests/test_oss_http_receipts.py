@@ -1,6 +1,8 @@
 """Exercise the complete signing/receipt callback through authenticated HTTP."""
 import hashlib
 import json
+import threading
+from contextlib import contextmanager
 
 import pytest
 
@@ -90,24 +92,50 @@ def _seed_receipt(batch_id, directory, video, bucket, *, original=False):
     return receipt
 
 
-def _preview_fixture(app, tmp_path, monkeypatch, *, receipt=None):
+def _preview_fixture(app, tmp_path, monkeypatch, *, bucket=None, request_id='R1'):
     headers = login(app)
     _, _, body = request(app, 'POST', '/home/api/batches/blank', {}, headers)
     batch_id = json.loads(body)['id']
     directory = workflow.folder(batch_id) / 'production'
     video = tmp_path / 'media.mp4'
-    video.write_bytes(b'private media fixture for fallback')
+    video.write_bytes(b'private media fixture for async preparation')
     digest = hashlib.sha256(video.read_bytes()).hexdigest()
     record = {'status': 'qc_passed', 'output_sha256': digest,
               'preview': {'sha256': digest, 'master_sha256': digest}}
-    if receipt is not None:
-        record['preview']['oss'] = receipt
-    result_store.put(directory, 'R1', record)
-    monkeypatch.setattr(workflow, 'preview_file', lambda *a, **kw: (video, result_store.read(directory)['requests']['R1']))
+    result_store.put(directory, request_id, record)
+    monkeypatch.setattr(workflow, 'preview_file',
+                        lambda *a, **kw: (video, result_store.read(directory)['requests'][request_id]))
     monkeypatch.setattr(preview_oss, 'enabled', lambda: True)
-    bucket = SigningBucket()
+    bucket = bucket or SigningBucket()
     monkeypatch.setattr(preview_oss, '_connect', lambda: bucket)
     return headers, batch_id, directory, video, digest, bucket
+
+
+class ControlledBucket(SigningBucket):
+    def __init__(self):
+        super().__init__()
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.failures = 0
+
+    def put_object_from_file(self, key, filename, headers):
+        self.entered.set()
+        assert self.release.wait(10), 'test upload was not released'
+        if self.failures:
+            self.failures -= 1
+            raise RuntimeError('upload fixture failure')
+        return super().put_object_from_file(key, filename, headers)
+
+
+@contextmanager
+def _dispatcher():
+    from exactcut import interactive_queue
+    instance = interactive_queue.Dispatcher(poll_seconds=.01)
+    assert instance.start()
+    try:
+        yield instance
+    finally:
+        instance.stop(timeout=None)
 
 
 def _held_transfers():
@@ -119,108 +147,149 @@ def _held_transfers():
     return stack
 
 
-def test_busy_transfer_falls_back_to_authenticated_local_playback(app, tmp_path, monkeypatch):
+def _poll_signed(app, headers, batch_id, *, original=False, timeout=15):
     import time
-    headers, batch_id, directory, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    with _held_transfers():
+    suffix = 'download' if original else 'preview-url'
+    deadline = time.monotonic() + timeout
+    while True:
+        status, response_headers, body = request(app, 'GET', f'/home/api/batches/{batch_id}/{suffix}/R1', headers=headers)
+        if status in (200, 302):
+            return status, response_headers, body
+        assert status == 202, (status, body)
+        assert json.loads(body)['status'] == 'preparing'
+        assert time.monotonic() < deadline, body
+        time.sleep(.05)
+
+
+def test_missing_receipt_returns_preparing_then_signs_after_background_upload(app, tmp_path, monkeypatch):
+    import time
+    bucket = ControlledBucket()
+    headers, batch_id, _, video, digest, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    with _dispatcher() as dispatcher:
         started = time.monotonic()
-        status, response_headers, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-        elapsed = time.monotonic() - started
-        assert status == 200 and elapsed < 3, (status, elapsed, body)
+        status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+        assert status == 202 and time.monotonic() - started < 1.5
+        preparing = json.loads(body)
+        assert preparing['status'] == 'preparing' and preparing['retry_after_ms'] > 0
+        assert bucket.signs == [] and 'url' not in preparing
+        assert bucket.entered.wait(5)
+        status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+        assert status == 202 and json.loads(body)['status'] == 'preparing'
+        state = snapshot()
+        assert len(state['pending']) + len(state['active']) == 1
+        bucket.release.set()
+        status, _, body = _poll_signed(app, headers, batch_id)
         result = json.loads(body)
-        assert result == {'url': f'/api/batches/{batch_id}/preview/R1', 'expires_in': 0}
-        assert bucket.puts == [] and bucket.signs == []
-        assert 'fixture.invalid' not in body.decode()
-    status, _, data = request(app, 'GET', result['url'], headers=headers)
-    assert status == 200 and data == video.read_bytes()
-    status, response_headers, data = request(app, 'GET', result['url'], headers={**headers, 'Range': 'bytes=0-9'})
-    assert status == 206 and data == video.read_bytes()[:10]
-    assert response_headers['Content-Range'].startswith('bytes 0-9/')
-    assert result_store.read(directory)['requests']['R1'] == {'status': 'qc_passed', 'output_sha256': digest,
-                                                              'preview': {'sha256': digest, 'master_sha256': digest}}
+        assert result['expires_in'] == 900 and result['url'].startswith('https://fixture.invalid/')
+        assert len(bucket.puts) == 1 and bucket.signs
+        assert '/preview/R1' not in result['url']
 
 
-def test_busy_transfer_download_falls_back_to_local_stream(app, tmp_path, monkeypatch):
-    headers, batch_id, _, video, _, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    with _held_transfers():
-        status, _, data = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1', headers=headers)
-    assert status == 200 and data == video.read_bytes()
-    assert bucket.puts == [] and bucket.signs == []
+def test_full_transfer_slots_queue_background_work_then_complete(app, tmp_path, monkeypatch):
+    import time
+    bucket = ControlledBucket(); bucket.release.set()
+    headers, batch_id, _, video, digest, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    with _dispatcher() as dispatcher:
+        with _held_transfers():
+            started = time.monotonic()
+            status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+            assert status == 202 and time.monotonic() - started < 1.5
+            time.sleep(.2)
+            assert dispatcher.active_workers == 0           # queued on the transfer pool, not an HTTP wait
+            assert len(snapshot()['pending']) == 1
+        status, _, body = _poll_signed(app, headers, batch_id)
+    assert json.loads(body)['expires_in'] == 900 and len(bucket.puts) == 1
 
 
-def test_valid_receipt_still_signs_fast_while_transfer_is_busy(app, tmp_path, monkeypatch):
-    headers, batch_id, directory, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    receipt = _seed_receipt(batch_id, directory, video, bucket)
+def test_same_resource_is_prepared_once_across_clients(app, tmp_path, monkeypatch):
+    bucket = ControlledBucket()
+    headers, batch_id, _, _, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    with _dispatcher():
+        for _ in range(2):
+            status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+            assert status == 202 and json.loads(body)['status'] == 'preparing'
+        assert bucket.entered.wait(5)
+        state = snapshot()
+        assert len(state['pending']) + len(state['active']) == 1
+        assert len(state['active']) <= 1
+        bucket.release.set()
+        status, _, body = _poll_signed(app, headers, batch_id)
+        assert len(bucket.puts) == 1
+
+
+def test_valid_receipt_signs_fast_without_queueing(app, tmp_path, monkeypatch):
+    bucket = SigningBucket()
+    headers, batch_id, directory, video, digest, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    _seed_receipt(batch_id, directory, video, bucket)
     signs = len(bucket.signs)
     with _held_transfers():
         status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
     assert status == 200 and json.loads(body)['expires_in'] == 900
     assert len(bucket.signs) == signs + 1 and len(bucket.puts) == 1
     assert json.loads(body)['url'].startswith('https://fixture.invalid/')
+    assert not snapshot()['pending'] and not snapshot()['active']
 
 
-def test_changed_identity_with_busy_transfer_falls_back_instead_of_uploading(app, tmp_path, monkeypatch):
-    headers, batch_id, directory, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    _seed_receipt(batch_id, directory, video, bucket)
-    video.write_bytes(b'replaced after the receipt')
-    puts = len(bucket.puts)
-    with _held_transfers():
-        status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-    assert status == 200 and json.loads(body) == {'url': f'/api/batches/{batch_id}/preview/R1', 'expires_in': 0}
-    assert len(bucket.puts) == puts
-    assert result_store.read(directory)['requests']['R1']['preview']['oss']['sha256'] == digest
-
-
-def test_missing_receipt_with_empty_transfer_never_starts_an_upload(app, tmp_path, monkeypatch):
-    import threading, time
-    headers, batch_id, _, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    entered = threading.Event()
-    def slow_upload(*a, **kw):
-        entered.set()
-        time.sleep(3)
-        raise AssertionError('playback must not start an upload')
-    bucket.put_object_from_file = slow_upload
-    bucket.object_exists = slow_upload
-    started = time.monotonic()
-    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-    elapsed = time.monotonic() - started
-    assert status == 200 and elapsed < 1.5, (status, elapsed, body)
-    assert json.loads(body) == {'url': f'/api/batches/{batch_id}/preview/R1', 'expires_in': 0}
-    assert not entered.is_set() and bucket.puts == [] and bucket.signs == []
-    status, _, data = request(app, 'GET', json.loads(body)['url'], headers={**headers, 'Range': 'bytes=0-9'})
-    assert status == 206 and data == video.read_bytes()[:10]
-
-
-def test_stale_receipt_with_empty_transfer_never_starts_an_upload(app, tmp_path, monkeypatch):
-    import threading, time
-    headers, batch_id, directory, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    stale = {'key': f'{preview_oss.object_prefix()}/{batch_id}/R1/{"0"*64}.mp4', 'sha256': '0'*64,
-             'bytes': 0, 'identity': [], 'bucket': bucket.bucket_name, 'endpoint': bucket.endpoint}
-    record = result_store.read(directory)['requests']['R1']
-    record['preview']['oss'] = stale
-    result_store.put(directory, 'R1', record)
-    entered = threading.Event()
-    def slow_upload(*a, **kw):
-        entered.set()
-        time.sleep(3)
-        raise AssertionError('playback must not start an upload')
-    bucket.put_object_from_file = slow_upload
-    bucket.object_exists = slow_upload
-    started = time.monotonic()
-    status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-    assert status == 200 and time.monotonic() - started < 1.5, (status, body)
-    assert json.loads(body) == {'url': f'/api/batches/{batch_id}/preview/R1', 'expires_in': 0}
-    assert not entered.is_set() and bucket.puts == [] and bucket.signs == []
-
-
-def test_missing_receipt_never_takes_object_lock_or_network(app, tmp_path, monkeypatch):
+def test_source_change_supersedes_old_preparation_and_uploads_new_copy(app, tmp_path, monkeypatch):
     import time
-    headers, batch_id, _, video, digest, bucket = _preview_fixture(app, tmp_path, monkeypatch)
-    def forbidden(*a, **kw):
-        raise AssertionError('wait=False must not take the object lock or upload')
-    monkeypatch.setattr(preview_oss.resource_locks, 'hold', forbidden)
-    monkeypatch.setattr(preview_oss.shutil, 'copyfile', forbidden)
-    started = time.monotonic()
+    bucket = ControlledBucket(); bucket.release.set()
+    headers, batch_id, directory, video, digest, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    with _dispatcher():
+        with _held_transfers():
+            status, _, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+            assert status == 202
+            video.write_bytes(b'new source after preparation was queued')
+            new_digest = hashlib.sha256(video.read_bytes()).hexdigest()
+        status, _, body = _poll_signed(app, headers, batch_id)
+    assert json.loads(body)['expires_in'] == 900
+    assert len(bucket.puts) == 1
+    assert bucket.puts[0].endswith(new_digest + '.mp4')
+    assert digest != new_digest
+
+
+def test_failed_upload_is_retryable(app, tmp_path, monkeypatch):
+    bucket = ControlledBucket(); bucket.release.set(); bucket.failures = 1
+    headers, batch_id, _, _, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    with _dispatcher():
+        status, _, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+        assert status == 202
+        status, _, body = _poll_signed(app, headers, batch_id)
+    assert json.loads(body)['expires_in'] == 900 and len(bucket.puts) == 1
+
+
+def test_download_returns_preparing_not_local_bytes(app, tmp_path, monkeypatch):
+    bucket = ControlledBucket(); bucket.release.set()
+    headers, batch_id, _, video, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    with _dispatcher():
+        status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/download/R1', headers=headers)
+        assert status == 202 and json.loads(body)['status'] == 'preparing'
+        assert body != video.read_bytes()
+        status, response_headers, _ = _poll_signed(app, headers, batch_id, original=True)
+    assert status == 302 and response_headers['Location'].startswith('https://fixture.invalid/')
+
+
+def test_queued_preparation_survives_restart(app, tmp_path, monkeypatch):
+    bucket = ControlledBucket(); bucket.release.set()
+    headers, batch_id, _, _, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
     status, _, body = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
-    assert status == 200 and time.monotonic() - started < 1.5
-    assert json.loads(body) == {'url': f'/api/batches/{batch_id}/preview/R1', 'expires_in': 0}
+    assert status == 202 and snapshot()['pending']
+    with _dispatcher():
+        status, _, body = _poll_signed(app, headers, batch_id)
+    assert json.loads(body)['expires_in'] == 900 and len(bucket.puts) == 1
+
+
+def test_unauthenticated_or_foreign_client_cannot_prepare(app, tmp_path, monkeypatch):
+    from exactcut import accounts
+    bucket = ControlledBucket(); bucket.release.set()
+    headers, batch_id, _, _, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    assert request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers={})[0] == 401
+    accounts.manage(app.auth_db, 'admin', {'action': 'create', 'username': 'bob', 'name': 'Bob', 'password': 'bob-password-123'})
+    status, response_headers, _ = request(app, 'POST', '/home/api/login', {'username': 'bob', 'password': 'bob-password-123'}, {'X-Exactcut-Request': '1'})
+    bob = {'Cookie': response_headers['Set-Cookie'].split(';')[0], 'X-Exactcut-Request': '1'}
+    assert request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=bob)[0] == 404
+    assert not snapshot()['pending'] and not snapshot()['active']
+
+
+def snapshot():
+    from exactcut import interactive_queue
+    return interactive_queue.snapshot()
