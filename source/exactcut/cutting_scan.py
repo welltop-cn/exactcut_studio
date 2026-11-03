@@ -14,6 +14,7 @@ from pathlib import Path
 from . import cutting, diagnostics, editor_resources, processing_cancel, cutting_access, workflow
 from .runtime import protect_path
 from .util import load_config, file_sha256, json_sha256, read_json, write_json_atomic, now_iso
+from .stage_results import ResourceDeferred
 
 PROMPT = '''你是短剧成片的人工审片辅助员。只标记可见的疑似色情/擦边画面，不作平台通过承诺。
 需要标记：敏感部位裸露、大面积裸露、以手或物体刻意遮盖敏感部位、模拟性行为、明显性暗示身体动作或姿势、色情化身体部位特写。
@@ -169,6 +170,8 @@ def detect(source, meta, cfg, policy, key, progress, compute, *, deadline=None):
                     if any(f['start_ms']<left or f['end_ms']>end for f in findings):
                         raise cutting.CutError('复查区间超出抽样窗口')
                     result.append(refined_event(event,findings))
+                except ResourceDeferred:
+                    raise
                 except Exception as exc:
                     diagnostics.event('scan.refinement_failed',level='warning',event_index=i,error=diagnostics.private_exception(exc))
                     result.append({**refined_event(event,[]),'review_note':'加密复查未完成，保留粗筛标记，请人工确认。'})
@@ -246,6 +249,8 @@ def _work_scoped(path,session,report,cfg,key,leases,permit=None):
         result=detect(source,session['metadata'],cfg,report['policy'],key,lambda message:update(progress=message),leases[-1])
         current()
         update(**result,status='completed',completed_at=now_iso(),progress='识别完成，请复核疑似区间')
+    except ResourceDeferred:
+        raise
     except Exception as exc:
         update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '自动识别失败，请重试；未修改剪切标记')
     finally:

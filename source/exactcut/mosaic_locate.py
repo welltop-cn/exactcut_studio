@@ -7,6 +7,7 @@ import re
 import threading
 import time
 from . import cutting, cutting_scan as scan, mosaic_session as sessions, cutting_access, workflow, diagnostics
+from .stage_results import ResourceDeferred
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 from . import editor_resources, processing_cancel
 
@@ -146,6 +147,8 @@ def _work_scoped(bid,sid,path,job,cfg,key,leases,permit=None):
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败，结果已失效')
             update(candidates=candidates,status='completed',completed_at=now_iso(),progress='区域识别完成，请人工复核')
         diagnostics.event('mosaic.locate_completed',candidate_count=len(candidates),duration_ms=round((time.monotonic()-started)*1000))
+    except ResourceDeferred:
+        raise
     except Exception as exc:
         diagnostics.event('mosaic.locate_failed',level='error',phase=phase,duration_ms=round((time.monotonic()-started)*1000),error=diagnostics.private_exception(exc))
         update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '区域识别失败，请重试；原成片未修改')

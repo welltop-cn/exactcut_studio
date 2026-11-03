@@ -263,9 +263,11 @@ def lock_root():
 @contextmanager
 def frame_lease(path, *, timeout=2.0):
     """Absorb short frame-window contention without unbounded HTTP waits."""
+    from . import processing_cancel
     started = time.monotonic()
     deadline = started + timeout
     while True:
+        processing_cancel.check()
         try:
             stream = lock_file(path)
             break
@@ -273,10 +275,14 @@ def frame_lease(path, *, timeout=2.0):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 diagnostics.event('editor.frame_wait', duration_ms=round((time.monotonic()-started)*1000), admitted=False)
+                # A queued worker must keep waiting in the scheduler, not turn
+                # cache contention into a failed task the user already accepted.
+                if processing_cancel.scoped():
+                    from .stage_results import ResourceDeferred
+                    raise ResourceDeferred(time.time() + .25) from None
                 raise ResourceBusy('frame') from exc
             time.sleep(min(.05, remaining))
     diagnostics.event('editor.frame_wait', duration_ms=round((time.monotonic()-started)*1000), admitted=True)
-    from . import processing_cancel
     try:
         from . import editor_resources
         with processing_cancel.retain([stream]),editor_resources.stage('frame'):yield

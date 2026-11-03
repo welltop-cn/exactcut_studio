@@ -27,6 +27,11 @@ def check():
     if callback and callback():raise Cancelled()
 
 
+def scoped():
+    """True only inside an owned worker cancellation scope, never a bare request."""
+    return getattr(_local,'callback',None) is not None
+
+
 @contextlib.contextmanager
 def scope(callback,leases=None):
     previous=getattr(_local,'callback',None);previous_leases=getattr(_local,'leases',())

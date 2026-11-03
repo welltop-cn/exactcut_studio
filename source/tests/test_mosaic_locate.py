@@ -161,3 +161,22 @@ def test_sdk_normalization_does_not_change_shared_schema(monkeypatch):
     finally:m.SCHEMA.clear();m.SCHEMA.update(before)
 
 from interactive_test_support import interactive_dispatcher
+
+
+def test_locate_waits_for_busy_frame_cache_instead_of_failing(configured,monkeypatch):
+    import time
+    from exactcut.util import json_sha256
+    m=module();bid,cut_sid,_=configured
+    cut=cutting.read_session(bid,cut_sid);sid=sessions.open_session(bid,cut['request_id'],cut['source_sha256'])['id']
+    monkeypatch.setattr(m,'detect',lambda *args:[])
+    cache=sessions.session_path(bid,sid)/'frames'
+    hold=cutting.lock_file(cutting.lock_root()/('frame-'+json_sha256(str(cache.resolve()))+'.lock'))
+    try:
+        job=m.start(bid,sid,0,20,5,'')
+        time.sleep(2.4)
+        waiting=m.state(bid,sid,job['id'])
+        assert waiting['status'] in {'queued','running'},waiting
+        assert waiting['status']!='failed'
+    finally:
+        hold.close()
+    assert poll(m,bid,sid,job['id'])['status']=='completed'

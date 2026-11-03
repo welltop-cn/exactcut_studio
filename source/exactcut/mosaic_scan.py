@@ -6,6 +6,7 @@ import uuid
 from . import cutting, cutting_scan as scan, mosaic_locate as locate, mosaic_session as sessions, cutting_access, workflow, diagnostics
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
 from . import editor_resources, processing_cancel
+from .stage_results import ResourceDeferred
 
 NOTICE='整片抽样发现疑似时间段，再自动抽帧定位区域；可能遗漏短闪帧，候选框不代表整段覆盖，需人工复核。'
 MAX_LOCALIZED_EVENTS=8
@@ -113,6 +114,8 @@ def _work_scoped(bid,sid,path,job,cfg,key,leases,permit=None):
                         if candidates:
                             event.update(status='localized',seed_frame=frame,candidates=candidates)
                             notes.append('候选框仅对应自动抽样帧，不代表整个时间段覆盖。');break
+                    except ResourceDeferred:
+                        raise
                     except Exception as exc:
                         diagnostics.event('mosaic.localization_failed',level='warning',event_id=event['id'],frame=frame,phase=phase,
                                           duration_ms=round((time.monotonic()-attempt_started)*1000),error=diagnostics.private_exception(exc))
@@ -130,6 +133,8 @@ def _work_scoped(bid,sid,path,job,cfg,key,leases,permit=None):
             update(status='completed',events=events,warnings=warnings,completed_at=now_iso(),progress='整片识别完成，请人工复核')
         diagnostics.event('mosaic.scan_completed',duration_ms=round((time.monotonic()-started)*1000),event_count=len(events),
                           localized_count=sum(bool(e['candidates']) for e in events),warning_count=len(warnings))
+    except ResourceDeferred:
+        raise
     except Exception as exc:
         # Provider exception text can contain response bodies; retain only metadata.
         error=diagnostics.private_exception(exc)
