@@ -57,10 +57,10 @@ def prepare(path, draft, episode):
             # Never hold the identity lock while waiting for a media slot: probe
             # admission first, defer the job if the pool is busy, then probe.
             try:
-                lease=editor_resources.acquire('media')
+                lease=None if editor_resources.production() else editor_resources.acquire('media')
             except cutting.ResourceBusy:
                 raise ResourceDeferred(time.time()+.5) from None
-            with editor_resources.reservation(('media',lease)):
+            with editor_resources.reservation(('media',lease) if lease else None):
                 try:
                     result = media.run_checked(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
                         '-show_frames', '-show_streams', '-show_format', '-show_entries',

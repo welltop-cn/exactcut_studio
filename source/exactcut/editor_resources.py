@@ -18,6 +18,7 @@ _active=ContextVar('editor_execution_stages',default=frozenset())
 _leases=ContextVar('editor_execution_leases',default={})
 _reserved=ContextVar('editor_initial_resource',default=None)
 _final=ContextVar('editor_final_group',default=False)
+_production=False
 
 
 def settings():
@@ -31,6 +32,14 @@ def settings():
     threads=cfg.get('encoder_threads',2)
     if type(threads) is not int or not 1<=threads<=8:raise cutting.CutError('交互资源配置 encoder_threads 必须为1到8的整数',503)
     return {**result,'encoder_threads':threads}
+
+
+def production_process():
+    """Production children (workflow, material_download, source_prefetch) never take shared editor slots."""
+    global _production;_production=True
+
+
+def production():return _production
 
 
 def encoding():
@@ -73,7 +82,7 @@ def wait(kind,actor='admin',*,timeout=1800):
 @contextmanager
 def stage(kind):
     held=_active.get()
-    if kind in held:
+    if _production or kind in held:
         yield;return
     pending=_reserved.get()
     if pending and pending[0]==kind:

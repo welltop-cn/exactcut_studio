@@ -160,4 +160,6 @@ def main():
 
 
 if __name__ == '__main__':
+    from . import editor_resources
+    editor_resources.production_process()
     raise SystemExit(main())
