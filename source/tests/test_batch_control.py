@@ -110,3 +110,18 @@ def test_reconcile_prunes_dead_children_but_preserves_foreign_records(tmp_path):
     write_json_atomic(p/'control.json', {'children': [dead, foreign]})
     assert not c.reconcile(tmp_path, c.FakeProcessTable({}))
     assert c.read(p)['children'] == [foreign]
+
+
+@pytest.mark.parametrize('request_id', [None, 'r1'])
+def test_legacy_pause_and_archive_work_while_production_stage_holds_gate(tmp_path, request_id):
+    # workflow.execution() holds the media gate for a whole legacy stage
+    # (exclusive for batch stages, shared for one request's render/upload/poll).
+    from exactcut.cutting_access import gate
+    p = state(tmp_path)
+    with gate(p, request_id):
+        c.change(p, 'pause')
+        assert c.read(p)['paused']
+        c.change(p, 'resume')
+        c.change(p, 'archive')
+        assert c.read(p)['archived'] and c.read(p)['paused']
+        c.change(p, 'unarchive')
