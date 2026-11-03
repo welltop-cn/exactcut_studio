@@ -14,7 +14,7 @@ def test_overlapping_requests_wait_and_reuse_window(tmp_path, monkeypatch, modul
         'frame_count': 100, 'fps_num': 30, 'fps_den': 1}})
     monkeypatch.setattr(module, 'session_path', lambda *a: tmp_path)
     monkeypatch.setattr(module, 'lock_root', lambda: tmp_path/'locks')
-    def run(command, timeout):
+    def run(command, timeout, **kwargs):
         calls.append(command)
         entered.set()
         assert release.wait(3)

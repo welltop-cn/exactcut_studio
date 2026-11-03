@@ -99,7 +99,7 @@ def test_detector_preserves_coarse_on_provider_refinement_failure(tmp_path, monk
         return SimpleNamespace(text=json.dumps({'risk_events':[EVENT]}))
     closed=[]
     monkeypatch.setattr(genai,'Client',lambda **kwargs:SimpleNamespace(models=SimpleNamespace(generate_content=ask),close=lambda:closed.append(True)))
-    def run(command,*args):
+    def run(command,*args,**kwargs):
         if command[-1]=='-':return b'jpeg'
         from pathlib import Path
         Path(command[-1]).write_bytes(b'proxy')

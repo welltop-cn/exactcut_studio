@@ -62,7 +62,7 @@ def _timeline(packets: list[dict], tick: Fraction, fps: Fraction, count: int) ->
 def _boundary_hashes(path: Path, first: int) -> list[str]:
     result = run_checked(['ffmpeg', '-v', 'error', '-xerror', '-i', str(path),
                           '-map', '0:v:0', '-vf', f'trim=start_frame={first},setpts=PTS-STARTPTS',
-                          '-frames:v', '8', '-vsync', '0', '-f', 'framemd5', '-'])
+                          '-frames:v', '8', '-vsync', '0', '-f', 'framemd5', '-'], light=True)
     return [line.split(',')[-1].strip() for line in result.stdout.splitlines()
             if line and not line.startswith('#')]
 
@@ -124,7 +124,7 @@ def try_hook_splice(input_video: Path, output: Path, render: dict[str, Any],
             microseconds = -(-(seconds * 1000000).numerator // (seconds * 1000000).denominator)
             seek = f'{microseconds // 1000000}.{microseconds % 1000000:06d}'
             run_checked(['ffmpeg', '-y', '-v', 'error', '-ss', seek, '-i', str(input_video),
-                         '-map', '0:v:0', '-c:v', 'copy', '-an', str(tail)])
+                         '-map', '0:v:0', '-c:v', 'copy', '-an', str(tail)], light=True)
             copied = _packets(tail)
             _timeline(copied, tick, fps, count - prefix_frames)
             _require([p['data_hash'] for p in copied] == [p['data_hash'] for p in packets[index:]],
@@ -139,7 +139,7 @@ def try_hook_splice(input_video: Path, output: Path, render: dict[str, Any],
             run_checked(['ffmpeg', '-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', str(listing),
                          '-i', str(input_video), '-map', '0:v:0', '-map', '1:a:0?', '-c', 'copy',
                          '-bsf:v', f'setts=pts=PTS:dts=(N-2)/({render["fps"]}*TB)',
-                         '-movflags', '+faststart', str(candidate)])
+                         '-movflags', '+faststart', str(candidate)], light=True)
             joined_packets = _packets(candidate)
             _timeline(joined_packets, tick, fps, count)
             _require(all(p['dts'] <= p['pts'] for p in joined_packets)

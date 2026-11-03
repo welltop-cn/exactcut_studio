@@ -20,8 +20,8 @@ def test_frame_stage_retains_its_lease_in_addition_to_worker(tmp_path):
         with processing_cancel.scope(lambda:False,leases=[worker]):
             with cutting.frame_lease(tmp_path/'frame.lock'):
                 descriptors=processing_cancel.process_options()['pass_fds']
-                assert len(descriptors)==3  # worker + per-key producer lock + shared short-media slot
-                assert worker.fileno() in descriptors and len(set(descriptors))==3
+                assert len(descriptors)==2  # worker + per-key producer lock; no shared slot
+                assert worker.fileno() in descriptors and len(set(descriptors))==2
             assert processing_cancel.process_options()['pass_fds']==(worker.fileno(),)
     finally:worker.close()
 
