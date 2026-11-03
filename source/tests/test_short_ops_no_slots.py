@@ -9,11 +9,11 @@ from exactcut.util import write_json_atomic
 
 @pytest.fixture
 def slots(tmp_path,monkeypatch):
-    """Every execution slot (media, frame, transfer, final_media) is held by other work."""
+    """Every execution slot (media, frame, final_media) is held by other work."""
     monkeypatch.setenv('EXACTCUT_DATA_ROOT',str(tmp_path));monkeypatch.setenv('EXACTCUT_ENVIRONMENT','test')
     cfg=tmp_path/'runtime.json';write_json_atomic(cfg,{'environment':'test'});monkeypatch.setenv('EXACTCUT_CONFIG_FILE',str(cfg))
     with ExitStack() as stack:
-        for kind in ('media','frame','transfer','final_media'):
+        for kind in ('media','frame','final_media'):
             for _ in range(editor_resources.settings()[editor_resources._ROLES[kind][0]]):
                 stack.enter_context(editor_resources.acquire(kind))
         yield tmp_path,stack
