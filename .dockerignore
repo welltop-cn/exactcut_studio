@@ -2,6 +2,8 @@
 **
 !source/
 !source/requirements.lock.txt
+# Validation image only (test tools); the runtime Dockerfile does not COPY it.
+!source/requirements-dev.lock.txt
 !source/requirements-sam2.txt
 !source/Dockerfile
 !source/exactcut/

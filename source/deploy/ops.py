@@ -54,11 +54,19 @@ def check_disk(path):
     if shutil.disk_usage(path).free < 10 * 1024**3:
         raise RuntimeError('Less than 10 GiB free; refusing backup/build until storage is reviewed')
 
+def pinned(path):
+    """Exact pins in a lock file; comments and -r includes are not pins."""
+    return {line.strip().lower() for line in path.read_text().splitlines()
+            if line.strip() and not line.lstrip().startswith(('#','-'))} if path.is_file() else set()
+
 def check_dependencies(release):
-    expected={line.strip().lower() for line in (release/'requirements.lock.txt').read_text().splitlines() if line.strip()}
+    # Runtime pins must all be installed exactly. The only extras allowed are the exact
+    # test-tool pins from requirements-dev.lock.txt (the release gate runs pytest).
+    expected=pinned(release/'requirements.lock.txt')
+    allowed=expected|pinned(release/'requirements-dev.lock.txt')
     actual={line.strip().lower() for line in run(release/'.venv/bin/python','-m','pip','freeze').splitlines()
             if line.strip() and not line.startswith(('#','-e '))}
-    if expected != actual:
+    if not expected or not expected<=actual or not actual<=allowed:
         raise RuntimeError('Installed dependencies do not match committed requirements.lock.txt')
 
 def external_dependencies(release):

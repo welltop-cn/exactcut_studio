@@ -1,0 +1,10 @@
+# Development and test tools on top of the runtime lock. Not installed in production.
+# Install: python -m pip install -r requirements-dev.lock.txt
+-r requirements.lock.txt
+execnet==2.1.2
+iniconfig==2.3.0
+packaging==26.3
+pluggy==1.6.0
+Pygments==2.21.0
+pytest==9.1.1
+pytest-xdist==3.8.0
