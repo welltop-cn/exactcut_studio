@@ -19,7 +19,7 @@ def test_six_hook_submissions_wait_without_compute_and_restore_by_job_id(fixture
     server=serve();dispatcher=interactive_queue.Dispatcher(poll_seconds=.01);receipts=[]
     try:
         with ExitStack() as held:
-            for _ in range(2):held.enter_context(editor_resources.acquire('preview'))
+            for _ in range(3):held.enter_context(editor_resources.acquire('hook'))
             for row in rows:
                 code,job=call(server,'POST',f"/api/batches/{row['id']}/hook-preview",{'revision':row['revision'],'index':0})
                 assert code==202 and job['status']=='queued',job
@@ -27,9 +27,9 @@ def test_six_hook_submissions_wait_without_compute_and_restore_by_job_id(fixture
             assert len(interactive_queue.snapshot()['pending'])==6 and not entered
             assert dispatcher.start()
             assert dispatcher.active_workers==0
-        with condition:assert condition.wait_for(lambda:len(entered)==2,2)
-        assert len(interactive_queue.snapshot()['pending'])==4
-        # A different material can still save while both preview workers are busy.
+        with condition:assert condition.wait_for(lambda:len(entered)==3,2)
+        assert len(interactive_queue.snapshot()['pending'])==3
+        # A different material can still save while all three Hook workers are busy.
         row=rows[-1];draft=copy.deepcopy(row['draft']);draft['rows'][0]['hook_text']='edited while queued'
         started=time.monotonic();code,saved=call(server,'POST',f"/api/batches/{row['id']}/save",{'revision':row['revision'],'draft':draft})
         assert code==200 and time.monotonic()-started<1
