@@ -26,31 +26,36 @@ def editor():
         page.route('**/*', lambda r: r.fulfill(body=html, content_type='text/html'))
         page.route('**/frame/*', lambda r: r.fulfill(body=jpeg.getvalue(), content_type='image/jpeg'))
         page.goto('http://fixture.test/')
-        page.evaluate('''() => {
-          window.$=id=>document.getElementById(id);
-          window.esc=v=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
-          window.appUrl=u=>u;
-          window.currentUser={username:'fixture',features:{cutting:true}};
-          window.current={id:'batch',assets:[{title:'测试',can_edit_video:true,request_id:'R1',sha256:'a'.repeat(64),preview:'/video'}]};
-          window.calls=[];
-          window.session={id:'session',source_sha256:'a'.repeat(64),source_filename:'source.mp4',metadata:{frame_count:300,fps_num:30,fps_den:1,width:160,height:96},capabilities:{region_recognition:true,render_stop:true},jobs:[]};
-          window.findings=[{id:'0',label:'候选区域',reason:'需要人工确认',box_2d:[250,250,750,750],x:40,y:24,w:80,h:48}];
-          window.api=async (url,body)=>{
-            calls.push({url,body});
-            if(url.endsWith('/scan'))return {enabled:true,report:{id:'existing',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]}};
-            if(url.endsWith('/locate'))return {id:'job',status:'completed',...body,candidates:findings};
-            return session;
-          };
-          $('assets').innerHTML='<article data-asset="0"><div class="cut-tools"><button data-open-cut>剪切</button></div></article>';
-          $('assets').closest('[hidden]')?.removeAttribute('hidden');
-        }''')
-        page.add_script_tag(content=(root/'editor-busy.js').read_text())
-        page.add_script_tag(content=(root/'editor-source.js').read_text())
-        script=root/'mosaic.js'
-        if script.exists():
-            page.add_script_tag(content=script.read_text())
+        install_editor(page)
         yield page
         browser.close()
+
+
+def install_editor(page):
+    root = Path(__file__).parents[1] / 'exactcut/web'
+    page.evaluate('''() => {
+      window.$=id=>document.getElementById(id);
+      window.esc=v=>String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('"','&quot;');
+      window.appUrl=u=>u;
+      window.currentUser={username:'fixture',features:{cutting:true}};
+      window.current={id:'batch',assets:[{title:'测试',can_edit_video:true,request_id:'R1',sha256:'a'.repeat(64),preview:'/video'}]};
+      window.calls=[];
+      window.session={id:'session',source_sha256:'a'.repeat(64),source_filename:'source.mp4',metadata:{frame_count:300,fps_num:30,fps_den:1,width:160,height:96},capabilities:{region_recognition:true,render_stop:true},jobs:[]};
+      window.findings=[{id:'0',label:'候选区域',reason:'需要人工确认',box_2d:[250,250,750,750],x:40,y:24,w:80,h:48}];
+      window.api=async (url,body)=>{
+        calls.push({url,body});
+        if(url.endsWith('/scan'))return {enabled:true,report:{id:'existing',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]}};
+        if(url.endsWith('/locate'))return {id:'job',status:'completed',...body,candidates:findings};
+        return session;
+      };
+      $('assets').innerHTML='<article data-asset="0"><div class="cut-tools"><button data-open-cut>剪切</button></div></article>';
+      $('assets').closest('[hidden]')?.removeAttribute('hidden');
+    }''')
+    page.add_script_tag(content=(root/'editor-busy.js').read_text())
+    page.add_script_tag(content=(root/'editor-source.js').read_text())
+    script=root/'mosaic.js'
+    if script.exists():
+        page.add_script_tag(content=script.read_text())
 
 
 def adopt_regions_if_needed(page):
@@ -213,12 +218,12 @@ def test_unlocalized_segment_remains_for_review(editor):
     open_auto(editor)
     editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').wait_for()
-    assert '打码需框选' in editor.locator('#mosaicScanEvents').inner_text()
+    assert '未处理' in editor.locator('#mosaicScanEvents').inner_text()
     editor.locator('[data-scan-event="e1"]').click()
     assert editor.locator('#mosaicStart').input_value()=='00:01:00'
     assert editor.locator('#mosaicConfirm').is_hidden()  # Time changes commit without a mask.
     assert editor.locator('#mosaicCandidates').inner_text()==''
-    assert '未完成' in editor.locator('#mosaicStatus').inner_text()
+    assert 'AI 没框出区域' in editor.locator('#mosaicStatus').inner_text()
 
 
 def test_scan_resumes_running_job_on_reopen(editor):
@@ -841,7 +846,7 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     button=editor.locator('#mosaicBatchStart')
     assert button.is_visible() and button.is_enabled()
     # v1 targets carry no motion (= tracked): they open as fixed and the user is told so.
-    assert editor.locator('#mosaicBatchHint').inner_text().split('\n')==['删除 0 段 · 打码 2 段','旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。']
+    assert editor.locator('#mosaicBatchHint').inner_text().split('\n')==['删除 0 段 · 打码 2 段 · 全部已处理','旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。']
     button.click()
     assert editor.locator('#mosaicBatchDialog').is_visible()
     assert editor.evaluate('batchBody.targets.length')==2
@@ -1753,8 +1758,10 @@ def test_pointerup_reports_region_limit_without_writing_target(editor):
     editor.mouse.move(box['x']+80,box['y']+60);editor.mouse.up()
     assert '最多打码 8 个区域' in editor.locator('#mosaicStatus').inner_text()
     assert editor.locator('#mosaicStatus').evaluate("el=>el.classList.contains('error')")
-    assert workbench_draft(editor)==before
-    assert editor.locator('[data-event-draw="e2"]').get_attribute('aria-pressed')=='false'
+    assert workbench_draft(editor)['targets']==before['targets']
+    assert workbench_draft(editor)['deletions']==before['deletions']
+    assert workbench_draft(editor)['drawingEvents']==['e2']
+    assert editor.locator('[data-event-draw="e2"]').get_attribute('aria-pressed')=='true'
 
 
 def test_play_pause_restores_handles_in_range_and_clears_selection_after_end(editor,portrait_source):
@@ -1906,7 +1913,7 @@ def test_playing_unadopted_candidate_draws_dashes_without_effect(editor):
     }''')
     assert editor.locator('#mosaicOverlay').is_hidden()
     assert editor.locator('#mosaicLiveCanvas.has-suggestions').is_visible()
-    assert editor.evaluate("strokes.some(s=>s.dash.join(',')==='6,4' && s.color==='#f2c94c' && s.box.join(',')==='40,24,80,48')")
+    assert editor.evaluate("strokes.some(s=>s.dash.join(',')==='6,4' && s.color==='#ffc400' && s.box.join(',')==='40,24,80,48')")
     assert editor.evaluate('''() => {
       const original=document.createElement('canvas');original.width=160;original.height=96;
       original.getContext('2d').drawImage($('mosaicFrame'),0,0);
@@ -1916,3 +1923,193 @@ def test_playing_unadopted_candidate_draws_dashes_without_effect(editor):
     }''')
     assert active_count(editor)==0
     editor.evaluate("() => {for(const key of ['paused','readyState','currentTime'])delete $('mosaicSource')[key]}")
+
+
+@pytest.mark.parametrize('kind', ['ai', 'manual'])
+@pytest.mark.parametrize('commit', ['change', 'enter', 'blur'])
+def test_time_formats_commit_immediately_for_both_segment_types(editor, kind, commit):
+    editor.evaluate('session.metadata.frame_count=3600')
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    if kind=='manual':
+        editor.locator('#mosaicAddClip').click()
+        editor.locator('#mosaicStart').fill('1:00');editor.locator('#mosaicEnd').fill('1:10')
+        editor.locator('#mosaicAddSubmit').click()
+        segment=workbench_draft(editor)['manualClips'][0]['id']
+        editor.locator(f'[data-scan-event="{segment}"]').click()
+    else:
+        segment='e1';editor.locator('[data-proposal="e1:0"]').click()
+    end=editor.locator('#mosaicEnd');end.fill('1:05')
+    if commit=='change':end.dispatch_event('change')
+    elif commit=='enter':end.press('Enter')
+    else:editor.locator('#mosaicTitle').click()
+    assert workbench_draft(editor)['clipEdits'][segment]['end']==1951
+    start=editor.locator('#mosaicStart');start.fill('00:02:05');start.press('Enter')
+    assert workbench_draft(editor)['clipEdits'][segment]['start']==65
+    jump=editor.locator('#mosaicFrameNumber');jump.fill('1:05');jump.press('Enter')
+    assert jump.input_value()=='01:05:00'
+    jump.fill('65');jump.dispatch_event('change');assert jump.input_value()=='01:05:00'
+    jump.fill('0:05');jump.press('Enter');assert jump.input_value()=='00:05:00'
+    jump.fill('1:99');jump.press('Enter')
+    assert '请输入' in editor.locator('#mosaicStatus').inner_text()
+
+
+def timeline_point(page, frame):
+    rail=page.locator('#mosaicTimelineTracks').bounding_box()
+    total=page.evaluate('session.metadata.frame_count')
+    return rail['x']+rail['width']*frame/total, rail['y']+rail['height']-3
+
+
+def drag_blank_segment(page, start, end):
+    x,y=timeline_point(page,start);end_x,_=timeline_point(page,end)
+    page.mouse.move(x,y);page.mouse.down();page.mouse.move(end_x,y,steps=6);page.mouse.up()
+
+
+@pytest.mark.parametrize('edge,expected', [('start',60),('end',119)])
+def test_trim_edge_follows_frame_before_release_and_stops_at_neighbour(editor, edge, expected):
+    scan_result(editor)
+    editor.evaluate("scanJob.events=[{...scanJob.events[0],id:'left',start:0,end:60,seed_frame:30},{...scanJob.events[0],start:70,end:100,seed_frame:80},{...scanJob.events[0],id:'right',start:120,end:160,seed_frame:140}]")
+    open_auto(editor);editor.locator('#mosaicScan').click();editor.locator('[data-proposal="e1:0"]').click()
+    editor.locator('#mosaicFrame').wait_for(state='visible')
+    editor.clock.install();editor.clock.pause_at(editor.evaluate('Date.now()'))
+    frames=[]
+    editor.on('request',lambda request: frames.append(request.url) if '/frame/' in request.url else None)
+    handle=editor.locator(f'[data-timeline-event="e1"] [data-edge="{edge}"]').bounding_box()
+    rail=editor.locator('#mosaicTimelineTracks').bounding_box()
+    x=handle['x']+handle['width']/2;y=handle['y']+handle['height']/2
+    editor.mouse.move(x,y);editor.mouse.down()
+    editor.mouse.move(x+(-100 if edge=='start' else 100)*rail['width']/300,y,steps=10)
+    assert editor.locator('#mosaicFrameNumber').input_value()==('00:02:00' if edge=='start' else '00:03:29')
+    assert abs(editor.locator('#mosaicTimelineHead').evaluate('el=>parseFloat(el.style.left)')-100*expected/300)<.01
+    # No range is committed until release, and the debounced accurate frame follows the edge.
+    assert workbench_draft(editor)['targets'][0]['start']==70
+    assert workbench_draft(editor)['targets'][0]['end']==100
+    assert frames==[]  # pointermove only schedules the shared 100ms frame reader
+    editor.clock.run_for(100)
+    editor.locator('#mosaicFrame').wait_for(state='visible')
+    assert len(frames)==1 and frames[0].endswith('/frame/'+str(expected))
+    editor.mouse.up()
+    draft=workbench_draft(editor)
+    assert draft['clipEdits']['e1']['start' if edge=='start' else 'end']==(60 if edge=='start' else 120)
+    assert '边界' in editor.locator('#mosaicStatus').inner_text()
+    assert editor.locator('#mosaicFrameNumber').input_value()==('00:02:00' if edge=='start' else '00:03:29')
+
+
+@pytest.mark.parametrize('reverse', [False, True])
+def test_blank_timeline_drag_creates_unprocessed_manual_segment_clamped_to_ai(editor, reverse):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    x,y=timeline_point(editor,180);editor.mouse.click(x,y)
+    assert editor.locator('[data-manual-card]').count()==0
+    assert editor.locator('#mosaicFrameNumber').input_value()=='00:06:00'
+    # Both directions stop at the AI segment ending at frame 90.
+    drag_blank_segment(editor,180,60) if reverse else drag_blank_segment(editor,100,180)
+    draft=workbench_draft(editor);clip=draft['manualClips'][0]
+    assert (clip['start'],clip['end'])==((90,180) if reverse else (100,180))
+    assert draft['deletions']==[] and draft['targets']==[]
+    card=editor.locator(f'[data-mosaic-card="{clip["id"]}"]')
+    assert card.locator('[data-scan-event]').get_attribute('aria-pressed')=='true'
+    assert card.get_by_role('checkbox').count()==3
+    assert '待处理 2 段' in editor.locator('#mosaicBatchHint').inner_text()
+    card.get_by_role('checkbox',name='删除',exact=True).click()
+    assert '删除' in card.inner_text() and '需框选' not in card.inner_text()
+    assert len(workbench_draft(editor)['deletions'])==1
+
+
+def test_three_choices_ignore_excludes_masks_deletions_and_persists_in_time_order(editor):
+    scan_result(editor)
+    editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:210,end:270,seed_frame:240})")
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    card=editor.locator('[data-mosaic-card="e1"]')
+    assert '待处理 2 段' in editor.locator('#mosaicBatchHint').inner_text()
+    for choice in ['打码','删除','忽略']:
+        card.get_by_role('checkbox',name=choice,exact=True).click()
+        assert card.locator('[aria-checked="true"]').count()==1
+        assert card.get_by_role('checkbox',name=choice,exact=True).is_checked()
+    draft=workbench_draft(editor)
+    assert draft['ignoredEvents']==['e1'] and draft['deletions']==[]
+    assert all(t['adopted'] is False for t in draft['targets'])
+    assert 'ignored' in card.get_attribute('class')
+    assert 'ignored' in editor.locator('[data-timeline-event="e1"]').get_attribute('class')
+    assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    editor.reload();install_editor(editor);scan_result(editor);open_auto(editor)
+    assert card.get_by_role('checkbox',name='忽略',exact=True).is_checked()
+    assert editor.locator('[data-mosaic-card]').evaluate_all('els=>els.map(e=>e.dataset.mosaicCard)')==['e1','e2']
+    editor.locator('[data-event-ignore="e2"]').click()
+    assert '全部已处理' in editor.locator('#mosaicBatchHint').inner_text()
+    card.get_by_role('checkbox',name='忽略',exact=True).click()
+    assert card.locator('[aria-checked="true"]').count()==0
+    assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    card.get_by_role('checkbox',name='打码',exact=True).click()
+    assert workbench_draft(editor)['ignoredEvents']==['e2']
+    assert active_count(editor)==1
+
+
+def test_mask_choice_without_box_is_pending_and_can_be_toggled_off(editor):
+    scan_result(editor,needs_review=True);open_auto(editor);editor.locator('#mosaicScan').click()
+    card=editor.locator('[data-mosaic-card="e1"]')
+    assert '需框选' not in card.inner_text()
+    for enabled in [True,False]:
+        card.get_by_role('checkbox',name='打码',exact=True).click()
+        assert card.get_by_role('checkbox',name='打码',exact=True).is_checked()==enabled
+        assert ('需框选' in card.inner_text())==enabled
+        assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+        assert '打码 0 段' in editor.locator('#mosaicBatchHint').inner_text()
+
+
+@pytest.mark.parametrize('note,expected', [
+    ('未获得有效区域框；时间段仍保留，不能视作无风险。','AI 没框出区域，请在画面上拖出打码区域。'),
+    ('代表帧定位失败，需人工复核。','AI 没找到清晰画面，请换一帧后拖出打码区域。'),
+    ('候选框仅对应自动抽样帧，不代表整个时间段覆盖。','请播放检查，确认打码区域覆盖整段。'),
+    ('unknown internal diagnostic','AI 没框出区域，请在画面上拖出打码区域。'),
+])
+def test_old_and_unknown_review_notes_are_mapped_on_reopen(editor,note,expected):
+    scan_result(editor,needs_review=True);editor.evaluate('note=>scanJob.events[0].review_note=note',note)
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    editor.locator('[data-scan-event="e1"]').click()
+    assert editor.locator('#mosaicStatus').inner_text()==expected
+
+
+def test_keyboard_navigation_obeys_editor_focus_and_effect_dialog(editor):
+    draw_unlocalized_segment(editor)
+    editor.locator('#mosaicTitle').click()
+    before=editor.locator('#mosaicFrameNumber').input_value()
+    editor.keyboard.press('ArrowRight')
+    assert editor.locator('#mosaicFrameNumber').input_value()!=before
+    assert editor.locator('[data-scan-event="e1"]').get_attribute('aria-pressed')=='true'
+    editor.keyboard.press('ArrowLeft');assert editor.locator('#mosaicFrameNumber').input_value()==before
+    editor.locator('#mosaicStart').focus();editor.keyboard.press('ArrowRight')
+    assert editor.locator('#mosaicFrameNumber').input_value()==before
+    editor.evaluate("$('mosaicEffects').showModal()")
+    editor.keyboard.press('ArrowRight');assert editor.locator('#mosaicFrameNumber').input_value()==before
+    editor.evaluate("$('mosaicEffects').close()")
+    # Count play/pause invocations without relying on a playable video fixture.
+    editor.evaluate("window.playClicks=0;$('mosaicPlay').onclick=()=>playClicks++")
+    editor.locator('#mosaicTitle').click();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==1
+    editor.locator('#mosaicStart').focus();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==1
+    editor.locator('#mosaicClose').click();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==1
+
+
+def test_short_timeline_suggestion_hides_entire_label_but_keeps_accessible_information(editor):
+    scan_result(editor);editor.evaluate('scanJob.events[0].end=31;scanJob.events[0].seed_frame=30')
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    block=editor.locator('[data-timeline-event="e1"]')
+    assert block.locator('.mosaic-block-label').is_hidden()
+    assert 'AI 建议 · 未处理' in block.get_attribute('title')
+    assert '疑似敏感画面' in block.get_attribute('aria-label')
+
+
+def test_manual_ignore_and_drafts_without_optional_decision_fields(editor):
+    open_auto(editor);drag_blank_segment(editor,90,150)
+    clip=workbench_draft(editor)['manualClips'][0]['id']
+    editor.locator(f'[data-event-ignore="{clip}"]').click()
+    editor.reload();install_editor(editor);scan_result(editor);open_auto(editor)
+    assert editor.locator(f'[data-event-ignore="{clip}"]').is_checked()
+    assert workbench_draft(editor)['deletions']==[] and workbench_draft(editor)['targets']==[]
+    editor.locator('#mosaicClose').click()
+    editor.evaluate('''() => {
+      const key=Object.keys(localStorage).find(k=>k.includes('workbench.v3')),draft=JSON.parse(localStorage.getItem(key));
+      delete draft.ignoredEvents;delete draft.drawingEvents;localStorage.setItem(key,JSON.stringify(draft));
+    }''')
+    open_auto(editor)
+    assert not editor.locator(f'[data-event-ignore="{clip}"]').is_checked()
+    assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
