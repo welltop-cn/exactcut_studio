@@ -4,7 +4,9 @@ import os
 import re
 import signal
 import subprocess
+import sys
 import threading
+import time
 from pathlib import Path
 from .util import read_json, write_json_atomic, now_iso
 from .runtime import instance_marker
@@ -172,10 +174,43 @@ def own_live_children(path, table=None):
     ]
 
 
+def suspended_seconds(path):
+    """Elapsed SIGSTOP time for this executor, including a queued resume."""
+    file = path / 'control.json'
+    control = read_json(file) if file.exists() else {}
+    token = sys._xoptions.get('exactcut_process_token')
+    for child in control.get('children', []):
+        if child.get('pid') == os.getpid() and child.get('process_token') == token:
+            started = child.get('suspended_at')
+            return child.get('suspended_seconds', 0.0) + (max(0.0, time.monotonic()-started) if started is not None else 0.0)
+    return 0.0
+
+
+def _signal_controlled(path, control, child, sig, table=None):
+    """Persist the pause clock before waking an executor that reads it."""
+    state = child_state(child, table)
+    if state in {None, 'Z'}:
+        return False
+    stored = next(item for item in control.get('children', [])
+                  if (item.get('pid'), item.get('process_token')) == (child['pid'], child['process_token']))
+    if sig == signal.SIGSTOP:
+        if not signal_identity(child, sig, table): return False
+        stored.setdefault('suspended_at', time.monotonic())
+        write(path, control)
+        return True
+    if sig == signal.SIGCONT:
+        started = stored.pop('suspended_at', None)
+        if started is not None:
+            stored['suspended_seconds'] = stored.get('suspended_seconds', 0.0) + max(0.0, time.monotonic()-started)
+        write(path, control)
+    return signal_identity(child, sig, table)
+
+
 def signal_children(path, sig, table=None):
+    control = read(path)
     signaled = []
-    for child in recorded_children(path):
-        if signal_identity(child, sig, table):
+    for child in control.get('children', []):
+        if valid_token(child.get('process_token')) and _signal_controlled(path, control, child, sig, table):
             signaled.append(child)
     if sig == signal.SIGSTOP:
         control = read(path)
@@ -305,7 +340,7 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
                     stale.add((child['pid'], child['process_token']))
                     continue
                 if (control.get('paused') or control.get('archived')) and state != 'T':
-                    if signal_identity(child, signal.SIGSTOP, table):
+                    if _signal_controlled(path, control, child, signal.SIGSTOP, table):
                         state = 'T'
                 identity = (child['pid'], child['process_token'])
                 if identity not in resident_identities:
@@ -328,7 +363,8 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
             total = limits['max_active_children'] if limits['enabled'] else 1
             if sum(counts.values()) > total:
                 continue
-            if signal_identity(child, signal.SIGCONT, table):
+            control = read(path)
+            if _signal_controlled(path, control, child, signal.SIGCONT, table):
                 active_batches.add(candidate)
                 control = read(path)
                 control['suspended'] = [item for item in control.get('suspended', [])

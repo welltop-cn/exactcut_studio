@@ -217,7 +217,8 @@ def checkpoint(path, stage, *, advanced=True, request_id=None, **details):
 @contextmanager
 def execution(path, request_id=None, interval=3, *, phase=None):
     from .cutting_access import gate
-    with gate(path, request_id):
+    from .processing_cancel import pause_scope
+    with gate(path, request_id), pause_scope(path):
         with _execution(path, request_id, interval, phase=phase):
             yield
 
