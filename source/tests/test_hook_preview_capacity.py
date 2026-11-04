@@ -83,7 +83,10 @@ def test_duplicate_hook_clicks_reuse_one_active_job_and_release_its_disk(fixture
 def test_distinct_hook_jobs_use_two_workers_and_leave_third_persistently_queued(fixture,tmp_path,monkeypatch):
     import threading,time
     from test_phase2_preview_api import fixture as factory
-    from exactcut import interactive_queue
+    from exactcut import interactive_queue, editor_resources
+    config=editor_resources.load_config()
+    config.setdefault('editor_resources',{})['hook_tasks']=2
+    monkeypatch.setattr(editor_resources,'load_config',lambda:config)
     batches=[fixture]+[factory.__wrapped__(tmp_path,monkeypatch) for _ in range(2)]
     for number,batch in enumerate(batches):
         path=workflow.folder(batch['id'])/'draft.json';doc=workflow.read_json(path)

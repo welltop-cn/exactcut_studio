@@ -295,6 +295,7 @@ def test_reopen_while_source_preparing_shares_request(editor):
     assert not editor.locator('#mosaicStatus').evaluate("e=>e.classList.contains('error')")
     editor.evaluate('finishOpen()')
     editor.locator('#mosaicWorkspace').wait_for(state='visible')
+    editor.wait_for_function("calls.filter(c=>c.url.endsWith('/scan')).length===1")
     assert editor.evaluate("calls.filter(c=>c.url.endsWith('/scan')).length")==1
 
 
