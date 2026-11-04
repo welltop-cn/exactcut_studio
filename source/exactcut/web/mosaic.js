@@ -1003,10 +1003,26 @@
     if(pointer?.original&&selectedBox())Object.assign(selectedBox(),pointer.original);
     pointer=null;drawing=false;candidates=candidates.filter(validBox);paint();
   };
+  function skipDeletedPlayback(){
+    if(!context||resultMode||compareOriginal||video.paused||sourceBinding?.changing)return false;
+    const frame=Math.floor(video.currentTime*rate()+.0001),range=mergedRanges(deleteRanges()).find(([start,end])=>frame>=start&&frame<end);
+    if(!range)return false;
+    if(range[1]>=meta().frame_count){
+      pausePlayback();wanted=Math.max(0,range[0]-1);video.currentTime=(wanted+.05)/rate();
+      paint();if(range[0]>0)loadFrame();
+      status(range[0]>0?'已到保留内容末尾。':'整段视频已标记删除，没有可播放的保留内容。');
+    }else{
+      video.currentTime=(range[1]+.05)/rate();
+      if(video.currentTime<range[1]/rate()){
+        pausePlayback();status('删除区间暂时无法跳过，请等待视频加载后重试。',true);
+      }else wanted=range[1];
+    }
+    return true;
+  }
   $('mosaicPlay').onclick=()=>{if(video.paused&&!sourceBinding?.wantsPlay){controller?.abort();resetCandidate();ready=-1;image.hidden=true;overlay.hidden=true;playSource();}else{const time=sourceBinding?.position??video.currentTime;pausePlayback();wanted=Math.min(meta().frame_count-1,Math.floor(time*rate()));paint();loadFrame();}};
-  video.onplay=()=>{$('mosaicPlay').textContent='暂停';image.hidden=true;overlay.hidden=true;paint();};
+  video.onplay=()=>{skipDeletedPlayback();if(video.paused)return;$('mosaicPlay').textContent='暂停';image.hidden=true;overlay.hidden=true;paint();};
   video.onpause=()=>{if(sourceBinding?.changing||!video.paused)return;$('mosaicPlay').textContent='播放';};
-  video.ontimeupdate=()=>{if(context&&!sourceBinding?.changing&&!video.paused){wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();}};
+  video.ontimeupdate=()=>{if(skipDeletedPlayback())return;if(context&&!sourceBinding?.changing&&!video.paused){wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();}};
   video.onended=()=>{if(context){wanted=Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));paint();loadFrame();}};
   new ResizeObserver(drawOverlay).observe($('mosaicStage'));
   // Keep the existing editor state and persistence contract as the single source of truth.
@@ -1089,28 +1105,50 @@
     timelineSignature='';paint();
   };
   timeline.onpointercancel=()=>{timelineDrag=null;timelineSignature='';if(context)paint();};
+  let thumbnailCancel=null,thumbnailCacheKey='';
+  const thumbnailCache=new Map();
+  new ResizeObserver(()=>{if(context&&dialog.open)scheduleThumbnails();}).observe(timeline);
   function scheduleThumbnails(){
-    const source=video.currentSrc||video.getAttribute('src');if(!source||source===thumbnailSource)return;
-    thumbnailSource=source;const version=++thumbnailEpoch;
-    thumbReader.src=source;thumbReader.load();
-    const strip=$('mosaicTimelineThumbs');strip.replaceChildren();
-    const count=Math.max(4,Math.min(20,Math.ceil(timeline.clientWidth/100))),total=meta().frame_count,fps=rate();
-    for(let i=0;i<count;i++){const c=document.createElement('canvas');c.width=120;c.height=68;c.setAttribute('aria-label','原片缩略图 '+clock(Math.floor(i*total/count)));strip.append(c);}
+    if(!context||!dialog.open||!timeline.clientWidth)return;
+    const rawSource=video.currentSrc||video.getAttribute('src');if(!rawSource)return;
+    const source=new URL(rawSource,location.href).href,total=meta().frame_count,fps=rate();
+    const count=Math.max(1,Math.ceil(timeline.clientWidth/56));
+    const cacheKey=JSON.stringify([source,context.session.source_sha256,total,fps]);
+    const signature=cacheKey+':'+count;if(signature===thumbnailSource)return;
+    thumbnailSource=signature;const version=++thumbnailEpoch;
+    thumbnailCancel?.();thumbnailCancel=null;
+    if(cacheKey!==thumbnailCacheKey){thumbnailCache.clear();thumbnailCacheKey=cacheKey;}
+    const strip=$('mosaicTimelineThumbs');strip.replaceChildren();strip.removeAttribute('title');
+    const pending=[];
+    for(let i=0;i<count;i++){
+      const start=Math.floor(i*total/count),end=Math.max(start+1,Math.floor((i+1)*total/count)),middle=Math.floor((start+end)/2);
+      const cached=[...thumbnailCache.keys()].filter(f=>f>=start&&f<end).sort((a,b)=>Math.abs(a-middle)-Math.abs(b-middle))[0];
+      const frame=Math.min(total-1,cached??middle),c=document.createElement('canvas');c.width=112;c.height=116;
+      c.setAttribute('aria-label','原片缩略图 '+clock(frame));strip.append(c);
+      if(cached!==undefined)c.getContext('2d').drawImage(thumbnailCache.get(cached),0,0);
+      else pending.push({index:i,frame,canvas:c});
+    }
+    if(!pending.length)return;
+    // First cover the whole strip sparsely, then fill the gaps.
+    pending.sort((a,b)=>(a.index%4!==0)-(b.index%4!==0)||a.index-b.index);
     const wait=type=>new Promise((resolve,reject)=>{
-      const finish=error=>{clearTimeout(timer);thumbReader.removeEventListener(type,done);thumbReader.removeEventListener('error',fail);error?reject(error):resolve();};
-      const done=()=>finish(),fail=()=>finish(Error('缩略图不可用')),timer=setTimeout(()=>finish(Error('缩略图读取超时')),5000);
-      thumbReader.addEventListener(type,done,{once:true});thumbReader.addEventListener('error',fail,{once:true});
+      const finish=error=>{clearTimeout(timer);thumbReader.removeEventListener(type,done);thumbReader.removeEventListener('error',fail);if(thumbnailCancel===cancel)thumbnailCancel=null;error?reject(error):resolve();};
+      const done=()=>finish(),fail=()=>finish(Error('缩略图不可用')),cancel=()=>finish(Error('缩略图读取已取消')),timer=setTimeout(()=>finish(Error('缩略图读取超时')),5000);
+      thumbnailCancel=cancel;thumbReader.addEventListener(type,done,{once:true});thumbReader.addEventListener('error',fail,{once:true});
     });
     (async()=>{
       try{
+        if(thumbReader.src!==source){thumbReader.src=source;thumbReader.load();}
         if(thumbReader.readyState<2)await wait('loadeddata');
-        for(let i=0;i<count;i++){
+        for(const {frame,canvas:c} of pending){
           if(version!==thumbnailEpoch||!dialog.open)return;
-          const time=(Math.floor(i*total/count)+.05)/fps;
-          if(Math.abs(thumbReader.currentTime-time)>.0001){const pending=wait('seeked');thumbReader.currentTime=time;await pending;}
+          const time=(frame+.05)/fps;
+          if(Math.abs(thumbReader.currentTime-time)>.0001){const seeked=wait('seeked');thumbReader.currentTime=time;await seeked;}
           if(version!==thumbnailEpoch||!dialog.open)return;
-          const c=strip.children[i],ctx=c.getContext('2d'),scale=Math.min(c.width/thumbReader.videoWidth,c.height/thumbReader.videoHeight);
-          ctx.fillStyle='#0b1116';ctx.fillRect(0,0,c.width,c.height);ctx.drawImage(thumbReader,(c.width-thumbReader.videoWidth*scale)/2,(c.height-thumbReader.videoHeight*scale)/2,thumbReader.videoWidth*scale,thumbReader.videoHeight*scale);
+          const ctx=c.getContext('2d'),scale=Math.max(c.width/thumbReader.videoWidth,c.height/thumbReader.videoHeight);
+          ctx.drawImage(thumbReader,(c.width-thumbReader.videoWidth*scale)/2,(c.height-thumbReader.videoHeight*scale)/2,thumbReader.videoWidth*scale,thumbReader.videoHeight*scale);
+          thumbnailCache.set(frame,c);
+          if(thumbnailCache.size>160)thumbnailCache.delete(thumbnailCache.keys().next().value);
         }
       }catch{if(version===thumbnailEpoch)strip.title='缩略图暂不可用，可继续定位与编辑。';}
     })();
@@ -1166,11 +1204,11 @@
       liveCanvas.hidden=false;
     }catch{liveCanvas.hidden=true;$('mosaicLiveHint').textContent='实时预览暂不可用，可使用动态预览检查效果。';}
   }
-  function animateLivePreview(){cancelAnimationFrame(liveAnimation);if(!context||!dialog.open||video.paused||document.hidden)return;drawLivePreview();liveAnimation=requestAnimationFrame(animateLivePreview);}
+  function animateLivePreview(){cancelAnimationFrame(liveAnimation);if(!context||!dialog.open||video.paused||document.hidden)return;if(!skipDeletedPlayback())drawLivePreview();if(!video.paused)liveAnimation=requestAnimationFrame(animateLivePreview);}
   video.addEventListener('playing',animateLivePreview);video.addEventListener('seeked',drawLivePreview);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelAnimationFrame(liveAnimation);else if(context&&dialog.open){if(video.paused)drawLivePreview();else animateLivePreview();}});
   function stopWorkspacePreview(){
-    cancelAnimationFrame(liveAnimation);thumbnailEpoch++;thumbnailSource='';timelineSignature='';timelineDrag=null;thumbReader.pause();thumbReader.removeAttribute('src');thumbReader.load();liveCanvas.hidden=true;compareOriginal=false;$('mosaicCompare').setAttribute('aria-pressed','false');$('mosaicCompare').textContent='对比原画';
+    cancelAnimationFrame(liveAnimation);thumbnailEpoch++;thumbnailCancel?.();thumbnailCancel=null;thumbnailSource='';timelineSignature='';timelineDrag=null;thumbReader.pause();thumbReader.removeAttribute('src');thumbReader.load();liveCanvas.hidden=true;compareOriginal=false;$('mosaicCompare').setAttribute('aria-pressed','false');$('mosaicCompare').textContent='对比原画';
   }
   window.Mosaic={mount};mount();
 })();

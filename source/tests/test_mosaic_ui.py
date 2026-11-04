@@ -386,6 +386,73 @@ def test_clip_list_scrolls_without_moving_timeline(editor):
     assert editor.locator('#mosaicTimeline').bounding_box() == before
 
 
+@pytest.fixture
+def portrait_source(editor, tmp_path):
+    import shutil
+    import subprocess
+    ffmpeg=shutil.which('ffmpeg')
+    if not ffmpeg:
+        pytest.skip('ffmpeg required for real thumbnail decoding')
+    source=tmp_path/'portrait.mp4'
+    subprocess.run([ffmpeg,'-v','error','-y','-f','lavfi','-i','color=c=red:s=160x284:r=30:d=2','-c:v','libx264','-pix_fmt','yuv420p','-movflags','+faststart',str(source)],check=True)
+    data=source.read_bytes()
+    def serve_source(route):
+        match=re.fullmatch(r'bytes=(\d+)-(\d*)',route.request.headers.get('range',''))
+        if match:
+            start=int(match[1]);end=min(int(match[2]) if match[2] else len(data)-1,len(data)-1)
+            route.fulfill(status=206,body=data[start:end+1],content_type='video/mp4',headers={'Accept-Ranges':'bytes','Content-Range':f'bytes {start}-{end}/{len(data)}'})
+        else:
+            route.fulfill(body=data,content_type='video/mp4',headers={'Accept-Ranges':'bytes'})
+    editor.route('**/source',serve_source)
+    editor.evaluate('Object.assign(session.metadata,{frame_count:60,width:160,height:284})')
+    return source
+
+
+def test_portrait_thumbnails_fill_the_strip_without_black_borders(editor, portrait_source):
+    editor.set_viewport_size({'width':1512,'height':717})
+    open_auto(editor)
+    thumbs=editor.locator('#mosaicTimelineThumbs canvas')
+    assert 24 <= thumbs.count() <= 30
+    editor.wait_for_function("[...document.querySelectorAll('#mosaicTimelineThumbs canvas')].every(c=>c.getContext('2d').getImageData(1,1,1,1).data[0]>200)")
+    first,last=thumbs.first.bounding_box(),thumbs.last.bounding_box()
+    strip=editor.locator('#mosaicTimelineThumbs').bounding_box()
+    assert abs(first['x']-strip['x'])<1
+    assert abs(last['x']+last['width']-strip['x']-strip['width'])<1
+    initial_count=thumbs.count()
+    editor.set_viewport_size({'width':1912,'height':717})
+    editor.wait_for_function('count=>document.querySelectorAll("#mosaicTimelineThumbs canvas").length>count',arg=initial_count)
+    editor.wait_for_function("[...document.querySelectorAll('#mosaicTimelineThumbs canvas')].every(c=>c.getContext('2d').getImageData(1,1,1,1).data[0]>200)")
+    editor.locator('#mosaicClose').click()
+    editor.route('**/source',lambda route:route.abort())
+    open_auto(editor)
+    editor.wait_for_function("[...document.querySelectorAll('#mosaicTimelineThumbs canvas')].length>0 && [...document.querySelectorAll('#mosaicTimelineThumbs canvas')].every(c=>c.getContext('2d').getImageData(1,1,1,1).data[0]>200)")
+
+
+@pytest.mark.parametrize('ranges,position,expected', [([[0,15]],0,.5),([[15,30],[25,40]],.5,40/30),([[15,30],[25,40]],0,40/30),([[45,60]],1.5,None),([[0,60]],0,None)])
+def test_playback_skips_deleted_spans_without_render(editor, portrait_source, ranges, position, expected):
+    open_auto(editor)
+    editor.locator('#mosaicClose').click()
+    editor.evaluate('''ranges=>{
+      const key='exactcut.mosaic.workbench.v3.fixture.batch.session.'+'a'.repeat(64)+'.';
+      localStorage.setItem(key,JSON.stringify({schema_version:1,targets:[],deletions:ranges.map(([start,end])=>({start,end}))}));
+    }''',ranges)
+    open_auto(editor)
+    video=editor.locator('#mosaicSource')
+    editor.wait_for_function("document.querySelector('#mosaicSource').readyState>=2")
+    video.evaluate('(el,time)=>el.currentTime=time',position)
+    video.evaluate("el=>{window.firstPlayingTime=null;window.jumpTime=null;el.addEventListener('playing',()=>{window.firstPlayingTime=el.currentTime},{once:true});el.addEventListener('seeking',()=>{if(el.currentTime>1)window.jumpTime=el.currentTime})}")
+    editor.locator('#mosaicPlay').click()
+    if expected is None:
+        editor.wait_for_function("document.querySelector('#mosaicSource').paused && document.querySelector('#mosaicSource').currentTime<1.5")
+    elif position<ranges[0][0]/30:
+        editor.wait_for_function('window.jumpTime!==null')
+        assert editor.evaluate('jumpTime')>=expected
+    else:
+        editor.wait_for_function('window.firstPlayingTime!==null')
+        assert editor.evaluate('firstPlayingTime')>=expected
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/render')&&c.body)")
+
+
 def test_deletion_overlays_thumbnails_and_cancel_restores_strip(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-event-delete="e1"]').click()
