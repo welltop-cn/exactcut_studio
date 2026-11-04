@@ -4,20 +4,20 @@
 
 ## 已核实记录
 
-时间统一为北京时间（Asia/Shanghai）。本索引于 2026-11-03 建立；以下是本次核实的最近变更，不代表此前所有发布均已补录。历史记录继续保留在 `docs/verification/`，未核实的历史变更不推断为已发布。
+时间统一为北京时间（Asia/Shanghai）。本索引于 2026-11-03 建立；以下是本次核实的最近变更，不代表此前所有发布均已补录。历史记录继续保留在 `docs/archive/verification/`，未核实的历史变更不推断为已发布。
 
 | 时间 | 类型 | 应用版本 | 内容 | 详细记录 |
 | --- | --- | --- | --- | --- |
-| 2026-11-02 17:38 | 凭据与连接配置 | 保持 `8216c27` | 同步 OpenAI key/base URL，重启原版本；限额保持 60/5 | [11 月 2 日配置变更](verification/production-config-change-2026-11-02.md) |
-| 2026-11-02 17:32 | 运行配置 | 保持 `8216c27` | AI 共享额度 6/1 → 60/5，即时生效 | [11 月 2 日配置变更](verification/production-config-change-2026-11-02.md) |
-| 2026-10-31 | 应用发布 | `8216c277f27fd88040944faae77a9e82a15be765` | 下方字幕识别及主动打开时间轴等；前驱 `us-east-20261030-reviewed-ea3db64` | [正式发布及验证](verification/bottom-subtitles-production-2026-10-31.md) |
+| 2026-11-02 17:38 | 凭据与连接配置 | 保持 `8216c27` | 同步 OpenAI key/base URL，重启原版本；限额保持 60/5 | [11 月 2 日配置变更](archive/verification/production-config-change-2026-11-02.md) |
+| 2026-11-02 17:32 | 运行配置 | 保持 `8216c27` | AI 共享额度 6/1 → 60/5，即时生效 | [11 月 2 日配置变更](archive/verification/production-config-change-2026-11-02.md) |
+| 2026-10-31 | 应用发布 | `8216c277f27fd88040944faae77a9e82a15be765` | 下方字幕识别及主动打开时间轴等；前驱 `us-east-20261030-reviewed-ea3db64` | [正式发布及验证](archive/verification/bottom-subtitles-production-2026-10-31.md) |
 
 截至上述证据，最后已核实的应用 release 为 `us-east-20261031-bottom-subtitles-8216c27`。这是历史执行证据，不是本索引编写时重新读取的线上实时状态。
 
 ## 每次变更的记录要求
 
 1. 操作前明确授权范围、当前版本、预期变更、备份及回退方式。
-2. 操作后在 `docs/verification/` 保存独立记录，并更新本索引；失败、回退和部分完成也如实记录。
+2. 操作后在 `docs/archive/verification/` 保存独立记录，并更新本索引；失败、回退和部分完成也如实记录。
 3. 记录应用 commit/release/镜像；纯配置更新注明应用版本是否保持、是否重启。
 4. 配置记录字段及非敏感前后值；凭据只记录字段名、备份位置和比对结论，禁止提交明文密钥、密码或认证头。
 5. 分开记录配置生效、服务健康与真实业务验证。没有做的验证必须明确标出。

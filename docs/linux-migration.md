@@ -1,86 +1,77 @@
-# Linux 部署与迁移约定
+# Linux 部署、回滚与迁移
 
-> 2026-10-10：本文网页入口示例统一为新默认 `/home`；历史验收记录不代表该路径已经上线。现有生产 runtime 与 nginx 的迁移由部署方处理，本次仅修改开发代码和文档。Cookie Path 改为 `/home/` 后，已登录用户需重新登录一次。
+应用通过 Linux/Docker 发布管理器部署。本文按当前仓库工具核对；具体机器、监听、容量和运行版本以部署配置及发布管理器实读为准。历史 Mac、Tunnel 和初次服务器迁移记录已归档。
 
-首期只维护两份实际密钥配置：本地 `.env.development` 和服务器 `<部署根>/config/production.env`。Docker 中的应用不依赖 Mac 路径、Cloudflare Tunnel、宿主 Python 或宿主字体。Linux 运维脚本使用系统 Python 3.10+ 和 Docker/Compose；同架构机器可迁移已验收镜像，跨架构需要重建并重新验收。
+生产变更需要用户明确授权。先在独立环境验收；合入 main、构建成功或测试实例通过，均不表示生产已经发布。
 
-## 配置与数据
+## 配置与持久数据
 
-默认部署根为 `/srv/exactcut`，运维命令的 `--root` 可更改。IP 仅用于 SSH 和用户访问，不写入可复用代码。
+| 部署根下的路径 | 用途 |
+| --- | --- |
+| `config/production.env` | 受限的生产凭据，权限 0600 |
+| `config/runtime.json` | 非密钥运行配置，通过集中配置加载 |
+| `config/deployment.json` | 实例、端口及 CPU/内存等机器参数 |
+| `data/` | 持久账号、项目、媒体、任务与缓存 |
+| `releases/<版本>/` | 固定提交、镜像、校验摘要和验证结果 |
+| `current.json`、`history/` | 当前/前一版本及切换记录 |
+| `bin/` | 已安装的运维入口 |
 
-```text
-<部署根>/
-  config/production.env       # 唯一生产密钥配置，0600
-  config/runtime.json         # 非密钥：生产运行配置、磁盘策略
-  config/deployment.json      # 非密钥：实例、端口、CPU/内存
-  data/                      # 持久化账号、批次、素材、正片和缓存
-  bin/linux-ops              # 发布、回滚、恢复、nginx 配置生成
-  bin/linux-preflight        # 外部服务检查
-  releases/<版本>/            # 固定镜像ID、提交、Compose、测试日志及校验摘要
-  current.json               # 当前版本与上一版本
-  history/                   # 每次切换的成功或失败记录
-  preparation/               # 隔离验收；不是正式发布
-```
+代码、发布目录和业务数据分开。生产密钥、源片与成片不进 Git；开发只使用独立配置和数据。Compose 的配置边界见 [docker-compose.production.yml](../source/docker-compose.production.yml)。
 
-两个 JSON 文件沿用应用配置机制或保存机器参数，不是额外的 `.env`。密钥与运行配置只读挂载到 `/run/exactcut/`，数据挂载到 `/data`；迁移只需调整部署根和机器参数。Compose 明确使用 `--env-file /dev/null`，不自动加载旧 `.env`。
+`source/config/production.json` 是模板，不是线上实际配置。更新代码不会自动覆盖服务器 runtime；复制旧模板也可能丢失后续配置变更。CPU、内存、线程和并发容量需按目标机器验收，不照搬旧部署数字。
 
-开发仍使用 `.dev-state/data` 和 8793，不加载生产 `runtime.json`。生产 Compose 完整启用下载、AI、剪辑、飞书/FBBM 发布；发布保留工作台预览确认流程。
+默认网页前缀由 `web.base_path` 配置，当前源码为 `/home`。反向代理保留此前缀，后端仅监听本地；不要通过新增公网后端端口替代代理入口。
 
-## 磁盘策略
+## 状态核对与发布
 
-`source/config/production.json` 是无密钥模板，首次初始化复制到服务器 `config/runtime.json`。本机生产模板预留 10 GiB，正片缓存与基础渲染缓存各 8 GiB，基础缓存保留 7 天，可用空间低于 16 GiB 时按需回收可回收正片。下载按每集 2 GiB 估算所需空间；引用中或被锁定的正片不清理，容量不足则拒绝开始新下载。
-
-这些是任务开始前的空间检查和缓存回收策略，**不是文件系统硬配额**。超出估算的视频、渲染临时文件、已发布成片和其他服务仍可能消耗磁盘；需要监测实际可用空间。不会为满足上限删除账号、数据库、批次或成片。换更大机器时修改此 JSON，不修改本地开发默认配置；重启应用前先等待任务完成。
-
-## 发布与回滚
-
-安装脚本：
+下面命令从仓库根执行，用实际部署根、干净工程路径和唯一版本号替换尖括号参数。已安装的 `bin/linux-ops` 提供同一入口。
 
 ```sh
-sudo python3 source/deploy/linux_ops.py --root /srv/exactcut init \
+python3 source/deploy/linux_ops.py --root <部署根> status
+python3 source/deploy/linux_ops.py --root <部署根> build <版本> --repo <干净工程仓库>
+python3 source/deploy/linux_ops.py --root <部署根> publish <版本>
+python3 source/deploy/linux_ops.py --root <部署根> status
+```
+
+构建只接受已提交且干净的工程，固定镜像身份，并在独立验证镜像中执行完整测试。运行镜像只安装运行依赖，测试工具在验证镜像内。版本目录不可重复覆盖。
+
+发布进入维护并等待已有请求和任务结束，超时退出，不强杀制作任务。切换后检查健康、环境、版本、worker，再进行已授权范围内的页面及业务验收。记录写入[线上变更索引](production-change-log.md)。健康成功不等于真实成片或交付已经成功。
+
+首次新建独立部署才使用 `init`，已有部署不要重复初始化：
+
+```sh
+python3 source/deploy/linux_ops.py --root <部署根> init \
   --runtime-config source/config/production.json \
-  --instance exactcut-production --backend-port 18792 --public-port 80 \
-  --cpus 1 --memory 2g
-sudo install -m 755 source/deploy/linux_ops.py /srv/exactcut/bin/linux-ops
-sudo install -m 755 source/bin/linux-preflight /srv/exactcut/bin/linux-preflight
+  --instance <独立实例名> --backend-port <本地端口> --public-port <代理端口> \
+  --cpus <已验收CPU数> --memory <已验收内存>
 ```
 
-初始化拒绝覆盖已有机器配置或混用其他环境数据。通过安全渠道提供 `config/production.env`，权限 0600；不得把密钥提交到 Git。
+通过安全渠道提供凭据，检查数据归属及配置挂载。代理配置由 `nginx` 子命令生成，再按目标机器检查、安装；修改代理前保留配置，验证通过后才 reload，不覆盖其他服务的规则。
+
+## 回滚与恢复
 
 ```sh
-sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut build <版本> --repo <干净工程仓库>
-sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut publish <版本>
-sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut status
-sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut rollback
-sudo /srv/exactcut/bin/linux-ops --root /srv/exactcut rollback <指定版本>
+python3 source/deploy/linux_ops.py --root <部署根> rollback
+python3 source/deploy/linux_ops.py --root <部署根> rollback <指定已封存版本>
+python3 source/deploy/linux_ops.py --root <部署根> recover
 ```
 
-构建只接受已提交且干净的仓库，拒绝真实环境文件、业务目录、数据库、视频和链接。构建时标记提交，运行无生产密钥/数据的 Linux 全量回归，然后记录固定镜像ID、提交、schema 1、测试结果和文件摘要。验证镜像内的提交标签，禁止覆盖版本目录。测试镜像单独安装 Git，不将它加入生产镜像。
+健康失败会尝试恢复前一版本；恢复也失败时保留维护状态，排除原因后再执行 recover。普通代码回滚保留最新数据库、项目、成片和交付记录，不恢复旧业务数据，也不会撤回远端素材。
 
-切换前进入维护状态，等待现有请求和任务结束；超时退出，不强制杀任务。发布后检查 `/healthz` 的 status、production 环境、版本和 worker。失败自动恢复前一版本，**代码回滚保留当前数据库和业务数据**。首次发布失败删除自己的失败容器，以便重试；同名未登记容器禁止接管。若恢复也失败，保留维护状态，排除原因后运行 `linux-ops --root <根> recover`。
+回滚前检查持久协议及依赖兼容性。存在候选任务或待核实交付时，按管理器的阻塞原因逐项处理，不能直接删状态或重复上传来解除阻塞。具体命令参数见 [linux_ops.py](../source/deploy/linux_ops.py) 的 CLI 定义。
 
-生产 `config/runtime.json` 的 `web.base_path` 设为 `/home`（不带末尾斜线），开发默认值同为 `/home`。`linux-ops --root <根> nginx` 据此生成 location 片段，安装为 `/etc/nginx/snippets/exactcut-production.conf` 并在已有80端口 server 块内 include；保留 `/paypal_dispute/` 和 `/domain-watch/`。访问入口为 `http://<IP>/home/`，后端仍仅监听本地18792，不新增公网端口。`deployment.json` 的 `public_port` 为80。nginx保留前缀传给应用；应用统一处理登录跳转、静态资源、API、Cookie和视频Range。安装前用 `nginx -t` 验证，再 reload。
+## 预检、磁盘与迁移
 
-## 可重复的外部验证
+`source/bin/linux-preflight` 检查已有原片读取、AI 小型调用及外部服务连接，使用前核对其 `--help` 和授权范围。它可能发起真实 AI 请求；只读检查通过不代表 OSS 写入、飞书建记录或 FBBM 最终交付通过。
 
-```sh
-sudo /srv/exactcut/bin/linux-preflight \
-  --root /srv/exactcut --image <固定镜像ID或验收镜像> \
-  --drama-id <已存在的六位剧ID> --sample-mib 32
-```
+`storage` 配置用于任务准入、磁盘预留及可回收缓存策略，不是文件系统硬配额。容量不足时拒绝新任务，不为腾空间删除账号、项目、成片或在用原片。
 
-临时容器只读挂载生产配置，不挂载业务数据、不监听端口、不启动 worker。OSS 对已有 EP1 做 HEAD 和限量 GET，读入内存后丢弃；不调用可能补写目标桶的 `fetch-episode`。AI 使用实际配置模型验证小型 Responses 结构化输出；飞书只鉴权并读取字段与状态选项；CF-Ads 只登录并读取 `app_usage`。报告不打印凭据、token 或接口错误正文。
+迁移机器时：
 
-读取通过不代表 OSS 上传、飞书写权限或 FBBM 发布已验收；AI 小型请求通过不代表全部业务场景已验收。真实长视频、多集和发布仍需明确素材范围并经工作台预览确认。
+1. 核对新机架构、Docker/Compose、容量、端口及代理。
+2. 停止旧机接收新任务，等待任务结束并正常停服，取得配置与数据的一致备份。
+3. 搬迁配置、数据、固定镜像、发布记录及运维入口，保留权限；跨架构重建并重新验收。
+4. 调整机器配置，以登记版本恢复；检查账号、项目、实际媒体、日志与外部连接。
+5. 确认新机业务可用后切换入口；整个过程只允许一台机器执行同一份业务数据。
 
-## 换机器
-
-1. 检查新机 Docker/Compose、磁盘、资源和端口，准备 nginx 的路径入口。
-2. 旧机停止接新任务，等任务完成并停止应用，再一致性备份 `config/`、`data/`、版本记录和脚本，保留权限。整个迁移过程仅一台机器执行任务。
-3. 使用 `docker save <固定镜像ID> -o exactcut-image.tar` 与 `docker load -i exactcut-image.tar` 搬迁同架构已验收镜像，同时搬迁 `releases/`、`current.json`、`history/` 和 `bin/`。
-4. 恢复到新根，调整 `config/deployment.json` 的端口和资源；保留 production 数据归属与 schema 1，生产配置权限 0600。
-5. 在新机运行同一 `linux-preflight`，验证账号、批次、长视频、多集和 QC。
-6. 用 `linux-ops --root <新根> recover` 启动登记的当前版本并检查健康。失败排查时不得还原旧业务数据库。
-7. 切换 IP/域名入口，旧机保持停机，确认业务正常后再结束迁移。
-
-服务器规格、CPU/内存/磁盘预算与实测依据见 [服务器配置建议](server-sizing.md)。首期独立机器建议4vCPU/8GB/100～200GB SSD；本次共享机仍使用1核/2GiB应用限制。
+历史部署与规格测量在[归档](archive/README.md)中，不能据此认定当前服务器仍是相同版本、资源或入口。
