@@ -1,7 +1,7 @@
 """Controlled media promises exercise actual editor handlers and status ownership."""
 import pytest
 from test_cutting_ui import editor as cut_editor, select as select_cut
-from test_mosaic_ui import editor as mosaic_editor, open_editor, confirm_region
+from test_mosaic_ui import editor as mosaic_editor, open_editor, adopt_regions_if_needed
 
 pytestmark = pytest.mark.ui
 
@@ -130,7 +130,7 @@ def test_mosaic_generation_start_and_result_arrival_cancel_pending_play(mosaic_e
     open_editor(page)
     page.locator('#mosaicRecognize').click()
     page.locator('[data-candidate="0"]').wait_for()
-    confirm_region(page)
+    adopt_regions_if_needed(page)
     page.evaluate("""() => {
       session.capabilities.tracking=true;
       const old=api;

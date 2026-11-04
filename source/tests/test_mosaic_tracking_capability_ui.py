@@ -24,7 +24,7 @@ def add_manual_mosaic(page,initial_delete=False):
         page.locator('[data-event-draw]').click()
     else:page.locator('#mosaicManualAction').select_option('mosaic')
     draw_region(page)
-    page.locator('#mosaicConfirm' if initial_delete else '#mosaicAddSubmit').click()
+    if not initial_delete:page.locator('#mosaicAddSubmit').click()
 
 
 def save_effect(page,style='blur'):
