@@ -1,5 +1,14 @@
 # 本地 dev 服务与专项测试交接
 
+## 2026-11-04：两台 Mac 并发补验与暂停/退避修复
+
+- M2 与 Mac mini 的独立并发测试实例均已加载应用代码 `098ffad`，release=`development-backoff-098ffad`；未合并 main 或变更线上。
+- 各机本机入口分别为 `takeover-m2.localhost:18793/home/`、`takeover-mini.localhost:18792/home/`。保留可见 Chrome 测试窗口和媒体供检查；从侧栏选择本轮项目，不能把一台的 localhost 当另一台入口。
+- 测试源码使用固定提交的独立 worktree；启动器为各机私有 `$TEST_ROOT/start-takeover.sh`，复用原测试数据、账号和集中配置。PID 只在私有 `server.pid`，操作前重新核对 cwd、监听和任务，不复用历史 PID。
+- 两机各 304 项相关回归通过；两机制作中暂停/归档恢复一次通过，M2 两账号六项目最终完成。mini 受控容量拒绝、退避后的真实制作和播放通过；故障注入适配器已退出，现为普通守卫启动方式。
+- 最终审计普通与交互 active/pending 均空、打码 active/pending 空、交付 upload/poll job=0；SAM CPU、namespace=test、delivery_enabled=false 及外部写入守卫保持。测试上下文为 production，不代表生产服务。
+- 完整边界、首次失败、三项修复和保留事项见[最终验收记录](handoff/2026-11-04-concurrency-8-final-acceptance.md)。OSS 对象保留用于页面验收，尚未删除。
+
 ## 2026-11-03：18883实际验收收尾，A最终FAIL待用户统一看
 
 - 当前PID97825（操作前实核），应用源码`05b2faf74e37e611f5b0a59065fb199e08786bae`，cwd为`cut-mosaic-18883-source-delivery/source`。原URL和data root不变，development/worker1/AI1、fetch0/外写0/PUBLISH0、OSS预览关闭、原MPS不变。此前PID15988/worker0记录为历史。
