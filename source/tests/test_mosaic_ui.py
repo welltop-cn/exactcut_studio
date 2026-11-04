@@ -1731,7 +1731,7 @@ def test_navigation_clears_selection_only_outside_half_open_clip_range(editor,na
     assert editor.locator('#mosaicStart').input_value()=='00:00:00'
     assert editor.locator('#mosaicEnd').input_value()=='00:09:29'
     assert active_count(editor)==1
-    assert editor.locator('#mosaicStatus').inner_text()=='点击片段查看画面，选择删除或打码；不选则不处理。'
+    assert editor.locator('#mosaicStatus').inner_text()=='点击片段查看画面，选择删除、打码或忽略。'
 
 
 def test_time_and_every_coordinate_change_persist_without_confirmation(editor):
@@ -1794,7 +1794,7 @@ def test_play_pause_restores_handles_in_range_and_clears_selection_after_end(edi
     editor.wait_for_function("document.querySelector('#mosaicSource').ended")
     assert editor.locator('[data-scan-event]').get_attribute('aria-pressed')=='false'
     assert editor.locator('#mosaicOverlay').is_hidden()
-    assert editor.locator('#mosaicStatus').inner_text()=='点击片段查看画面，选择删除或打码；不选则不处理。'
+    assert editor.locator('#mosaicStatus').inner_text()=='点击片段查看画面，选择删除、打码或忽略。'
 
 
 def test_adjusting_cancelled_mask_adopts_it_again_but_time_edit_does_not(editor):
@@ -2036,6 +2036,46 @@ def test_blank_timeline_drag_creates_unprocessed_manual_segment_clamped_to_ai(ed
     card.get_by_role('checkbox',name='删除',exact=True).click()
     assert '删除' in card.inner_text() and '需框选' not in card.inner_text()
     assert len(workbench_draft(editor)['deletions'])==1
+
+
+@pytest.mark.parametrize('width', [1440, 1600])
+def test_header_summary_is_visible_and_updates_without_wrapping_buttons(editor, width):
+    editor.set_viewport_size({'width':width,'height':900})
+    scan_result(editor)
+    editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:210,end:270,seed_frame:240})")
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    summary=editor.locator('#mosaicSummary')
+
+    def check(text, pending):
+        assert summary.is_visible()
+        assert summary.get_attribute('role')=='status'
+        assert summary.inner_text()==text
+        assert editor.locator('#mosaicBatchHint').inner_text().split('\n')[0]==text
+        assert ('pending' in (summary.get_attribute('class') or '').split())==pending
+        # Check real layout: summary precedes discard; all controls stay on one row
+        # inside the header, with enough width to render each button's text.
+        assert editor.locator('.mosaic-header').evaluate('''header => {
+          const s=document.getElementById('mosaicSummary').getBoundingClientRect();
+          const discard=document.getElementById('mosaicDiscard').getBoundingClientRect();
+          const h=header.getBoundingClientRect();
+          const buttons=[...header.querySelectorAll('button')].filter(b=>b.getBoundingClientRect().width>0);
+          return s.width>0 && s.height>0 && s.right<=discard.left && s.left>=h.left &&
+            buttons.every(b=>{const r=b.getBoundingClientRect();return r.top>=h.top && r.bottom<=h.bottom &&
+              r.right<=h.right && r.width>=b.scrollWidth && Math.abs((r.top+r.bottom-discard.top-discard.bottom)/2)<2;});
+        }''')
+
+    check('删除 0 段 · 打码 0 段 · 待处理 2 段', True)
+    pending_color=summary.evaluate('el=>getComputedStyle(el).color')
+    card=editor.locator('[data-mosaic-card="e1"]')
+    card.get_by_role('checkbox',name='删除',exact=True).click()
+    check('删除 1 段 · 打码 0 段 · 待处理 1 段', True)
+    card.get_by_role('checkbox',name='打码',exact=True).click()
+    check('删除 0 段 · 打码 1 段 · 待处理 1 段', True)
+    editor.locator('[data-event-ignore="e2"]').click()
+    check('删除 0 段 · 打码 1 段 · 全部已处理', False)
+    assert summary.evaluate('el=>getComputedStyle(el).color')!=pending_color
+    editor.locator('[data-event-ignore="e2"]').click()
+    check('删除 0 段 · 打码 1 段 · 待处理 1 段', True)
 
 
 def test_three_choices_ignore_excludes_masks_deletions_and_persists_in_time_order(editor):

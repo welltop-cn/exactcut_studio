@@ -314,7 +314,7 @@
       while(valid()){
         if(typeof state.enabled!=='boolean')throw Error('整段识别响应无效，请重试读取。');
         context.session.capabilities.region_recognition=state.enabled;
-        const firstReport=!scanReport;scanReport=checkedReport(state.report);if(scanReport?.status==='completed'&&!pendingJob()&&!awaitingDecision()&&!batchLoading)mergeDiscovery(scanReport.events);paint();if(firstReport&&scanReport)status('点击片段查看画面，选择删除或打码；不选则不处理。');
+        const firstReport=!scanReport;scanReport=checkedReport(state.report);if(scanReport?.status==='completed'&&!pendingJob()&&!awaitingDecision()&&!batchLoading)mergeDiscovery(scanReport.events);paint();if(firstReport&&scanReport)status('点击片段查看画面，选择删除、打码或忽略。');
         if(!pendingJob(scanReport))break;
         await new Promise(r=>setTimeout(r,1000));if(!valid())return;
         state=await api(endpoint+'/scan');
@@ -385,7 +385,7 @@
     const hadSelection=!!scanEvent||editing!==null;
     if(!hadSelection||!inRange()){
       resetCandidate();
-      if(hadSelection)status('点击片段查看画面，选择删除或打码；不选则不处理。');
+      if(hadSelection)status('点击片段查看画面，选择删除、打码或忽略。');
     }
   }
   function seek(frame,keep=false){
@@ -720,6 +720,7 @@
   const adoptedTargets=()=>targets.filter(t=>t.adopted!==false).map(t=>({...renderTarget(t),effect:effectFor(t)}));
   const targetSignature=(list,fallback=effect)=>JSON.stringify([...new Set(list.map(t=>JSON.stringify([...targetFields.map(k=>t[k]),t.motion||'tracked',{...defaultEffect,...fallback,...t.effect}])))] .sort());
   function pendingCount(){return timelineItems().filter(i=>i.kind==='suggestion').length;}
+  function processingSummary(segments,pending){return `删除 ${deletions.length} 段 · 打码 ${segments} 段 · ${pending?`待处理 ${pending} 段`:'全部已处理'}`;}
   function paintBatch(){
     if(!context)return;
     for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
@@ -750,7 +751,10 @@
     $('mosaicDiscard').disabled=mutationBusy||scanReport?.status==='running';
     $('mosaicClose').disabled=mutationBusy;
     $('mosaicBatchStart').textContent=running?'正在生成视频…':'生成处理后视频';
-    $('mosaicBatchHint').textContent=[`删除 ${deletions.length} 段 · 打码 ${segments} 段 · ${pendingCount()?`待处理 ${pendingCount()} 段`:'全部已处理'}`,trackingUnavailable&&!running&&!awaitingDecision()?trackingUnavailableHint:'',legacyDraft&&!running&&!awaitingDecision()?legacyDraftHint:'',batchError].filter(Boolean).join('\n');
+    const pending=pendingCount(),summary=processingSummary(segments,pending);
+    $('mosaicSummary').textContent=summary;
+    $('mosaicSummary').classList.toggle('pending',pending>0);
+    $('mosaicBatchHint').textContent=[summary,trackingUnavailable&&!running&&!awaitingDecision()?trackingUnavailableHint:'',legacyDraft&&!running&&!awaitingDecision()?legacyDraftHint:'',batchError].filter(Boolean).join('\n');
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
     $('mosaicBatchClose').hidden=!showOutput;
