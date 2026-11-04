@@ -269,7 +269,8 @@ def test_late_whole_scan_cannot_overwrite_reopened_results(editor):
         return original(url,body);
       };
     }''')
-    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
     editor.wait_for_function('typeof finishScan === "function"')
     editor.locator('#mosaicClose').click()
     editor.evaluate('window.reopened=true')
@@ -1468,16 +1469,25 @@ def test_save_time_preserves_cancelled_mask_and_delete_choice(editor,delete_sele
     assert draft['targets'][0]['start']==40
 
 
-def test_open_automatically_scans_once_and_reuses_completed_empty_result(editor):
-    editor.evaluate('''() => {const old=api;let report=null;window.autoStarts=0;
+def test_open_never_submits_scan_and_button_submits_once_then_record_is_reused(editor):
+    editor.evaluate('''() => {const old=api;let report=null;window.scanStarts=0;window.scanReads=0;
       window.api=async(url,body)=>{if(!url.endsWith('/scan'))return old(url,body);
-        if(body){autoStarts++;report={id:'auto',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]};return report;}
-        return {enabled:true,report};};}''')
+        if(body){scanStarts++;report={id:'manual',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]};return report;}
+        scanReads++;return {enabled:true,report};};}''')
     open_auto(editor)
-    editor.wait_for_function('autoStarts===1')
+    editor.wait_for_function('scanReads>=1')
+    editor.wait_for_timeout(200)
+    assert editor.evaluate('scanStarts')==0
+    assert editor.locator('#mosaicScan').inner_text()=='识别整段视频'
+    assert '识别整段视频' in editor.locator('#mosaicScanStatus').inner_text()
+    assert '识别中' not in editor.locator('#mosaicScan').inner_text()
+    editor.locator('#mosaicScan').click()
+    editor.wait_for_function('scanStarts===1')
+    editor.wait_for_function("document.getElementById('mosaicScan').textContent==='重新识别整段'")
     editor.locator('#mosaicClose').click()
     open_auto(editor)
-    assert editor.evaluate('autoStarts')==1
+    editor.wait_for_function("document.getElementById('mosaicScan').textContent==='重新识别整段'")
+    assert editor.evaluate('scanStarts')==1
 
 
 def test_mosaic_open_uses_long_preparation_timeout():
@@ -1506,18 +1516,20 @@ def test_open_does_not_auto_retry_failure_or_disabled_scan(editor,enabled,report
     assert editor.evaluate('scanWrites')==0
 
 
-def test_auto_scan_waits_for_first_frame_and_recovers_after_frame_retry(editor):
+def test_scan_record_read_waits_for_first_frame_and_never_submits(editor):
     editor.route('**/frame/*',lambda r:r.fulfill(status=503,body='not ready'))
-    editor.evaluate('''()=>{const old=api;window.scanWrites=0;window.api=async(url,body)=>{
-      if(url.endsWith('/scan')){if(body){scanWrites++;return {id:'auto',status:'completed',events:[]};}return {enabled:true,report:null};}
+    editor.evaluate('''()=>{const old=api;window.scanWrites=0;window.scanReads=0;window.api=async(url,body)=>{
+      if(url.endsWith('/scan')){if(body){scanWrites++;return {id:'auto',status:'completed',events:[]};}scanReads++;return {enabled:true,report:null};}
       return old(url,body);};}''')
     editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     editor.locator('#mosaicFrameRetry').wait_for(state='visible')
-    assert editor.evaluate('scanWrites')==0
+    assert editor.evaluate('scanReads+scanWrites')==0
     jpeg=io.BytesIO();Image.new('RGB',(160,96)).save(jpeg,'JPEG')
     editor.route('**/frame/*',lambda r:r.fulfill(body=jpeg.getvalue(),content_type='image/jpeg'))
     editor.locator('#mosaicFrameRetry').click()
-    editor.wait_for_function('scanWrites===1')
+    editor.wait_for_function('scanReads===1')
+    editor.wait_for_timeout(200)
+    assert editor.evaluate('scanWrites')==0
 
 
 def test_resource_busy_open_retries_same_body(editor):
