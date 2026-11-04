@@ -474,6 +474,22 @@ def test_deletion_overlays_thumbnails_and_cancel_restores_strip(editor):
     assert editor.locator('#mosaicTimelineThumbs').bounding_box()==strip
 
 
+def test_simple_editor_exposes_only_fixed_mosaic_and_blur(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal]').click()
+    assert editor.locator('#mosaicLiveStyle option').evaluate_all('(items)=>items.map(e=>e.value)')==['pixel','blur']
+    assert editor.locator('#mosaicMotion').is_hidden()
+    assert editor.locator('#mosaicLiveStrength').is_hidden()
+    assert editor.locator('#mosaicLiveExpansion').is_hidden()
+    assert editor.locator('[data-effect-target]').count()==0
+    editor.locator('#mosaicLiveStyle').select_option('blur')
+    assert editor.locator('#mosaicBatchStart').is_enabled()
+    editor.locator('#mosaicBatchStart').click()
+    body=editor.evaluate("calls.find(c=>c.url.endsWith('/render')&&c.body).body")
+    assert all(t['motion']=='fixed' for t in body['targets'])
+    assert body['targets'][0]['effect']=={'style':'blur','strength':'medium','expansion':'none'}
+
+
 def test_only_chosen_actions_show_timeline_and_mosaic_inspector(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').click()

@@ -50,6 +50,19 @@ def test_effect_changes_job_identity_and_preview_uses_same_graph(tmp_path):
     assert max(pixels)<5
 
 
+@pytest.mark.parametrize('size',[(1,1),(37,81),(131,89),(640,1138)])
+@pytest.mark.parametrize('level',['none','small','medium','large'])
+def test_expansion_is_pixel_identical_to_pillow_at_edges_and_for_gray_masks(size,level):
+    import random
+    from PIL import ImageFilter
+    rng=random.Random(17)
+    mask=Image.frombytes('L',size,bytes(rng.randrange(256) if rng.random()<.03 else 0 for _ in range(size[0]*size[1])))
+    mask.putpixel((0,0),137);mask.putpixel((size[0]-1,size[1]-1),255)
+    radius=round(min(size)*{'none':0,'small':.008,'medium':.016,'large':.03}[level])
+    expected=mask.filter(ImageFilter.MaxFilter(radius*2+1)) if radius else mask
+    assert effects.expand(mask,level).tobytes()==expected.tobytes()
+
+
 def test_soft_blur_preserves_core_and_feathers_only_outside():
     mask=Image.new('L',(200,200))
     mask.paste(255,(70,70,130,130))

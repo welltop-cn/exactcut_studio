@@ -105,11 +105,17 @@ def encode_mask(mask_video,meta,tracks,size,rate,effect,progress):
         process=processing_cancel.spawn(bounded_ffmpeg(['ffmpeg','-y','-v','error','-f','rawvideo','-pix_fmt','gray','-s',f'{width}x{height}','-r',rate,'-i','pipe:0','-an','-c:v','ffv1',str(mask_video)]),stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
         timer=threading.Timer(600,lambda:processing_cancel.terminate(process));timer.start()
         try:
-            black=bytes(width*height)
+            black=bytes(width*height);cached_active=None;cached_mask=None
             for frame in range(meta['frame_count']):
                 processing_cancel.check()
-                active=any(t['target']['start']<=frame<t['target']['end'] for t in tracks)
-                process.stdin.write(effects.prepare_mask(union_mask(frame,tracks,size),effect).tobytes() if active else black)
+                active=tuple(i for i,t in enumerate(tracks) if not t.get('failed') and t['target']['start']<=frame<t['target']['end'])
+                if not active:raw=black
+                elif all(tracks[i]['target'].get('motion')=='fixed' for i in active):
+                    if active!=cached_active:
+                        cached_mask=effects.prepare_mask(union_mask(frame,tracks,size),effect).tobytes();cached_active=active
+                    raw=cached_mask
+                else:raw=effects.prepare_mask(union_mask(frame,tracks,size),effect).tobytes()
+                process.stdin.write(raw)
                 if frame%120==0:progress(f"合并遮罩 {frame+1} / {meta['frame_count']} 帧")
             process.stdin.close()
             if process.wait(timeout=60):raise cutting.CutError('遮罩视频生成失败，未生成成片')
