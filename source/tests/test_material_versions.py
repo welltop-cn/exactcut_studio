@@ -298,6 +298,41 @@ def test_render_retry_uses_fresh_child_and_old_attempt_cannot_commit(workspace):
 
 
 @pytest.mark.integration
+def test_failed_candidate_executor_exits_and_releases_resident_slot(workspace):
+    import os
+    import signal
+    import subprocess
+    import sys
+    from exactcut import batch_control
+    from exactcut.runtime import instance_marker
+    m, path, state, old = changed_candidate()
+    worker, child, event, job = candidate_job(path, state)
+    worker.stage_enter(job)
+    worker.stage_finish(job, 1)
+    assert m.read(path)['versions'][event['version_id']]['status'] == 'failed'
+    release = workspace / 'allow-executor-exit'
+    command = f"from pathlib import Path; import time\nwhile not Path({str(release)!r}).exists(): time.sleep(.01)"
+    process = subprocess.Popen([sys.executable, '-X', 'exactcut_process_token=' + job['process_token'],
+                                '-c', command], start_new_session=True)
+    try:
+        identity = batch_control.identify(process, process_token=job['process_token'], lane='render')
+        assert identity and identity['instance'] == instance_marker()
+        batch_control.remember_child(child, identity)
+        batch_control.reconcile(w.BATCHES)
+        release.touch()
+        assert process.wait(timeout=2) == 0
+        assert not batch_control.reconcile(w.BATCHES)
+        assert m.read(path)['assets'][event['asset_id']]['current_version'] == old
+        with pytest.raises(ValueError, match='候选'):
+            worker.stage_enter(job)
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGCONT)
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=3)
+
+
+@pytest.mark.integration
 def test_pause_is_inherited_before_child_scheduler_admission(workspace):
     from exactcut import batch_control
     m, path, state, old = changed_candidate()
