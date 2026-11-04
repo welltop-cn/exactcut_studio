@@ -454,7 +454,7 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
         for field in ('pid', 'pgid', 'process_token', 'admission', 'input_fingerprint'): job.pop(field, None)
         storage.release(job['id'], JOBS)
         save(job)
-        if job.get('batch_id'):
+        if job.get('batch_id') and job.get('action') != 'prefetch':
             path = workflow.BATCHES / job['batch_id']
             workflow.end_execution(path, job.get('request_id'))
             workflow.update(path, 'queued', '等待资源，稍后继续本阶段', not_before=result['not_before'])

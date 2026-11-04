@@ -25,6 +25,11 @@ def result_path(job, jobs):
 
 
 def fingerprint(job, batches, root, *, source_digests=None, config=None, _retry_errors=False):
+    if job.get('action') == 'prefetch':
+        # The child checks the current desired plan before each episode. Editing
+        # that plan must not invalidate resource-wait evidence for this job.
+        return json_sha256({'action': 'prefetch', 'project': job.get('project'),
+                            'episodes': job.get('episodes', [])})
     path = batches / job.get('batch_id', '')
     values = {'phase': job.get('phase'), 'request_id': job.get('request_id'), 'config': {key: value for key, value in (load_config() if config is None else config).items() if job.get('phase') == 'render' and key in {'render', 'qc', 'safety'}}}
     for name in ('confirmed.json', 'source-prefetch.json'):
