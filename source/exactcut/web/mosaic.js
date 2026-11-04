@@ -12,7 +12,7 @@
   let stopPending=false,previewOperation=null;
   let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
   let sourceManager=null,sourceBinding=null,beforeBinding=null;
-  let validTimeRange=null;
+  let validTimeRange=null,seekSequence=0,timeJumpEditing=false;
   const pendingJob=(job=batchJob)=>['queued','running','cancelling'].includes(job?.status);
   const awaitingDecision=(job=batchJob)=>job?.status==='completed'&&!job?.discarded_at&&job?.replacement?.status!=='completed';
   const editLocked=()=>batchLoading||pendingJob()||awaitingDecision()||stopPending||mutationBusy;
@@ -121,7 +121,7 @@
     for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
     const c=selectedBox(),accurate=ready===wanted&&!image.hidden&&video.paused;
     $('mosaicPosition').textContent=`${clock(wanted)} / ${clock(meta().frame_count-1)}`;
-    $('mosaicSeek').value=wanted;$('mosaicFrameNumber').value=clock(wanted);
+    $('mosaicSeek').value=wanted;if(!timeJumpEditing)$('mosaicFrameNumber').value=clock(wanted);
     $('mosaicRecognize').disabled=loading||scanLoading||frameLoading||!accurate||!inRange()||!context.session.capabilities?.region_recognition;
     $('mosaicRecognize').textContent=loading?'识别中…':'识别当前帧';
     $('mosaicDraw').disabled=!accurate||loading||!inRange();$('mosaicDraw').textContent=drawing?'在画面拖出矩形':'手动框选';
@@ -388,13 +388,15 @@
       if(hadSelection)status('点击片段查看画面，选择删除、打码或忽略。');
     }
   }
-  function seek(frame,keep=false){
-    if(!context)return;clearTimeout(timer);controller?.abort();pausePlayback();
+  // Trim work keeps its gesture token; explicit navigation invalidates it.
+  function seek(frame,keep=false,sequence){
+    if(!context||(sequence!==undefined&&sequence!==seekSequence))return;
+    const request=sequence??++seekSequence;timeJumpEditing=false;clearTimeout(timer);controller?.abort();pausePlayback();
     wanted=Math.max(0,Math.min(meta().frame_count-1,Math.round(frame)));ready=-1;image.hidden=true;
     if(!keep)retainSelection();
     if(sourceBinding)sourceBinding.seek((wanted+.05)/rate());
     else if(Number.isFinite(video.duration))video.currentTime=(wanted+.05)/rate();
-    paint();timer=setTimeout(loadFrame,100);
+    paint();timer=setTimeout(()=>{if(request===seekSequence)loadFrame();},100);
   }
   async function recognize(){
     if($('mosaicRecognize').disabled)return;
@@ -498,7 +500,7 @@
   }
   $('mosaicClose').onclick=()=>{if(!mutationBusy){$('mosaicEffects').close();dialog.close();}};
   dialog.addEventListener('cancel',e=>{if(mutationBusy)e.preventDefault();});
-  dialog.addEventListener('close',()=>{if(dialog.open)return;stopWorkspacePreview();detachClipPreview();previewOperation=null;$('mosaicTrackDialog').close();releasePreparation?.();releasePreparation=null;scanController?.abort();sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
+  dialog.addEventListener('close',()=>{if(dialog.open)return;stopWorkspacePreview();detachClipPreview();previewOperation=null;$('mosaicTrackDialog').close();releasePreparation?.();releasePreparation=null;scanController?.abort();sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;seekSequence++;timeJumpEditing=false;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
   document.addEventListener('visibilitychange',()=>{if(document.hidden){releasePreparation?.();scanController?.abort();controller?.abort();clearTimeout(timer);}else if(context&&dialog.open&&video.paused&&!resultMode&&ready!==wanted){loadFrame();}});
   $('mosaicScan').onclick=()=>scanVideo(!scanError&&scanReport?.status!=='running');
   $('mosaicScanEvents').onclick=e=>{const b=e.target.closest('[data-scan-event]'),card=e.target.closest('[data-mosaic-card]');if(b)viewScanEvent(b.dataset.scanEvent);else if(card&&!e.target.closest('button,summary,details'))viewScanEvent(card.dataset.mosaicCard);};
@@ -547,7 +549,8 @@
     if(validTimeRange){$('mosaicStart').value=clock(validTimeRange.start);$('mosaicEnd').value=clock(validTimeRange.end-1);}
     paint();status(e.message,true);
   }};
-  $('mosaicFrameNumber').onchange=timeGuard(e=>seek(parse(e.target.value)));
+  $('mosaicFrameNumber').oninput=()=>{timeJumpEditing=true;seekSequence++;clearTimeout(timer);};
+  $('mosaicFrameNumber').onchange=timeGuard(e=>{timeJumpEditing=false;seek(parse(e.target.value));});
   for(const id of ['mosaicStart','mosaicEnd'])$(id).onchange=timeGuard(()=>{
     const r=range(),event=allEvents().find(e=>e.id===scanEvent);
     // Native blur can repeat an already committed change; preserve the pending click.
@@ -1139,6 +1142,11 @@
     targets.forEach((t,index)=>{if(!t.removed&&!events.some(e=>belongs(t,e)))items.push({...t,id:'target:'+t.uid,index,kind:ignoredEvents.includes('target:'+t.uid)?'ignored':deletions.some(d=>d.eventId==='target:'+t.uid)?'deletion':t.adopted!==false?'mosaic':'suggestion'});});
     return items;
   }
+  function timelineTitle(item,start=item.start,end=item.end){
+    const time=frame=>{const tenths=Math.round(frame/rate()*10);return `${Math.floor(tenths/600)}:${(tenths%600/10).toFixed(1).padStart(4,'0')}`;};
+    const label=item.kind==='deletion'?'删除':item.kind==='mosaic'?'打码':item.kind==='ignored'?'忽略':item.event?.id.startsWith('manual-')?'手动片段 · 未处理':'AI 建议 · 未处理';
+    return `${label} · ${item.label||item.event?.label||''} · ${time(start)}–${time(end)}`;
+  }
   function paintTimeline(){
     if(!context)return;
     $('mosaicTimelineHead').style.left=100*wanted/meta().frame_count+'%';
@@ -1153,7 +1161,7 @@
         const selected=item.event?scanEvent===item.id:editing===item.index;
         const label=item.kind==='deletion'?'删除':item.kind==='mosaic'?'打码':item.kind==='ignored'?'忽略':item.event?.id.startsWith('manual-')?'手动片段 · 未处理':'AI 建议 · 未处理';
         const edgeStart=['suggestion','ignored'].includes(item.kind)?'':'<i data-edge="start"></i>',edgeEnd=['suggestion','ignored'].includes(item.kind)?'':'<i data-edge="end"></i>';
-        const html=`<button type="button" class="mosaic-timeline-block ${item.kind} ${selected?'selected':''}" data-timeline-event="${esc(item.id)}" data-start="${item.start}" data-end="${item.end}" aria-label="${label} ${esc(item.label)} ${clock(item.start)}–${clock(item.end-1)}" aria-pressed="${selected}" title="${label} · ${esc(item.label)} · ${clock(item.start)}–${clock(item.end-1)}" style="left:${100*item.start/meta().frame_count}%;width:${100*(item.end-item.start)/meta().frame_count}%;top:${item.kind==='deletion'?0:row*32+3}px">${edgeStart}<span class="mosaic-block-label ${item.kind==='deletion'?'mosaic-deletion-label':''}">${label}</span>${edgeEnd}</button>`;
+        const html=`<button type="button" class="mosaic-timeline-block ${item.kind} ${selected?'selected':''}" data-timeline-event="${esc(item.id)}" data-start="${item.start}" data-end="${item.end}" aria-label="${label} ${esc(item.label)} ${clock(item.start)}–${clock(item.end-1)}" aria-pressed="${selected}" title="${esc(timelineTitle(item))}" style="min-width:8px;left:${100*item.start/meta().frame_count}%;width:${100*(item.end-item.start)/meta().frame_count}%;top:${item.kind==='deletion'?0:row*32+3}px">${edgeStart}<span class="mosaic-block-label ${item.kind==='deletion'?'mosaic-deletion-label':''}">${label}</span>${edgeEnd}</button>`;
         (item.kind==='deletion'?deletionOverlays:blocks).push(html);
       }
       $('mosaicTimelineBlocks').innerHTML=blocks.join('');
@@ -1185,7 +1193,7 @@
     event.preventDefault();
     if(item&&event.target.dataset.edge){if(item.event)viewScanEvent(item.id);else viewTarget(item.index);button=[...timeline.querySelectorAll('[data-timeline-event]')].find(b=>b.dataset.timelineEvent===item.id);}
     timeline.setPointerCapture(event.pointerId);
-    timelineDrag={pointer:event.pointerId,item,button,start:timelineFrame(event),x:event.clientX,edge:event.target.dataset.edge,moved:false,version:epoch};
+    timelineDrag={pointer:event.pointerId,item,button,start:timelineFrame(event),x:event.clientX,edge:event.target.dataset.edge,moved:false,version:epoch,seekSequence};
     if(!item)seek(Math.min(meta().frame_count-1,timelineFrame(event)));
   };
   timeline.onpointermove=event=>{
@@ -1209,10 +1217,10 @@
     const clamped=drag.edge==='start'?start!==item.start+delta:drag.edge==='end'?end!==item.end+delta:start!==item.start+delta;
     if(clamped&&!drag.warned){status('已到相邻片段边界。');drag.warned=true;}
     drag.range={start,end};Object.assign(drag.button.style,{left:100*start/meta().frame_count+'%',width:100*(end-start)/meta().frame_count+'%'});
-    drag.button.title=`${clock(start)}–${clock(end-1)}`;
+    drag.button.title=timelineTitle(item,start,end);
     if(drag.edge){
       $('mosaicStart').value=clock(start);$('mosaicEnd').value=clock(end-1);
-      seek(drag.edge==='start'?start:end-1,true);
+      seek(drag.edge==='start'?start:end-1,true,drag.seekSequence);
     }
   };
   timeline.onpointerup=guard(event=>{
@@ -1227,8 +1235,12 @@
         else{const t=targets[item.index];Object.assign(t,drag.range);t.seed_frame=Math.max(t.start,Math.min(t.end-1,t.seed_frame));}
         if(!save()){timelineSignature='';paint();return;}
       }
-      if(item.event)viewScanEvent(item.id);else viewTarget(item.index);
-      if(drag.moved&&drag.range){if(drag.edge)seek(drag.edge==='start'?drag.range.start:drag.range.end-1,true);status(drag.warned?'时间已更新，已停在相邻片段边界。':'时间已更新。');}
+      if(drag.seekSequence===seekSequence){
+        if(item.event)viewScanEvent(item.id);else viewTarget(item.index);
+        drag.seekSequence=seekSequence;
+        if(drag.moved&&drag.range&&drag.edge)seek(drag.edge==='start'?drag.range.start:drag.range.end-1,true,drag.seekSequence);
+      }
+      if(drag.moved&&drag.range){status(drag.warned?'时间已更新，已停在相邻片段边界。':'时间已更新。');}
     }else if(!item&&drag.moved&&drag.range&&!editLocked()){
       if(manualClips.length>=40)throw Error('最多添加 40 个手动片段。');
       const clip={id:'manual-'+regionId(),...drag.range,label:'手动片段',reason:'',status:'needs_review',candidates:[]};
@@ -1237,7 +1249,7 @@
     }
     timelineSignature='';paint();
   });
-  timeline.onpointercancel=()=>{const item=timelineDrag?.item;timelineDrag=null;$('mosaicTimelineSelection').hidden=true;timelineSignature='';if(context){if(item?.event)viewScanEvent(item.id);else if(item)viewTarget(item.index);paint();}};
+  timeline.onpointercancel=()=>{const item=timelineDrag?.item,sequence=timelineDrag?.seekSequence;timelineDrag=null;$('mosaicTimelineSelection').hidden=true;timelineSignature='';if(context){if(item?.event&&sequence===seekSequence)viewScanEvent(item.id);else if(item&&sequence===seekSequence)viewTarget(item.index);paint();}};
   let thumbnailCancel=null,thumbnailCacheKey='';
   const thumbnailCache=new Map();
   new ResizeObserver(()=>{if(context&&dialog.open)scheduleThumbnails();}).observe(timeline);
