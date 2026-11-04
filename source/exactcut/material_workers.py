@@ -347,6 +347,9 @@ def reconcile_candidates(parent, jobs, snapshot=None):
         child_id = job.get('batch_id'); event = state['outbox'].get(child_id)
         if not event or event['kind'] != 'candidate': continue
         if job.get('status') == 'queued' and job.get('phase') == 'render' and job.get('attempt'):
+            # Keep the original durable wait until it is due; replacing the
+            # container earlier would create a fetch job without that deadline.
+            if job.get('not_before', 0) > time.time(): continue
             with m.locked(parent):
                 latest = m._read(parent)
                 version = latest['versions'][event['version_id']]

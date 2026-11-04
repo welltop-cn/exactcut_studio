@@ -298,6 +298,25 @@ def test_render_retry_uses_fresh_child_and_old_attempt_cannot_commit(workspace):
 
 
 @pytest.mark.integration
+def test_managed_render_retry_keeps_backoff_until_fresh_child_is_due(workspace):
+    from unittest.mock import patch
+    m, path, state, old = changed_candidate()
+    worker, child, event, job = candidate_job(path, state)
+    worker.stage_enter(job)
+    file = w.ROOT / '.web-state/jobs' / (job['id'] + '.json')
+    write_json_atomic(file, {**job, 'status': 'queued', 'not_before': 1015.0})
+    with patch.object(worker.time, 'time', return_value=1000.0):
+        m.recover_outbox()
+    assert m.read(path)['versions'][event['version_id']]['child_id'] == child.name
+    assert read_json(file)['status'] == 'queued'
+    assert read_json(file)['not_before'] == 1015.0
+    with patch.object(worker.time, 'time', return_value=1015.0):
+        m.recover_outbox()
+    assert m.read(path)['versions'][event['version_id']]['child_id'] != child.name
+    assert m.read(path)['assets'][event['asset_id']]['current_version'] == old
+
+
+@pytest.mark.integration
 def test_failed_candidate_executor_exits_and_releases_resident_slot(workspace):
     import os
     import signal
