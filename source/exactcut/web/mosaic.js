@@ -21,7 +21,7 @@
   function clearRemovedClip(){removedClip=null;clearTimeout(removeTimer);$('mosaicRemoved').hidden=true;}
   let manualClips=[],savedManualClips=[],addingClip=false,manualAction='delete';
   let aiEvents=[],clipEdits={},savedAiEvents=[],savedClipEdits={};
-  const allEvents=()=>[...(aiEvents.length?aiEvents:scanReport?.status==='running'?(scanReport.events||[]):[]),...manualClips];
+  const allEvents=()=>[...(aiEvents.length?aiEvents:scanReport?.status==='running'?(scanReport.events||[]):[]),...manualClips].sort((a,b)=>eventRange(a).start-eventRange(b).start);
   let scanController=null, releasePreparation=null, pendingFrame=-1;
   let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
   const base=()=>`/api/batches/${context.batch}/mosaics/${context.session.id}`;
@@ -97,7 +97,10 @@
   function selectRegion(id){selected=id;const c=selectedBox();editing=c?.uid?targets.findIndex(t=>t.uid===c.uid):null;if(editing===-1)editing=null;motion='fixed';}
   function selectedBox(){return candidates.find(c=>c.id===selected);}
   let choosingMosaic=false;
-  function resetCandidate(){choosingMosaic=false;regionDrafts=[];token++;loading=false;candidates=[];selected=null;editing=null;drawing=false;pointer=null;scanEvent=null;paint();}
+  function resetCandidate(){
+    choosingMosaic=false;regionDrafts=[];token++;loading=false;candidates=[];selected=null;editing=null;drawing=false;pointer=null;scanEvent=null;
+    if(!addingClip){$('mosaicAdjust').open=false;if(context){$('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);}}
+    paint();}
   function motionHint(){return '固定位置 · 所选时间内保持此位置';}
   function paint(){
     if(!context)return;
@@ -121,7 +124,7 @@
     $('mosaicSaveDelete').hidden=addingClip||eventIndex<0;
     $('mosaicSaveTime').hidden=addingClip||eventIndex<0;
     $('mosaicManualOptions').hidden=!addingClip;
-    $('mosaicAddSubmit').hidden=!addingClip;$('mosaicConfirm').hidden=addingClip||!!scanEvent||editing!==null;
+    $('mosaicAddSubmit').hidden=!addingClip;$('mosaicConfirm').hidden=addingClip||!!scanEvent||editing!==null||!candidates.length;
     $('mosaicAddSubmit').disabled=editLocked()||(manualAction==='mosaic'&&$('mosaicConfirm').disabled);
     $('mosaicManualAction').value=manualAction;$('mosaicMotion').value=motion;
     if(accurate)$('mosaicFrameHint').textContent=motionHint();
@@ -325,7 +328,7 @@
     if(overlay.hidden)return;
     const g=geometry();Object.assign(overlay.style,{left:g.left+'px',top:g.top+'px',width:g.width+'px',height:g.height+'px'});
     overlay.classList.toggle('drawing',drawing);
-    overlay.innerHTML=candidates.map(c=>`<button class="mosaic-box ${c.id===selected?'selected':''}" data-box="${esc(c.id)}" aria-label="选择 ${esc(c.label)}" style="left:${c.x/meta().width*100}%;top:${c.y/meta().height*100}%;width:${c.w/meta().width*100}%;height:${c.h/meta().height*100}%"><span>${esc(c.label)}</span>${c.id===selected&&!editLocked()?['n','s','e','w','ne','nw','se','sw'].map(edge=>`<i data-resize="${edge}" class="mosaic-handle ${edge}"></i>`).join(''):''}</button>`).join('');
+    overlay.innerHTML=candidates.map(c=>`<button class="mosaic-box ${targets.some(t=>t.uid===c.uid&&t.adopted!==false&&!t.removed)?'':'suggestion'} ${c.id===selected?'selected':''}" data-box="${esc(c.id)}" aria-label="选择 ${esc(c.label)}" style="left:${c.x/meta().width*100}%;top:${c.y/meta().height*100}%;width:${c.w/meta().width*100}%;height:${c.h/meta().height*100}%"><span>${esc(c.label)}</span>${c.id===selected&&!editLocked()?['n','s','e','w','ne','nw','se','sw'].map(edge=>`<i data-resize="${edge}" class="mosaic-handle ${edge}"></i>`).join(''):''}</button>`).join('');
   }
   async function loadFrame(){
     if(document.hidden||!context||!dialog.open||!video.paused||resultMode)return;
@@ -1050,7 +1053,7 @@
       return {id:e.id,event:e,...r,kind:deletions.some(t=>belongs(t,e))?'deletion':records.length?'mosaic':'suggestion'};
     });
     targets.forEach((t,index)=>{if(!t.removed&&!events.some(e=>belongs(t,e)))items.push({...t,id:'target:'+t.uid,index,kind:t.adopted!==false?'mosaic':'suggestion'});});
-    return items.filter(item=>item.kind!=='suggestion');
+    return items;
   }
   function paintTimeline(){
     if(!context)return;
@@ -1064,8 +1067,9 @@
         let row=0;
         if(item.kind!=='deletion'){row=ends.findIndex(end=>end<=item.start);if(row<0)row=ends.length;ends[row]=item.end;}
         const selected=item.event?scanEvent===item.id:editing===item.index;
-        const label=item.kind==='deletion'?'删除':'打码';
-        const html=`<button type="button" class="mosaic-timeline-block ${item.kind} ${selected?'selected':''}" data-timeline-event="${esc(item.id)}" data-start="${item.start}" data-end="${item.end}" aria-label="${label} ${esc(item.label)} ${clock(item.start)}–${clock(item.end-1)}" aria-pressed="${selected}" title="${label} · ${clock(item.start)}–${clock(item.end-1)}" style="left:${100*item.start/meta().frame_count}%;width:${100*(item.end-item.start)/meta().frame_count}%;top:${item.kind==='deletion'?0:row*32+3}px"><i data-edge="start"></i>${item.kind==='deletion'?'<span class="mosaic-deletion-label">删除</span>':label+' · '+esc(item.label)}<i data-edge="end"></i></button>`;
+        const label=item.kind==='deletion'?'删除':item.kind==='mosaic'?'打码':item.event?.id.startsWith('manual-')?'手动片段 · 未处理':'AI 建议 · 未处理';
+        const edgeStart=item.kind==='suggestion'?'':'<i data-edge="start"></i>',edgeEnd=item.kind==='suggestion'?'':'<i data-edge="end"></i>';
+        const html=`<button type="button" class="mosaic-timeline-block ${item.kind} ${selected?'selected':''}" data-timeline-event="${esc(item.id)}" data-start="${item.start}" data-end="${item.end}" aria-label="${label} ${esc(item.label)} ${clock(item.start)}–${clock(item.end-1)}" aria-pressed="${selected}" title="${label} · ${clock(item.start)}–${clock(item.end-1)}" style="left:${100*item.start/meta().frame_count}%;width:${100*(item.end-item.start)/meta().frame_count}%;top:${item.kind==='deletion'?0:row*32+3}px">${edgeStart}${item.kind==='deletion'?'<span class="mosaic-deletion-label">删除</span>':label+' · '+esc(item.label)}${edgeEnd}</button>`;
         (item.kind==='deletion'?deletionOverlays:blocks).push(html);
       }
       $('mosaicTimelineBlocks').innerHTML=blocks.join('');
@@ -1089,7 +1093,7 @@
   timeline.onpointermove=event=>{
     const drag=timelineDrag;if(!drag||drag.pointer!==event.pointerId||drag.version!==epoch)return;
     const frame=timelineFrame(event);if(!drag.item){seek(Math.min(meta().frame_count-1,frame));return;}
-    if(editLocked())return;
+    if(editLocked()||drag.item.kind==='suggestion')return;
     const delta=frame-drag.start,item=drag.item;drag.moved=drag.moved||delta!==0;
     let start=item.start,end=item.end;
     if(drag.edge==='start')start=Math.max(0,Math.min(end-1,start+delta));
@@ -1188,11 +1192,24 @@
     const scale=Math.min(1,960/Math.max(meta().width,meta().height)),w=Math.round(meta().width*scale),h=Math.round(meta().height*scale);
     if(liveCanvas.width!==w||liveCanvas.height!==h){for(const c of [liveCanvas,liveEffect,liveMask]){c.width=w;c.height=h;}}
     const frame=still?wanted:Math.min(meta().frame_count-1,Math.floor(video.currentTime*rate()));
-    let regions=targets.filter(t=>t.adopted!==false&&!t.removed&&frame>=t.start&&frame<t.end);
-    if(still&&inRange()&&candidates.length){const ids=new Set(candidates.map(c=>c.uid).filter(Boolean));regions=regions.filter(t=>!ids.has(t.uid));regions.push(...candidates.filter(validBox).map(c=>({...c,motion:c.motion||motion,...range()})));}
+    const events=allEvents(),deleted=t=>deletions.some(d=>(d.eventId&&d.eventId===t.eventId)||events.some(e=>belongs(t,e)&&belongs(d,e))||(!d.eventId&&d.start===t.start&&d.end===t.end));
+    let regions=targets.filter(t=>t.adopted!==false&&!t.removed&&!deleted(t)&&frame>=t.start&&frame<t.end);
+    if(still&&inRange())regions=regions.map(t=>{const c=candidates.find(c=>c.uid===t.uid&&validBox(c));return c?{...t,...c}:t;});
+    // Suggestions remain visible during playback without a DOM overlay or per-frame DOM updates.
+    const suggestions=[];
+    for(const event of events){
+      const r=eventRange(event);if(frame<r.start||frame>=r.end||deletions.some(d=>belongs(d,event)))continue;
+      const records=targets.filter(t=>belongs(t,event));
+      suggestions.push(...records.filter(t=>!t.removed&&t.adopted===false));
+      suggestions.push(...event.candidates.filter(c=>!records.some(t=>t.proposal===c.id||(!t.proposal&&t.seed_frame===event.seed_frame&&t.x===c.x&&t.y===c.y&&t.w===c.w&&t.h===c.h))));
+    }
+    suggestions.push(...targets.filter(t=>!t.removed&&t.adopted===false&&!deleted(t)&&frame>=t.start&&frame<t.end&&!events.some(e=>belongs(t,e))));
+    if(!scanEvent&&inRange())suggestions.push(...candidates.filter(c=>!regions.some(t=>t.uid&&t.uid===c.uid)));
+    const outlines=suggestions.filter(validBox);
+    liveCanvas.classList.toggle('has-suggestions',outlines.length>0);
     const tracked=regions.some(t=>t.motion!=='fixed');
     $('mosaicLiveHint').textContent=tracked?'当前含跟随目标区域：此处仅显示固定区域效果，跟踪效果请用动态预览检查。':'固定区域实时预览 · 最终效果请在生成后复核。';
-    regions=regions.filter(t=>t.motion==='fixed');if(!regions.length)return;
+    regions=regions.filter(t=>t.motion==='fixed');if(!regions.length&&!outlines.length)return;
     liveContext.clearRect(0,0,w,h);
     try{
       liveContext.drawImage(source,0,0,w,h);
@@ -1211,6 +1228,10 @@
         if(appearance.style==='soft_blur'){const radius=Math.max(1,Math.round(Math.min(w,h)*.015));mc.filter=`blur(${radius}px)`;mc.fillRect(x-radius,y-radius,rw+radius*2,rh+radius*2);mc.filter='none';}
         mc.fillRect(x,y,rw,rh);ec.globalCompositeOperation='destination-in';ec.drawImage(liveMask,0,0);ec.globalCompositeOperation='source-over';liveContext.drawImage(liveEffect,0,0);
       }
+      liveContext.save();liveContext.strokeStyle='#f2c94c';liveContext.lineWidth=2;
+      liveContext.setLineDash([6,4]);
+      for(const box of outlines)liveContext.strokeRect(box.x*scale,box.y*scale,box.w*scale,box.h*scale);
+      liveContext.restore();
       liveCanvas.hidden=false;
     }catch{liveCanvas.hidden=true;$('mosaicLiveHint').textContent='实时预览暂不可用，可使用动态预览检查效果。';}
   }

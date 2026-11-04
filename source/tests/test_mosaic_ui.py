@@ -474,8 +474,10 @@ def test_deletion_overlays_thumbnails_and_cancel_restores_strip(editor):
     assert deletion.locator('.mosaic-deletion-label').is_hidden()
     assert '删除' in deletion.get_attribute('title')
     editor.locator('[data-event-delete="e1"]').click()
-    assert editor.locator('[data-timeline-event]').count()==0
-    assert editor.locator('#mosaicTimelineThumbs').bounding_box()==strip
+    assert editor.locator('[data-timeline-event]').count()==1
+    assert 'suggestion' in editor.locator('[data-timeline-event]').get_attribute('class')
+    restored=editor.locator('#mosaicTimelineThumbs').bounding_box()
+    assert restored['width']==strip['width'] and restored['height']==strip['height']  # Suggestion adds its own row above.
 
 
 def test_simple_editor_exposes_only_fixed_mosaic_and_blur(editor):
@@ -494,10 +496,11 @@ def test_simple_editor_exposes_only_fixed_mosaic_and_blur(editor):
     assert body['targets'][0]['effect']=={'style':'blur','strength':'medium','expansion':'none'}
 
 
-def test_only_chosen_actions_show_timeline_and_mosaic_inspector(editor):
+def test_all_segments_show_timeline_but_only_masks_show_mosaic_inspector(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').click()
-    assert editor.locator('[data-timeline-event]').count()==0
+    assert editor.locator('[data-timeline-event]').count()==1
+    assert 'suggestion' in editor.locator('[data-timeline-event]').get_attribute('class')
     assert editor.locator('#mosaicLiveControls').is_hidden()
     assert editor.locator('#mosaicRegionTools').is_hidden()
     assert editor.locator('#mosaicAdjust > summary').is_hidden()
@@ -516,7 +519,8 @@ def test_only_chosen_actions_show_timeline_and_mosaic_inspector(editor):
     assert editor.locator('[data-timeline-event="e1"]').get_attribute('data-start')=='40'
     assert active_count(editor)==0
     editor.locator('[data-event-delete="e1"]').click()
-    assert editor.locator('[data-timeline-event]').count()==0
+    assert editor.locator('[data-timeline-event]').count()==1
+    assert 'suggestion' in editor.locator('[data-timeline-event]').get_attribute('class')
 
 
 def test_fixed_region_live_preview_changes_pixels_without_render(editor):
@@ -528,9 +532,26 @@ def test_fixed_region_live_preview_changes_pixels_without_render(editor):
     editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').click()
     editor.locator('#mosaicOverlay').wait_for(state='visible')
+    editor.locator('#mosaicLiveCanvas.has-suggestions').wait_for(state='visible')
+    assert editor.locator('.mosaic-box.suggestion').evaluate("el=>getComputedStyle(el).borderTopStyle")=='dashed'
+    assert editor.locator('.mosaic-box.suggestion').evaluate("el=>getComputedStyle(el).borderTopColor")=='rgb(242, 201, 76)'
+    assert editor.evaluate('''() => {
+      const canvas=$('mosaicLiveCanvas'),ctx=canvas.getContext('2d'),original=document.createElement('canvas');
+      original.width=160;original.height=96;original.getContext('2d').drawImage($('mosaicFrame'),0,0);
+      const a=ctx.getImageData(50,34,60,28).data,b=original.getContext('2d').getImageData(50,34,60,28).data;
+      return a.every((v,i)=>v===b[i]);
+    }'''), 'the suggestion interior must remain identical to the source frame'
+    # The yellow dashed stroke is on the live canvas, also used when the DOM overlay is hidden.
+    assert editor.evaluate('''() => {
+      const c=$('mosaicLiveCanvas').getContext('2d');
+      const yellow=x=>{const p=c.getImageData(x,24,1,1).data;return p[0]>200&&p[1]>150&&p[2]<120};
+      return Array.from({length:60},(_,i)=>yellow(50+i)).some(Boolean)
+        && Array.from({length:60},(_,i)=>yellow(50+i)).some(v=>!v);
+    }''')
     editor.locator('[data-proposal]').click()
     editor.locator('[data-scan-event="e1"]').click()
     adopt_regions_if_needed(editor)
+    assert 'has-suggestions' not in editor.locator('#mosaicLiveCanvas').get_attribute('class')
     pixel="(x,y)=>document.querySelector('#mosaicLiveCanvas').getContext('2d').getImageData(x,y,1,1).data[0]"
     for style in ('blur','pixel'):
         editor.locator('#mosaicLiveStyle').select_option(style)
@@ -542,6 +563,11 @@ def test_fixed_region_live_preview_changes_pixels_without_render(editor):
     editor.locator('#mosaicCompare').click()
     editor.locator('#mosaicLiveCanvas').wait_for(state='visible')
     assert not editor.evaluate("calls.some(c=>c.url.endsWith('/render')&&c.body)")
+
+    editor.locator('[data-target-remove]').click()
+    editor.locator('#mosaicLiveCanvas.has-suggestions').wait_for(state='visible')
+    outside=[editor.evaluate(f"({pixel})({x},48)") for x in (80,81,82,83)]
+    assert max(outside)>190 and min(outside)<65, 'cancelled masks restore original pixels'
 
 
 def test_reopen_while_source_preparing_shares_request(editor):
@@ -1134,7 +1160,7 @@ def test_adjust_sidebar_does_not_shrink_preview(editor):
     assert abs(before['height']-after['height'])<1
     assert editor.locator('#mosaicAdjust').bounding_box()['x']>after['x']+after['width']
     assert editor.locator('.mosaic-scan-section').is_visible()
-    assert editor.locator('#mosaicConfirm').is_visible()
+    assert editor.locator('#mosaicConfirm').is_hidden()  # No standalone recognition candidates yet.
     assert editor.locator('.mosaic-scan-section').is_visible()
 
 
@@ -1677,6 +1703,15 @@ def test_navigation_clears_selection_only_outside_half_open_clip_range(editor,na
         editor.mouse.click(timeline['x']+timeline['width']*.8,timeline['y']+timeline['height']-2)
     assert editor.locator('[data-scan-event="e1"]').get_attribute('aria-pressed')=='false'
     assert editor.locator('#mosaicOverlay').is_hidden()
+    assert editor.locator('#mosaicConfirm').is_hidden()
+    assert not editor.locator('#mosaicAdjust').evaluate('el=>el.open')
+    assert editor.locator('#mosaicStart').is_hidden()
+    assert editor.locator('#mosaicEnd').is_hidden()
+    assert editor.locator('#mosaicRegionTools').is_hidden()
+    assert editor.locator('#mosaicCandidates button').count()==0
+    assert editor.locator('#mosaicBoxX').input_value()==''
+    assert editor.locator('#mosaicStart').input_value()=='00:00:00'
+    assert editor.locator('#mosaicEnd').input_value()=='00:09:29'
     assert active_count(editor)==1
     assert editor.locator('#mosaicStatus').inner_text()=='点击片段查看画面，选择删除或打码；不选则不处理。'
 
@@ -1779,12 +1814,105 @@ def test_drawing_on_deleted_ai_segment_adopts_mask_and_clears_deletion(editor):
     assert 'mosaic' in editor.locator('[data-timeline-event="e1"]').get_attribute('class')
 
 
-def test_time_only_edit_keeps_unprocessed_ai_segment_off_timeline(editor):
+def test_time_only_edit_keeps_unprocessed_ai_segment_as_timeline_suggestion(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').click()
     editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicStart').dispatch_event('change')
     draft=workbench_draft(editor)
     assert draft['clipEdits']['e1']['start']==40
     assert draft['targets']==[] and draft['deletions']==[]
-    assert editor.locator('[data-timeline-event]').count()==0
+    assert editor.locator('[data-timeline-event]').count()==1
+    assert 'suggestion' in editor.locator('[data-timeline-event]').get_attribute('class')
     assert editor.locator('#mosaicStatus').inner_text()=='时间已更新。'
+
+
+def test_timeline_contains_all_states_and_suggestions_only_select(editor):
+    scan_result(editor)
+    editor.evaluate("scanJob.events=Array.from({length:3},(_,i)=>({...scanJob.events[0],id:'e'+(i+1),start:30+i*90,end:60+i*90,seed_frame:45+i*90}))")
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.wait_for_function("document.querySelectorAll('[data-timeline-event]').length===3")
+    assert editor.locator('[data-timeline-event]').count()==editor.locator('[data-mosaic-card]').count()
+    suggestion=editor.locator('[data-timeline-event="e2"]')
+    assert 'suggestion' in suggestion.get_attribute('class')
+    assert 'AI 建议 · 未处理' in suggestion.get_attribute('aria-label')
+    assert 'AI 建议 · 未处理' in suggestion.get_attribute('title')
+    assert suggestion.evaluate("el=>getComputedStyle(el).borderTopStyle")=='dashed'
+    assert suggestion.locator('[data-edge]').count()==0
+    suggestion.click()
+    assert editor.locator('[data-scan-event="e2"]').get_attribute('aria-pressed')=='true'
+    assert editor.locator('#mosaicReviewInfo').inner_text()=='片段 2 / 3'
+    # Even a drag across the suggestion must not write a range edit.
+    bounds=suggestion.bounding_box()
+    editor.mouse.move(bounds['x']+2,bounds['y']+bounds['height']/2);editor.mouse.down()
+    editor.mouse.move(bounds['x']+35,bounds['y']+bounds['height']/2,steps=3);editor.mouse.up()
+    assert suggestion.get_attribute('data-start')=='120'
+    assert suggestion.get_attribute('data-end')=='150'
+    assert workbench_draft(editor)['clipEdits']=={}
+    editor.locator('[data-proposal="e1:0"]').click()
+    editor.locator('[data-event-delete="e3"]').click()
+    assert editor.locator('[data-timeline-event]').count()==3
+    assert 'mosaic' in editor.locator('[data-timeline-event="e1"]').get_attribute('class')
+    assert '打码' in editor.locator('[data-timeline-event="e1"]').get_attribute('title')
+    assert 'deletion' in editor.locator('[data-timeline-event="e3"]').get_attribute('class')
+    assert '删除' in editor.locator('[data-timeline-event="e3"]').get_attribute('aria-label')
+    assert 'suggestion' in suggestion.get_attribute('class')
+
+
+def test_manual_segment_inserts_between_ai_segments_and_navigation_uses_time_order(editor):
+    scan_result(editor)
+    editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:210,end:270,seed_frame:240})")
+    open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.wait_for_function("document.querySelectorAll('[data-mosaic-card]').length===2")
+    editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicStart').fill('00:04:00');editor.locator('#mosaicEnd').fill('00:05:29')
+    editor.locator('#mosaicAddSubmit').click()
+    ids=editor.locator('[data-mosaic-card]').evaluate_all('cards=>cards.map(c=>c.dataset.mosaicCard)')
+    manual=ids[1]
+    assert ids[0]=='e1' and manual.startswith('manual-') and ids[2]=='e2'
+    assert editor.locator('[data-timeline-event]').count()==3
+    assert 'deletion' in editor.locator(f'[data-timeline-event="{manual}"]').get_attribute('class')
+    editor.locator('[data-scan-event="e1"]').click()
+    assert editor.locator('#mosaicReviewInfo').inner_text()=='片段 1 / 3'
+    editor.locator('#mosaicNextEvent').click()
+    assert editor.locator(f'[data-scan-event="{manual}"]').get_attribute('aria-pressed')=='true'
+    assert editor.locator('#mosaicReviewInfo').inner_text()=='片段 2 / 3'
+    editor.locator('#mosaicNextEvent').click()
+    assert editor.locator('[data-scan-event="e2"]').get_attribute('aria-pressed')=='true'
+    assert editor.locator('#mosaicReviewInfo').inner_text()=='片段 3 / 3'
+    editor.locator('#mosaicPrevEvent').click()
+    assert editor.locator(f'[data-scan-event="{manual}"]').get_attribute('aria-pressed')=='true'
+    # Cancelling a manual action also leaves a selectable unprocessed timeline block.
+    editor.locator(f'[data-event-delete="{manual}"]').click()
+    assert 'suggestion' in editor.locator(f'[data-timeline-event="{manual}"]').get_attribute('class')
+    assert '手动片段 · 未处理' in editor.locator(f'[data-timeline-event="{manual}"]').get_attribute('title')
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    assert editor.locator('[data-mosaic-card]').evaluate_all('cards=>cards.map(c=>c.dataset.mosaicCard)')==ids
+
+
+def test_playing_unadopted_candidate_draws_dashes_without_effect(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.locator('#mosaicOverlay').wait_for(state='visible')
+    # Exercise the playing-video draw path deterministically, using the loaded frame as video pixels.
+    editor.evaluate('''() => {
+      const video=$('mosaicSource'),ctx=$('mosaicLiveCanvas').getContext('2d'),draw=ctx.drawImage.bind(ctx);
+      ctx.drawImage=(source,...args)=>draw(source===video?$('mosaicFrame'):source,...args);
+      Object.defineProperty(video,'paused',{configurable:true,value:false});
+      Object.defineProperty(video,'readyState',{configurable:true,value:4});
+      Object.defineProperty(video,'currentTime',{configurable:true,value:2});
+      window.strokes=[];const stroke=ctx.strokeRect.bind(ctx);
+      ctx.strokeRect=(...args)=>{strokes.push({dash:ctx.getLineDash(),color:ctx.strokeStyle,box:args});stroke(...args)};
+      $('mosaicFrame').hidden=true;video.dispatchEvent(new Event('timeupdate'));
+    }''')
+    assert editor.locator('#mosaicOverlay').is_hidden()
+    assert editor.locator('#mosaicLiveCanvas.has-suggestions').is_visible()
+    assert editor.evaluate("strokes.some(s=>s.dash.join(',')==='6,4' && s.color==='#f2c94c' && s.box.join(',')==='40,24,80,48')")
+    assert editor.evaluate('''() => {
+      const original=document.createElement('canvas');original.width=160;original.height=96;
+      original.getContext('2d').drawImage($('mosaicFrame'),0,0);
+      const a=$('mosaicLiveCanvas').getContext('2d').getImageData(50,34,60,28).data;
+      const b=original.getContext('2d').getImageData(50,34,60,28).data;
+      return a.every((v,i)=>v===b[i]);
+    }''')
+    assert active_count(editor)==0
+    editor.evaluate("() => {for(const key of ['paused','readyState','currentTime'])delete $('mosaicSource')[key]}")
