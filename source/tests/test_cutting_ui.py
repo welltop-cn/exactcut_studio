@@ -302,6 +302,47 @@ def test_cancel_rescan_keeps_current_plan(editor):
     assert not editor.evaluate("calls.some(c=>c.url.endsWith('/scan'))")
 
 
+def reopen_without_scan_record(editor):
+    editor.locator('#cutClose').click()
+    editor.evaluate("window.scanState={enabled:true,report:null};calls.length=0;window.confirms=0;window.confirm=()=>{confirms++;return true}")
+    editor.locator('[data-open-cut]').evaluate('(el)=>el.click()')
+    editor.locator('#cutEditor').wait_for(state='visible')
+    editor.wait_for_function("calls.some(c=>c.url.endsWith('/scan/standard'))&&!document.getElementById('cutScan').disabled")
+    editor.evaluate('window.confirms=0')  # Opening may ask about the restored draft; only scan confirms count.
+
+
+def test_open_only_reads_scan_record_and_never_submits(editor):
+    reopen_without_scan_record(editor)
+    editor.wait_for_timeout(200)
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/scan'))")
+    assert editor.locator('#cutScan').inner_text()=='识别整段视频'
+    assert '识别整段视频' in editor.locator('#cutScanStatus').inner_text()
+    assert '识别中' not in editor.locator('#cutScanStatus').inner_text()+editor.locator('#cutScan').inner_text()
+
+
+def test_first_scan_is_one_click_without_reset_confirm(editor):
+    reopen_without_scan_record(editor)
+    editor.evaluate("window.scanState={enabled:true,report:{status:'completed',risk_events:[{start_frame:30,end_frame:60,category:'建议'}]}}")
+    editor.locator('#cutScan').click()
+    editor.wait_for_function("document.getElementById('cutScan').textContent==='重新识别'")
+    posts=editor.evaluate("calls.filter(c=>c.url.endsWith('/scan')).map(c=>c.body)")
+    assert posts==[{'policy':'standard','force':False,'reset_at':''}]
+    assert editor.evaluate('confirms')==0
+    editor.locator('#cutScan').click()
+    editor.wait_for_function("calls.filter(c=>c.url.endsWith('/scan')).length===2")
+    assert editor.evaluate('confirms')==1
+
+
+def test_existing_scan_record_is_restored_on_open(editor):
+    editor.locator('#cutClose').click()
+    editor.evaluate("window.scanState={enabled:true,report:{status:'completed',risk_events:[{start_frame:30,end_frame:60,category:'已有建议'}]}};calls.length=0")
+    editor.locator('[data-open-cut]').evaluate('(el)=>el.click()')
+    editor.locator('#cutRanges li').first.wait_for()
+    assert '已有建议' in editor.locator('#cutRanges').inner_text()
+    assert editor.locator('#cutScan').inner_text()=='重新识别'
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/scan'))")
+
+
 def test_new_window_sends_current_reset_marker(editor):
     editor.locator('#cutClose').click()
     editor.wait_for_function("!document.querySelector('#cutSource').hasAttribute('src')")
