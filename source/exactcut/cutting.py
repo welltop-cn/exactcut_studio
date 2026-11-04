@@ -136,13 +136,18 @@ def probe_source(source):
         if abs(start) > float(tick) or any(s.get('rotation', 0) % 360 for s in video.get('side_data_list', [])):
             raise CutError('暂不支持带时间偏移或旋转标记的视频，请使用项目生成的成片')
         with diagnostics.span('editor.prepare.probe_timestamps', private_error=True):
-            raw = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_frames',
-                       '-show_entries', 'frame=best_effort_timestamp_time', '-of', 'json', str(source)], 60)
-        frames = json.loads(raw)['frames']
-        if not frames or any(abs(Fraction(f['best_effort_timestamp_time']) - Fraction(n, 1)/rate)
-                             > max(tick*2, Fraction(2, 1000000)) for n, f in enumerate(frames)):
+            # Container packet timestamps are what the decoder presents; reading them
+            # needs no decode. Decode errors are caught by the full -xerror decode of outputs.
+            raw = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_packets',
+                       '-show_entries', 'packet=pts,flags', '-of', 'json', str(source)], 60, light=True)
+        packets = json.loads(raw)['packets']
+        if any('D' in p.get('flags', '') or p.get('pts') in (None, 'N/A') for p in packets):
+            raise CutError('视频时间戳不连续，无法可靠剪切')
+        times = sorted(Fraction(int(p['pts']))*tick for p in packets)
+        if not times or any(abs(t - Fraction(n, 1)/rate) > max(tick*2, Fraction(2, 1000000))
+                            for n, t in enumerate(times)):
             raise CutError('暂不支持可变帧率视频，请使用项目生成的恒定帧率成片')
-        count = len(frames)
+        count = len(times)
         if abs(duration - float(count/rate)) > float(1/rate):
             raise CutError('视频时间戳不连续，无法可靠剪切')
         if audio and (abs(float(audio['start_time'])) > .05
