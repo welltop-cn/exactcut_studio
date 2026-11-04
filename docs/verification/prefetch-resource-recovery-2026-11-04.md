@@ -21,6 +21,7 @@ Project `0d5153efa85e4a1cbce617f4309c55b2` (101693) was a different case: EP7 wa
 
 1. Prefetch stage fingerprints bind the job's existing immutable `project` and `episodes` arguments. The editable global `source-prefetch.json` no longer invalidates that job's resource-wait evidence. The child still reads the current desired plan before every episode and skips cancelled/unreferenced work; consumers still validate source signatures and frame indexes.
 2. Requeuing a prefetch resource wait does not rewrite the project's runtime to production `queued`. It remains an editable draft. Normal production fetch/render/upload/poll fingerprints and runtime transitions are unchanged.
+3. Recovery also recognizes output-free resource waits written with the previous fingerprint algorithm. This fallback requires version 1, waiting_resource/75, a valid seal, the same fingerprint recorded in the job, a finite positive retry time, and a current plan whose drama and episodes authorize the job. The old plan hash must still match. It never accepts old done results, publications or artifacts. Missing/malformed plans and changed job scope are rejected. Requeue clears the old input fingerprint; the next attempt always uses the new scoped fingerprint. Old evidence whose plan has already changed remains invalid.
 
 No durable fields, schema version, dependencies or concurrency settings are added. The queue-of-ten admission limitation in the deployed release is already removed on the `main` base and is not reimplemented here.
 
@@ -28,14 +29,22 @@ No durable fields, schema version, dependencies or concurrency settings are adde
 
 The initial regression drives the actual sources HTTP API, the stage child wrapper, resource deferral evidence and scheduler completion. The unmodified base marks the task `failed`; after the fingerprint fix alone, it requeues but incorrectly changes the draft runtime to `queued`. Both assertions pass after the two targeted changes.
 
-Seven new cases cover expanding and shrinking the desired episode set through normal child completion and restart recovery, cancelling then resuming as skipped without downloads, and rejecting changed job project/episode arguments.
+Twenty-seven new cases cover expanding and shrinking the desired episode set through normal child completion and restart recovery, cancelling then resuming as skipped without downloads, and rejecting changed job project/episode arguments. They also cover previous-version waiting records through both completion paths, refusing old success/artifact/publication or corrupt evidence, missing/malformed plans, and an actual `start_batch` confirmation while prefetch waits. The confirmation case verifies that the resumed prefetch skips downloading and preserves the confirmed manifest and production runtime byte for byte.
+
+The initial cross-version test failed on `4c1b1ec`: an unchanged plan plus valid previous-version wait became `interrupted`. Both reviewers confirmed this regression before the compatibility fix; the bounded legacy fallback fixes it without accepting completed outputs.
 
 Command, from `source` with the configured Python 3.12:
 
 ```text
-python3.12 -m pytest -m '' tests/test_prefetch_resource_recovery.py tests/test_source_prefetch.py tests/test_concurrency_recovery.py tests/test_concurrency.py tests/test_phase1_recovery.py tests/test_frame_contention.py tests/test_source_frame_timecode.py
+python3.12 -m pytest -m '' -ra --junitxml=.dev-state/prefetch-recovery-verification/review-regression.xml tests/test_prefetch_resource_recovery.py tests/test_source_prefetch.py tests/test_concurrency_recovery.py tests/test_concurrency.py tests/test_phase1_recovery.py tests/test_frame_contention.py tests/test_source_frame_timecode.py tests/test_intra_project_prefetch.py tests/test_managed_scheduler_verification.py tests/test_round1_evidence.py tests/test_round2_evidence.py
 ```
 
-Result: **115 passed in 25.49 seconds**. The explicit empty marker selector includes relevant integration/UI cases normally excluded by the repository default. Tests use independent fixtures; no production credentials or media were copied into development.
+Result after the review fixes: **171 passed in 47.35 seconds**, with three multiprocessing fork deprecation warnings from existing managed-verification tests. The explicit empty marker selector includes relevant integration/UI cases normally excluded by the repository default. Tests use independent fixtures; no production credentials or media were copied into development.
 
-Private logs/JUnit from the earlier 113-case run are in `source/.dev-state/prefetch-recovery-verification/`; the final 115-case rerun includes two additional restart-recovery parameters and its result is recorded above. Full repository regression and release checks remain required before a future production release.
+The final JUnit evidence is `source/.dev-state/prefetch-recovery-verification/review-regression.xml`. Full repository regression and release checks remain required before a future production release.
+
+## Independent review
+
+The user-selected D3 profile independently ran the original 115-case suite and 36 surrounding evidence/managed-verification tests. Initial review missed the cross-version fingerprint regression; the main agent reproduced it and D3 confirmed the failing test. Both agreed on the bounded, sealed resource-wait compatibility path and the additional confirmation boundary test. D3 also corrected its initial claims: ordinary `verified` does not generally check a seal, and `current_managed_verification` does not guard ordinary prefetch callbacks. The new compatibility path explicitly checks the seal itself. `episodes=None` remains distinct from an empty list rather than being silently normalized.
+
+Final implementation review is pending D3 confirmation; no merge or release is authorized by this record.
