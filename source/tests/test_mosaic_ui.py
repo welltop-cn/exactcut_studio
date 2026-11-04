@@ -386,6 +386,23 @@ def test_clip_list_scrolls_without_moving_timeline(editor):
     assert editor.locator('#mosaicTimeline').bounding_box() == before
 
 
+def test_deletion_overlays_thumbnails_and_cancel_restores_strip(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-event-delete="e1"]').click()
+    deletion=editor.locator('[data-timeline-event="e1"]')
+    strip=editor.locator('#mosaicTimelineThumbs').bounding_box()
+    box=deletion.bounding_box()
+    assert abs(box['y']-strip['y'])<1
+    assert abs(box['height']-strip['height'])<1
+    assert editor.locator('#mosaicTimelineBlocks [data-timeline-event]').count()==0
+    assert '将删除' in deletion.inner_text()
+    deletion.click()
+    assert editor.locator('#mosaicStart').is_visible()
+    editor.locator('[data-event-delete="e1"]').click()
+    assert editor.locator('[data-timeline-event]').count()==0
+    assert editor.locator('#mosaicTimelineThumbs').bounding_box()==strip
+
+
 def test_only_chosen_actions_show_timeline_and_mosaic_inspector(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').click()

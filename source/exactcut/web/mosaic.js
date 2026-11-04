@@ -305,7 +305,7 @@
     addingClip=false;
     const original=allEvents().find(e=>e.id===id);if(!original)return;const event={...original,...eventRange(original)};motion=id.startsWith('manual-')?'fixed':'tracked';
     const deletion=deletions.find(t=>belongs(t,event));
-    if(deletion){resetCandidate();scanEvent=id;$('mosaicStart').value=clock(deletion.start);$('mosaicEnd').value=clock(deletion.end-1);seek(deletion.start,true);return;}
+    if(deletion){resetCandidate();scanEvent=id;$('mosaicAdjust').open=true;$('mosaicStart').value=clock(deletion.start);$('mosaicEnd').value=clock(deletion.end-1);seek(deletion.start,true);return;}
     const savedIndex=targets.findIndex(t=>belongs(t,event)&&!t.removed);
     if(savedIndex>=0){viewTarget(savedIndex,id);return;}
     resetCandidate();scanEvent=id;
@@ -1033,12 +1033,18 @@
     const items=timelineItems(),signature=JSON.stringify([meta().frame_count,items,scanEvent,editing,editLocked()]);
     if(signature!==timelineSignature){
       timelineSignature=signature;const ends=[];
-      $('mosaicTimelineBlocks').innerHTML=items.sort((a,b)=>a.start-b.start).map(item=>{
-        let row=ends.findIndex(end=>end<=item.start);if(row<0)row=ends.length;ends[row]=item.end;
+      const blocks=[],deletionOverlays=[];
+      for(const item of items.sort((a,b)=>a.start-b.start)){
+        let row=0;
+        if(item.kind!=='deletion'){row=ends.findIndex(end=>end<=item.start);if(row<0)row=ends.length;ends[row]=item.end;}
         const selected=item.event?scanEvent===item.id:editing===item.index;
-        return `<button type="button" class="mosaic-timeline-block ${item.kind} ${selected?'selected':''}" data-timeline-event="${esc(item.id)}" data-start="${item.start}" data-end="${item.end}" aria-label="${esc(item.label)} ${clock(item.start)}–${clock(item.end-1)}" aria-pressed="${selected}" style="left:${100*item.start/meta().frame_count}%;width:${100*(item.end-item.start)/meta().frame_count}%;top:${row*32+3}px"><i data-edge="start"></i>${item.kind==='deletion'?'删除':item.kind==='suggestion'?'待确认':'打码'} · ${esc(item.label)}<i data-edge="end"></i></button>`;
-      }).join('');
-      const blockHeight=Math.max(34,ends.length*32+6);
+        const label=item.kind==='deletion'?'将删除':'打码';
+        const html=`<button type="button" class="mosaic-timeline-block ${item.kind} ${selected?'selected':''}" data-timeline-event="${esc(item.id)}" data-start="${item.start}" data-end="${item.end}" aria-label="${label} ${esc(item.label)} ${clock(item.start)}–${clock(item.end-1)}" aria-pressed="${selected}" style="left:${100*item.start/meta().frame_count}%;width:${100*(item.end-item.start)/meta().frame_count}%;top:${item.kind==='deletion'?0:row*32+3}px"><i data-edge="start"></i>${label}${item.kind==='deletion'?'':' · '+esc(item.label)}<i data-edge="end"></i></button>`;
+        (item.kind==='deletion'?deletionOverlays:blocks).push(html);
+      }
+      $('mosaicTimelineBlocks').innerHTML=blocks.join('');
+      $('mosaicTimelineDeletions').innerHTML=deletionOverlays.join('');
+      const blockHeight=ends.length?ends.length*32+6:0;
       $('mosaicTimelineBlocks').style.height=blockHeight+'px';
       $('mosaicWorkspace').style.setProperty('--mosaic-timeline-height',Math.min(219,25+blockHeight+58+2)+'px');
       $('mosaicTimelineRuler').innerHTML=Array.from({length:8},(_,i)=>{const f=Math.floor(i*meta().frame_count/8);return `<span style="left:${i*12.5}%">${clock(f)}</span>`;}).join('');

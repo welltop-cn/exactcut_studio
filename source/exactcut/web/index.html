@@ -393,9 +393,11 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 #mosaicTimelineTracks{position:relative;flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;touch-action:none;user-select:none}
 #mosaicTimelineRuler{height:25px;position:relative;border-bottom:1px solid #33424d;color:#9babb6;font:10px ui-monospace,monospace}
 #mosaicTimelineRuler span{position:absolute;top:0;padding:4px;border-left:1px solid #465964;white-space:nowrap}
-#mosaicTimelineBlocks{position:relative;min-height:34px}#mosaicDialog .mosaic-timeline-block{position:absolute;height:27px;padding:4px 9px;border:1px solid #46dac1;border-radius:5px;background:#237d70;color:#e1fff8;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;font-size:11px;touch-action:none;min-width:3px}
+#mosaicTimelineBlocks{position:relative;min-height:0}#mosaicDialog .mosaic-timeline-block{position:absolute;height:27px;padding:4px 9px;border:1px solid #46dac1;border-radius:5px;background:#237d70;color:#e1fff8;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;text-align:left;font-size:11px;touch-action:none;min-width:3px}
 #mosaicDialog .mosaic-timeline-block.suggestion{background:#28343d;color:#a9b7c1;border:1px dashed #6e8594}
-#mosaicDialog .mosaic-timeline-block.deletion{background:repeating-linear-gradient(135deg,#9e3e51,#9e3e51 8px,#743243 8px,#743243 16px);border-color:#ed7b8b}
+#mosaicTimelineFilmstrip{position:relative;height:58px}#mosaicTimelineDeletions{position:absolute;inset:0;pointer-events:none}
+#mosaicDialog .mosaic-timeline-block.deletion{height:100%;border-radius:0;pointer-events:auto;background:repeating-linear-gradient(135deg,rgba(177,42,61,.42),rgba(177,42,61,.42) 7px,rgba(12,13,18,.64) 7px,rgba(12,13,18,.64) 14px);border-color:#ed7b8b;color:#fff;text-shadow:0 1px 3px #000}
+#mosaicDialog .mosaic-timeline-block.deletion.selected{outline-offset:-2px;z-index:2}.mosaic-timeline-block.deletion [data-edge]{border-color:#ffb3be}
 #mosaicDialog .mosaic-timeline-block.selected{outline:2px solid #eef6fa;outline-offset:1px}
 .mosaic-timeline-block [data-edge]{position:absolute;top:0;bottom:0;width:9px;cursor:ew-resize;z-index:1}.mosaic-timeline-block [data-edge=start]{left:0;border-left:3px solid #c7eee6}.mosaic-timeline-block [data-edge=end]{right:0;border-right:3px solid #c7eee6}
 #mosaicTimelineThumbs{height:58px;display:flex;background:#0b1116;overflow:hidden}#mosaicTimelineThumbs canvas{flex:1;min-width:0;height:58px;object-fit:cover;border-right:1px solid #36434d}
@@ -465,7 +467,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 
 
     </aside>
-    <section id="mosaicTimeline" aria-label="剪切打码时间轴"><div id="mosaicTimelineTracks"><div id="mosaicTimelineRuler"></div><div id="mosaicTimelineBlocks"></div><div id="mosaicTimelineThumbs" aria-label="原片缩略图"></div><div id="mosaicTimelineHead" aria-hidden="true"></div></div></section>
+    <section id="mosaicTimeline" aria-label="剪切打码时间轴"><div id="mosaicTimelineTracks"><div id="mosaicTimelineRuler"></div><div id="mosaicTimelineBlocks"></div><div id="mosaicTimelineFilmstrip"><div id="mosaicTimelineThumbs" aria-label="原片缩略图"></div><div id="mosaicTimelineDeletions"></div></div><div id="mosaicTimelineHead" aria-hidden="true"></div></div></section>
   </div>
   <section id="mosaicBatchDialog" hidden aria-label="处理结果"><div class="processing-compare"><button id="mosaicBatchBefore" hidden>处理前</button><button id="mosaicBatchAfter" hidden>处理后</button></div><p id="mosaicResultLabel" role="status" hidden></p><p id="mosaicBatchStatus" role="status"></p><p id="mosaicBatchVersion" class="hint"></p><video id="mosaicBatchVideo" controls playsinline hidden></video></section>
   <div id="mosaicProcessing" hidden role="status"><span class="processing-spinner" aria-hidden="true"></span><div><strong id="mosaicProcessingText"></strong><small id="mosaicProcessingHint">生成中暂不可编辑；停止生成后可修改。关闭后后台继续处理。</small></div></div><footer class="mosaic-footer mosaic-batch-footer"><div><strong id="mosaicBatchHint">先选择删除或打码的片段</strong><small>生成新视频，原视频保留</small></div><button id="mosaicBatchClose" hidden>返回调整</button><button id="mosaicStop" hidden>停止生成</button><button id="mosaicDiscard">放弃本次处理</button><button id="mosaicBatchView" hidden>查看生成结果</button><button id="mosaicBatchStart" disabled>生成处理后视频</button><a id="mosaicBatchDownload" hidden download>下载视频</a><button id="mosaicReplace" hidden>替换项目成片</button></footer>
