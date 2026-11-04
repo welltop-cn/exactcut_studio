@@ -80,7 +80,7 @@ def test_saved_tracking_blocks_with_visible_reason_until_explicit_mode_change(ed
     assert editor.locator('#mosaicBatchStart').get_attribute('data-generation-lock') is None
     assert editor.locator('#mosaicScan').is_enabled()
     assert '跟随目标当前不可用' in editor.locator('#mosaicBatchHint').inner_text()
-    editor.locator('[data-edit-event]').click()
+    editor.locator('[data-scan-event]').click()
     assert editor.locator('#mosaicMotion').input_value()=='tracked'
     assert editor.locator('#mosaicMotion option[value="tracked"]').evaluate('el=>el.disabled')
     editor.locator('#mosaicMotion').select_option('fixed')

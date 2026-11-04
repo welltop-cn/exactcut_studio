@@ -140,7 +140,7 @@
     paintEffects();paintScan();paintBatch();
     drawOverlay();paintTimeline();paintLiveControls();
   }
-  const mutationSelector='[data-edit-event],[data-edit-target],[data-restore-clip],.mosaic-card-checks button,[data-remove-clip],#mosaicUndoRemove,#mosaicAddClip,#mosaicClear,#mosaicScan,#mosaicAdjustToggle,#mosaicAdjust button,#mosaicAdjust input,#mosaicAdjust select,#mosaicEffects select,#mosaicEffectSave,#mosaicEffectPreview,[data-effect-target]';
+  const mutationSelector='[data-restore-clip],.mosaic-card-checks button,[data-remove-clip],#mosaicUndoRemove,#mosaicAddClip,#mosaicClear,#mosaicScan,#mosaicAdjustToggle,#mosaicAdjust button,#mosaicAdjust input,#mosaicAdjust select,#mosaicEffects select,#mosaicEffectSave,#mosaicEffectPreview,[data-effect-target]';
   for(const type of ['click','change','input'])dialog.addEventListener(type,e=>{
     if(editLocked()&&e.target.closest(mutationSelector)){e.preventDefault();e.stopImmediatePropagation();}
   },true);
@@ -221,7 +221,7 @@
     }
     if(scanLoading&&events.length)message='识别在后台继续，已有片段可编辑，结果完成后可人工复核。';
     $('mosaicScanStatus').textContent=EditorBusy.message(message);$('mosaicScanStatus').title=EditorBusy.message(message);$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
-    const targetRow=(t,i)=>`<div class="mosaic-event-card"><button data-target-view="${i}"><strong>${clock(t.start)}–${clock(t.end-1)} · ${esc(t.label)}</strong></button><div class="mosaic-card-actions"><div class="mosaic-card-checks"><button data-target-remove="${i}" aria-label="打码" role="checkbox" aria-checked="${t.adopted!==false}" aria-pressed="${t.adopted!==false}" ${t.adopted===false&&activeCount()>=8?'disabled':''}>打码</button></div><div class="mosaic-clip-tools"><button data-edit-target="${i}">编辑</button></div></div></div>`;
+    const targetRow=(t,i)=>`<div class="mosaic-event-card"><button data-target-view="${i}"><strong>${clock(t.start)}–${clock(t.end-1)} · ${esc(t.label)}</strong></button><div class="mosaic-card-actions"><div class="mosaic-card-checks"><button data-target-remove="${i}" aria-label="打码" role="checkbox" aria-checked="${t.adopted!==false}" aria-pressed="${t.adopted!==false}" ${t.adopted===false&&activeCount()>=8?'disabled':''}>打码</button></div></div></div>`;
     const grouped=new Set();
     const html=events.map(e=>{
       const allRecords=targets.map((t,i)=>({t,i})).filter(({t})=>belongs(t,e));
@@ -235,7 +235,7 @@
         :records.length?`<button data-target-remove="${records[0].i}" aria-label="打码" role="checkbox" aria-checked="${adopted>0}" aria-pressed="${adopted>0}" ${!adopted&&activeCount()>=8?'disabled':''}>打码</button>`
         :suggestions.length?`<button data-proposal="${esc(e.id)}:${suggestions[0].i}" aria-label="打码" role="checkbox" aria-checked="false" aria-pressed="false" ${activeCount()>=8?'disabled':''}>打码</button>`
         :`<button data-event-draw="${esc(e.id)}" aria-label="打码" role="checkbox" aria-checked="false" aria-pressed="false" title="先框选需要遮挡的区域">打码</button>`;
-      return `<div class="mosaic-event-card ${scanEvent===e.id?'selected':''}" data-mosaic-card="${esc(e.id)}" ${e.id.startsWith('manual-')?'data-manual-card':''}>${e.id.startsWith('manual-')?`<button data-remove-clip="${esc(e.id)}" class="mosaic-remove-clip" aria-label="移除手动片段" title="移除片段">×</button>`:''}<button data-scan-event="${esc(e.id)}" ${records.length?`data-target-view="${records[0].i}"`:''} aria-pressed="${scanEvent===e.id}"><strong>${clock(displayRange.start)}–${clock(displayRange.end-1)}</strong><small>${esc(e.label)}${total?'':' · 打码需框选'}</small><small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-actions"><div class="mosaic-card-checks" role="group" aria-label="片段处理方式"><button data-event-delete="${esc(e.id)}" aria-label="删除" role="checkbox" aria-checked="${removed}" aria-pressed="${removed}">删除</button>${toggle}</div><div class="mosaic-clip-tools"><button data-edit-event="${esc(e.id)}">编辑</button></div>${!e.id.startsWith('manual-')?`<details class="mosaic-clip-menu"><summary aria-label="更多片段操作">⋯</summary><button data-restore-clip="${esc(e.id)}">恢复识别结果</button></details>`:''}</div></div>`;
+      return `<div class="mosaic-event-card ${scanEvent===e.id?'selected':''}" data-mosaic-card="${esc(e.id)}" ${e.id.startsWith('manual-')?'data-manual-card':''}>${e.id.startsWith('manual-')?`<button data-remove-clip="${esc(e.id)}" class="mosaic-remove-clip" aria-label="移除手动片段" title="移除片段">×</button>`:''}<button data-scan-event="${esc(e.id)}" ${records.length?`data-target-view="${records[0].i}"`:''} aria-pressed="${scanEvent===e.id}"><strong>${clock(displayRange.start)}–${clock(displayRange.end-1)}</strong><small>${esc(e.label)}${total?'':' · 打码需框选'}</small><small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-actions"><div class="mosaic-card-checks" role="group" aria-label="片段处理方式"><button data-event-delete="${esc(e.id)}" aria-label="删除" role="checkbox" aria-checked="${removed}" aria-pressed="${removed}">删除</button>${toggle}</div>${!e.id.startsWith('manual-')?`<details class="mosaic-clip-menu"><summary aria-label="更多片段操作">⋯</summary><button data-restore-clip="${esc(e.id)}">恢复识别结果</button></details>`:''}</div></div>`;
 
     }).join('')+targets.map((t,i)=>t.removed||grouped.has(i)||(scanReport?.status==='completed'&&t.adopted===false&&Number.isInteger(t.originStart)&&!t.eventId)?'':targetRow(t,i,true)).join('');
     if($('mosaicScanEvents').innerHTML!==html)$('mosaicScanEvents').innerHTML=html;
@@ -309,7 +309,7 @@
     const savedIndex=targets.findIndex(t=>belongs(t,event)&&!t.removed);
     if(savedIndex>=0){viewTarget(savedIndex,id);return;}
     resetCandidate();scanEvent=id;
-    $('mosaicStart').value=clock(event.start);$('mosaicEnd').value=clock(event.end-1);$('mosaicAdjust').open=event.status==='needs_review'||targets.some(t=>belongs(t,event)&&t.adopted!==false)||deletions.some(t=>belongs(t,event));
+    $('mosaicStart').value=clock(event.start);$('mosaicEnd').value=clock(event.end-1);$('mosaicAdjust').open=true;
     candidates=event.candidates.filter(c=>!targets.some(t=>belongs(t,original)&&t.removed&&t.proposal===c.id)).map(c=>({...c}));selected=candidates[0]?.id??null;
     const seed=event.status==='localized'?Math.max(event.start,Math.min(event.end-1,event.seed_frame)):Math.floor((event.start+event.end-1)/2);
     seek(seed,true);
@@ -456,7 +456,7 @@
   dialog.addEventListener('close',()=>{if(dialog.open)return;stopWorkspacePreview();detachClipPreview();previewOperation=null;$('mosaicTrackDialog').close();releasePreparation?.();releasePreparation=null;scanController?.abort();sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;epoch++;token++;scanToken++;controller?.abort();clearTimeout(timer);context=null;clearRemovedClip();$('mosaicBatchVideo').pause();pausePlayback();video.removeAttribute('src');video.load();image.removeAttribute('src');if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=null;});
   document.addEventListener('visibilitychange',()=>{if(document.hidden){releasePreparation?.();scanController?.abort();controller?.abort();clearTimeout(timer);}else if(context&&dialog.open&&video.paused&&!resultMode&&ready!==wanted){loadFrame();}});
   $('mosaicScan').onclick=()=>scanVideo(!scanError&&scanReport?.status!=='running');
-  $('mosaicScanEvents').onclick=e=>{const b=e.target.closest('[data-scan-event]');if(b)viewScanEvent(b.dataset.scanEvent);};
+  $('mosaicScanEvents').onclick=e=>{const b=e.target.closest('[data-scan-event]'),card=e.target.closest('[data-mosaic-card]');if(b)viewScanEvent(b.dataset.scanEvent);else if(card&&!e.target.closest('button,summary,details'))viewScanEvent(card.dataset.mosaicCard);};
   $('mosaicScanMarkers').onclick=e=>{const b=e.target.closest('[data-scan-marker]');if(b)viewScanEvent(b.dataset.scanMarker);};
   function nextEvent(offset){
     const events=allEvents(),index=events.findIndex(e=>e.id===scanEvent),next=events[index+offset];
@@ -542,7 +542,7 @@
     resetCandidate();editing=i;motion=t.motion||'tracked';scanEvent=eventId??allEvents().find(e=>belongs(t,e))?.id??null;
     const event=allEvents().find(e=>e.id===scanEvent);
     candidates=targets.filter(v=>!v.removed&&(v.uid===t.uid||(event&&belongs(v,event)&&(v.motion==='fixed'||v.seed_frame===t.seed_frame)))).map(v=>({...v,id:'saved-'+v.uid}));
-    selected='saved-'+t.uid;$('mosaicAdjust').open=t.adopted!==false;
+    selected='saved-'+t.uid;$('mosaicAdjust').open=true;
     $('mosaicStart').value=clock(t.start);$('mosaicEnd').value=clock(t.end-1);seek(t.seed_frame,true);
     status('正在查看保存的区域；取消勾选不会丢失调整。');
   }
@@ -552,13 +552,6 @@
     if(save()){resetCandidate();paint();status('已恢复片段。');}
   };
   $('mosaicTargets').onclick=e=>{
-    const edit=e.target.closest('[data-edit-event],[data-edit-target]');
-    if(edit){
-      if(editLocked())return;
-      if(edit.dataset.editEvent)viewScanEvent(edit.dataset.editEvent);else viewTarget(Number(edit.dataset.editTarget));
-      $('mosaicAdjust').open=true;paint();return;
-    }
-
     const restore=e.target.closest('[data-restore-clip]');
     if(restore){
       if(editLocked())return;
@@ -1054,8 +1047,8 @@
         let row=0;
         if(item.kind!=='deletion'){row=ends.findIndex(end=>end<=item.start);if(row<0)row=ends.length;ends[row]=item.end;}
         const selected=item.event?scanEvent===item.id:editing===item.index;
-        const label=item.kind==='deletion'?'将删除':'打码';
-        const html=`<button type="button" class="mosaic-timeline-block ${item.kind} ${selected?'selected':''}" data-timeline-event="${esc(item.id)}" data-start="${item.start}" data-end="${item.end}" aria-label="${label} ${esc(item.label)} ${clock(item.start)}–${clock(item.end-1)}" aria-pressed="${selected}" style="left:${100*item.start/meta().frame_count}%;width:${100*(item.end-item.start)/meta().frame_count}%;top:${item.kind==='deletion'?0:row*32+3}px"><i data-edge="start"></i>${label}${item.kind==='deletion'?'':' · '+esc(item.label)}<i data-edge="end"></i></button>`;
+        const label=item.kind==='deletion'?'删除':'打码';
+        const html=`<button type="button" class="mosaic-timeline-block ${item.kind} ${selected?'selected':''}" data-timeline-event="${esc(item.id)}" data-start="${item.start}" data-end="${item.end}" aria-label="${label} ${esc(item.label)} ${clock(item.start)}–${clock(item.end-1)}" aria-pressed="${selected}" title="${label} · ${clock(item.start)}–${clock(item.end-1)}" style="left:${100*item.start/meta().frame_count}%;width:${100*(item.end-item.start)/meta().frame_count}%;top:${item.kind==='deletion'?0:row*32+3}px"><i data-edge="start"></i>${item.kind==='deletion'?'<span class="mosaic-deletion-label">删除</span>':label+' · '+esc(item.label)}<i data-edge="end"></i></button>`;
         (item.kind==='deletion'?deletionOverlays:blocks).push(html);
       }
       $('mosaicTimelineBlocks').innerHTML=blocks.join('');

@@ -65,7 +65,6 @@ def active_count(page):
 def open_editor(page):
     page.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     page.locator('#mosaicAdjust').evaluate('(el)=>el.open=true')
-    page.locator('#mosaicMoreTools').evaluate('(el)=>el.open=true')
     page.locator('#mosaicRecognize').wait_for(state='visible')
     page.wait_for_function("!document.getElementById('mosaicRecognize').disabled")
 
@@ -88,7 +87,6 @@ def test_boxes_only_on_reference_frame_and_manual_adjustment(editor):
     open_editor(editor)
     editor.locator('#mosaicRecognize').click()
     editor.locator('[data-candidate="0"]').wait_for()
-    editor.locator('#mosaicMoreTools').evaluate('(el)=>el.open=true')
     editor.locator('#mosaicBoxX').fill('20')
     editor.locator('#mosaicBoxX').dispatch_event('change')
     confirm_region(editor)
@@ -196,8 +194,9 @@ def test_scan_finds_range_and_region_without_manual_frame_selection(editor):
     assert editor.locator('#mosaicStart').input_value()=='00:01:00'
     assert editor.locator('#mosaicEnd').input_value()=='00:02:29'
     assert editor.locator('#mosaicFrameNumber').input_value()=='00:02:00'
-    assert not editor.locator('#mosaicAdjust').evaluate('(el)=>el.open')
-    assert editor.locator('#mosaicConfirm').is_hidden()
+    assert editor.locator('#mosaicAdjust').evaluate('(el)=>el.open')
+    assert editor.locator('#mosaicRegionTools').is_hidden()
+    assert editor.locator('#mosaicConfirm').is_visible()
     assert editor.evaluate("calls.find(c=>c.url.endsWith('/scan')&&c.body).body")=={'reset_at':'','force':False}
     assert not editor.evaluate("calls.some(c=>c.url.endsWith('/locate'))")
     editor.locator('[data-proposal]').click()
@@ -462,9 +461,14 @@ def test_deletion_overlays_thumbnails_and_cancel_restores_strip(editor):
     assert abs(box['y']-strip['y'])<1
     assert abs(box['height']-strip['height'])<1
     assert editor.locator('#mosaicTimelineBlocks [data-timeline-event]').count()==0
-    assert '将删除' in deletion.inner_text()
+    assert '删除' in deletion.inner_text()
+    assert deletion.locator('.mosaic-deletion-label').is_visible()
     deletion.click()
     assert editor.locator('#mosaicStart').is_visible()
+    editor.locator('#mosaicEnd').fill('00:01:02')
+    editor.locator('#mosaicConfirm').click()
+    assert deletion.locator('.mosaic-deletion-label').is_hidden()
+    assert '删除' in deletion.get_attribute('title')
     editor.locator('[data-event-delete="e1"]').click()
     assert editor.locator('[data-timeline-event]').count()==0
     assert editor.locator('#mosaicTimelineThumbs').bounding_box()==strip
@@ -502,7 +506,7 @@ def test_fixed_region_live_preview_changes_pixels_without_render(editor):
     editor.locator('[data-scan-event="e1"]').click()
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     editor.locator('[data-proposal]').click()
-    editor.locator('[data-edit-event="e1"]').click()
+    editor.locator('[data-scan-event="e1"]').click()
     editor.locator('#mosaicMotion').select_option('fixed')
     editor.locator('#mosaicConfirm').click()
     editor.locator('#mosaicLiveStyle').select_option('solid')
@@ -624,7 +628,6 @@ def test_toggle_retains_adjustment_across_reopen(editor):
     assert card.get_by_role('checkbox',name='打码',exact=True).get_attribute('aria-pressed')=='true'
     card.locator('[data-target-view]').click()
     editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
-    editor.locator('#mosaicMoreTools').evaluate('(el)=>el.open=true')
     editor.locator('#mosaicBoxX').fill('20')
     editor.locator('#mosaicBoxX').dispatch_event('change')
     confirm_region(editor)
@@ -887,7 +890,7 @@ def test_processing_decisions_are_equal_toggle_buttons_and_tools_are_compact(edi
     assert card.get_by_role('checkbox',name='打码',exact=True).get_attribute('aria-pressed')=='false'
     delete.click();assert delete.get_attribute('aria-pressed')=='false'
     card.locator('[data-scan-event]').click()
-    assert editor.locator('#mosaicConfirm').is_hidden()
+    assert editor.locator('#mosaicConfirm').is_visible()
     assert editor.locator('#mosaicConfirmNext').is_hidden()
     assert editor.locator('#mosaicCandidates').is_hidden()
     assert editor.locator('#mosaicReview').bounding_box()['height']<90
@@ -1282,7 +1285,6 @@ def test_manual_clip_multiple_regions_add_edit_remove_and_preview(editor):
     editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
     assert editor.locator('.mosaic-box').count()==3
     editor.locator('.mosaic-box').nth(1).click()
-    editor.locator('#mosaicMoreTools').evaluate('(el)=>el.open=true')
     editor.locator('#mosaicBoxX').fill('85');editor.locator('#mosaicBoxX').dispatch_event('change');editor.locator('#mosaicConfirm').click()
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
     assert len(draft['targets'])==3 and draft['targets'][1]['x']==85
@@ -1326,14 +1328,13 @@ def test_compact_adjustment_hides_precision_tools(editor):
     open_auto(editor)
     editor.locator('#mosaicAddClip').click()
     editor.locator('#mosaicManualAction').select_option('mosaic')
-    assert editor.locator('#mosaicRecognize').is_hidden()
+    assert editor.locator('#mosaicRegionTools #mosaicRecognize').is_visible()
     assert editor.locator('.adjust-time #mosaicMarkStart').is_visible()
     assert editor.locator('.adjust-time #mosaicMarkEnd').is_visible()
     assert editor.locator('#mosaicDraw').is_hidden()
     assert editor.locator('#mosaicSaveTime').is_hidden()
     assert editor.locator('#mosaicSaveDelete').is_hidden()
     assert editor.locator('#mosaicAddRegion').is_visible()
-    editor.locator('#mosaicMoreTools > summary').click()
     assert editor.locator('#mosaicRecognize').is_visible()
     assert editor.locator('#mosaicMarkStart').is_visible()
 
@@ -1343,7 +1344,6 @@ def test_save_modifications_commits_time_and_both_region_edits(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-event-adopt]').click()
     editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
-    editor.locator('#mosaicMoreTools > summary').click()
     editor.locator('#mosaicBoxX').fill('45');editor.locator('#mosaicBoxX').dispatch_event('change')
     editor.locator('#mosaicCandidates button').nth(1).click()
     editor.locator('#mosaicBoxX').fill('15');editor.locator('#mosaicBoxX').dispatch_event('change')
@@ -1379,11 +1379,11 @@ def test_card_edit_opens_clip_and_coordinates_belong_to_region(editor):
     assert editor.locator('#mosaicAdjustToggle').is_hidden()
     editor.locator('[data-proposal]').click()
     stage=editor.locator('#mosaicStage').bounding_box()
-    editor.locator('[data-edit-event="e1"]').click()
+    editor.locator('[data-scan-event="e1"]').click()
     assert editor.locator('#mosaicAdjust').evaluate('(el)=>el.open')
     assert editor.locator('#mosaicStart').input_value()=='00:01:00'
     assert editor.locator('#mosaicRegionTools #mosaicBoxFields').is_visible()
-    assert not editor.locator('#mosaicMoreTools').evaluate('(el)=>el.open')
+    assert editor.locator('#mosaicMoreTools').count()==0
     assert editor.locator('#mosaicBoxFields').bounding_box()['y']>editor.locator('#mosaicCandidates').bounding_box()['y']
     assert abs(editor.locator('#mosaicStage').bounding_box()['height']-stage['height'])<1
 
@@ -1391,7 +1391,7 @@ def test_card_edit_opens_clip_and_coordinates_belong_to_region(editor):
 def test_saving_one_region_motion_preserves_sibling_default_tracking(editor):
     editor.evaluate("findings.push({...findings[0],id:'1',x:10,w:20})")
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
-    editor.locator('[data-event-adopt]').click();editor.locator('[data-edit-event]').click()
+    editor.locator('[data-event-adopt]').click();editor.locator('[data-scan-event]').click()
     editor.locator('#mosaicMotion').select_option('fixed');editor.locator('#mosaicConfirm').click()
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
     assert [t.get('motion','tracked') for t in draft['targets']]==['fixed','tracked']
@@ -1402,7 +1402,7 @@ def test_save_time_preserves_cancelled_mask_and_delete_choice(editor,delete_sele
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-proposal]').click();editor.locator('[data-target-remove]').click()
     if delete_selected:editor.locator('[data-event-delete]').click()
-    editor.locator('[data-edit-event]').click();editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicConfirm').click()
+    editor.locator('[data-scan-event]').click();editor.locator('#mosaicStart').fill('00:01:10');editor.locator('#mosaicConfirm').click()
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
     assert draft['targets'][0]['adopted'] is False
     assert len(draft['deletions'])==int(delete_selected)
