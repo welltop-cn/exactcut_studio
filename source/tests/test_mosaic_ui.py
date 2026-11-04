@@ -8,6 +8,7 @@ from PIL import Image
 from browser_support import shared_playwright
 
 pytestmark = pytest.mark.ui
+CLIP_PREVIEW_REMOVED = 'fixed-only mode removed the server-side clip effect preview entry; fixed regions use the live canvas preview. Re-enable when tracking returns.'
 
 
 @pytest.fixture
@@ -516,6 +517,9 @@ def test_only_chosen_actions_show_timeline_and_mosaic_inspector(editor):
 
 
 def test_fixed_region_live_preview_changes_pixels_without_render(editor):
+    # Vertical 2px stripes: both blur and pixel average them, so the region must change.
+    jpeg=io.BytesIO();Image.frombytes('L',(160,96),bytes((0 if (x//2)%2 else 255) for y in range(96) for x in range(160))).convert('RGB').save(jpeg,'JPEG',quality=95)
+    editor.route('**/frame/*',lambda r:r.fulfill(body=jpeg.getvalue(),content_type='image/jpeg'))
     scan_result(editor)
     open_auto(editor)
     editor.locator('#mosaicScan').click()
@@ -523,11 +527,13 @@ def test_fixed_region_live_preview_changes_pixels_without_render(editor):
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     editor.locator('[data-proposal]').click()
     editor.locator('[data-scan-event="e1"]').click()
-    editor.locator('#mosaicMotion').select_option('fixed')
     editor.locator('#mosaicConfirm').click()
-    editor.locator('#mosaicLiveStyle').select_option('solid')
-    editor.wait_for_function("document.querySelector('#mosaicLiveCanvas').getContext('2d').getImageData(80,48,1,1).data[0]===0 && !document.querySelector('#mosaicLiveCanvas').hidden")
-    assert editor.evaluate("document.querySelector('#mosaicLiveCanvas').getContext('2d').getImageData(2,2,1,1).data[0]") > 40
+    pixel="(x,y)=>document.querySelector('#mosaicLiveCanvas').getContext('2d').getImageData(x,y,1,1).data[0]"
+    for style in ('blur','pixel'):
+        editor.locator('#mosaicLiveStyle').select_option(style)
+        editor.wait_for_function(f"!document.querySelector('#mosaicLiveCanvas').hidden && Math.abs(({pixel})(80,48)-128)<70 && Math.abs(({pixel})(81,48)-128)<70")
+        outside=[editor.evaluate(f"({pixel})({x},2)") for x in (2,3,4,5)]
+        assert max(outside)>190 and min(outside)<65,'outside the region the original stripes stay visible'
     editor.locator('#mosaicCompare').click()
     assert editor.locator('#mosaicLiveCanvas').is_hidden()
     editor.locator('#mosaicCompare').click()
@@ -805,7 +811,8 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     open_auto(editor)
     button=editor.locator('#mosaicBatchStart')
     assert button.is_visible() and button.is_enabled()
-    assert editor.locator('#mosaicBatchHint').inner_text()=='删除 0 段 · 打码 2 段'
+    # v1 targets carry no motion (= tracked): they open as fixed and the user is told so.
+    assert editor.locator('#mosaicBatchHint').inner_text().split('\n')==['删除 0 段 · 打码 2 段','旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。']
     button.click()
     assert editor.locator('#mosaicBatchDialog').is_visible()
     assert editor.evaluate('batchBody.targets.length')==2
@@ -858,21 +865,28 @@ def test_unified_delete_mosaic_choice_persists_and_discard_resets(editor):
     assert editor.locator('[data-scan-event="e1"]').count()==1
 
 
-def test_generated_result_replace_and_compare_use_saved_plan(editor):
-    editor.evaluate('''() => {
-      session.capabilities.tracking=true;
-      const target={...findings[0],start:60,end:90,seed_frame:70,adopted:true};
-      localStorage.setItem('exactcut.mosaic.workbench.v3.fixture.batch.session.'+'a'.repeat(64)+'.',JSON.stringify({schema_version:1,targets:[target],deletions:[{start:0,end:30}]}));
+def generated_result(page,*,legacy):
+    page.evaluate('''legacy => {
+      // Legacy: pre-simplification targets had no motion (backend default: tracked) and the old default expansion.
+      const target={...findings[0],start:60,end:90,seed_frame:70,adopted:true,...(legacy?{}:{motion:'fixed'})};
+      const effect=legacy?{style:'pixel',strength:'medium',expansion:'small'}:{style:'pixel',strength:'medium',expansion:'none'};
+      const {adopted,...rendered}=target;
+      localStorage.setItem('exactcut.mosaic.workbench.v3.fixture.batch.session.'+'a'.repeat(64)+'.',JSON.stringify({schema_version:1,targets:[target],deletions:[{start:0,end:30}],...(legacy?{effect}:{})}));
       const old=api;window.replaced=null;
       window.api=async(url,body)=>{
-        if(url.endsWith('/render'))return {job:{id:'b'.repeat(32),status:'completed',targets:[target],ranges:[[0,30]],result:{region_count:1},completed_at:'now'}};
+        if(url.endsWith('/render'))return {job:{id:'b'.repeat(32),status:'completed',targets:[{...rendered,effect}],effect,ranges:[[0,30]],result:{region_count:1},completed_at:'now'}};
         if(url.endsWith('/replace')){replaced=body;return {replacement:{status:'completed'}};}
         if(url==='/api/batches/batch')return current;
         return old(url,body);
       };window.renderRuntime=()=>{};window.toast=()=>{};
-    }''')
-    open_auto(editor)
+    }''',legacy)
+    open_auto(page)
+
+
+def test_generated_result_replace_and_compare_use_saved_plan(editor):
+    generated_result(editor,legacy=False)
     assert editor.locator('#mosaicReplace').is_enabled()
+    assert editor.locator('#mosaicBatchVersion').inner_text()==''
     editor.locator('#mosaicBatchVideo').evaluate('el=>el.currentTime=1')
     editor.locator('#mosaicBatchBefore').click()
     editor.locator('#mosaicBatchVideo').evaluate("el=>el.dispatchEvent(new Event('loadedmetadata'))")
@@ -891,6 +905,34 @@ def test_generated_result_replace_and_compare_use_saved_plan(editor):
     editor.wait_for_function("!document.getElementById('mosaicDialog').open")
     assert editor.evaluate('replaced')=={'job_id':'b'*32,'reset_at':''}
     assert editor.evaluate("Object.keys(localStorage).filter(k=>k.includes('workbench.v3')).length")==0
+
+
+def test_legacy_tracked_result_is_never_replaced_as_the_fixed_plan(editor):
+    """The draft is shown as fixed, but the old result was rendered tracked with the old
+    expansion; replacing must stay blocked with a visible reason, never silently allowed."""
+    generated_result(editor,legacy=True)
+    assert editor.locator('#mosaicReplace').is_disabled()
+    assert '旧版处理方式' in editor.locator('#mosaicBatchVersion').inner_text()
+    editor.locator('#mosaicReplace').evaluate('el=>el.click()')
+    assert editor.evaluate('replaced') is None
+    editor.locator('#mosaicBatchClose').click()
+    editor.locator('#mosaicBatchView').click()
+    assert editor.locator('#mosaicReplace').is_disabled()
+    # Discarding the old result lets the user regenerate with the fixed plan.
+    editor.once('dialog',lambda d:d.accept())
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{
+      if(url.endsWith('/discard-result'))return {id:'b'.repeat(32),status:'completed',discarded_at:'now',targets:[],ranges:[]};
+      if(url.endsWith('/render')&&body){window.newBody=body;return {id:'d'.repeat(32),status:'completed',...body,result:{},completed_at:'now'};}
+      return old(url,body);};}""")
+    editor.locator('#mosaicDiscard').click()
+    editor.locator('#mosaicBatchStart').wait_for(state='visible')
+    assert '旧草稿已按当前规则改为固定位置' in editor.locator('#mosaicBatchHint').inner_text()
+    editor.locator('#mosaicBatchStart').click()
+    editor.wait_for_function('window.newBody')
+    body=editor.evaluate('newBody')
+    assert [t['motion'] for t in body['targets']]==['fixed']
+    assert body['targets'][0]['effect']=={'style':'pixel','strength':'medium','expansion':'none'}
+    assert editor.locator('#mosaicReplace').is_enabled()
 
 
 def test_processing_decisions_are_equal_toggle_buttons_and_tools_are_compact(editor):
@@ -936,23 +978,20 @@ def test_processing_keeps_workspace_and_shows_background_progress(editor):
     assert editor.locator('#mosaicClose').is_enabled()
 
 
-def test_effect_popup_is_clip_local_and_cancel_discards(editor):
-    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+def test_effect_choice_is_clip_local_without_popup(editor):
+    scan_result(editor)
+    editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:100,end:150,seed_frame:120})")
+    open_auto(editor);editor.locator('#mosaicScan').click()
     assert editor.locator('[data-effect-target]').count()==0
-    editor.locator('[data-proposal]').click()
-    editor.locator('[data-effect-target]').click()
-    assert '00:01:00' in editor.locator('#mosaicEffectTitle').inner_text()
-    assert editor.locator('#mosaicEffects').bounding_box()['height']<350
-    editor.locator('#mosaicEffectStyle').select_option('solid')
-    editor.locator('#mosaicEffectCancel').click()
-    editor.locator('[data-effect-target]').click()
-    assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
-    editor.locator('#mosaicEffectStyle').select_option('soft_blur')
-    editor.keyboard.press('Escape')
-    editor.locator('[data-effect-target]').click()
-    assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
-    editor.locator('#mosaicEffectSave').click()
-
+    for event in ('e1','e2'):editor.locator(f'[data-proposal="{event}:0"]').click()
+    assert editor.locator('[data-effect-target]').count()==0,'the old effects popup has no entry'
+    editor.locator('[data-mosaic-card="e1"] [data-scan-event]').click()
+    editor.locator('#mosaicLiveStyle').select_option('blur')
+    assert '效果已保存' in editor.locator('#mosaicStatus').inner_text()
+    editor.locator('[data-mosaic-card="e2"] [data-scan-event]').click()
+    assert editor.locator('#mosaicLiveStyle').input_value()=='pixel'
+    editor.locator('[data-mosaic-card="e1"] [data-scan-event]').click()
+    assert editor.locator('#mosaicLiveStyle').input_value()=='blur'
 
 
 def test_generation_locks_edits_until_stop_acknowledged(editor):
@@ -987,27 +1026,25 @@ def test_generation_locks_edits_until_stop_acknowledged(editor):
 
 
 def test_clip_effects_are_independent_persist_and_submit(editor):
-    editor.evaluate('session.capabilities.tracking=true')
     scan_result(editor)
     editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:100,end:150,seed_frame:120})")
     open_auto(editor);editor.locator('#mosaicScan').click()
-    for event,style in [('e1','soft_blur'),('e2','blur')]:
+    for event,style in [('e1','blur'),('e2','pixel')]:
         editor.locator(f'[data-proposal="{event}:0"]').click()
         editor.locator(f'[data-mosaic-card="{event}"] [data-scan-event]').click()
-        editor.locator('#mosaicLivePreviewAction [data-effect-target]').click()
-        editor.locator('#mosaicEffectStyle').select_option(style)
-        editor.locator('#mosaicEffectSave').click()
+        editor.locator('#mosaicLiveStyle').select_option(style)
     editor.locator('#mosaicClose').click();open_auto(editor);editor.locator('#mosaicScan').click()
-    for event,style in [('e1','soft_blur'),('e2','blur')]:
+    for event,style in [('e1','blur'),('e2','pixel')]:
         editor.locator(f'[data-mosaic-card="{event}"] [data-scan-event]').click()
-        editor.locator('#mosaicLivePreviewAction [data-effect-target]').click()
-        assert editor.locator('#mosaicEffectStyle').input_value()==style
-        editor.locator('#mosaicEffectCancel').click()
-    editor.evaluate("""() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+        assert editor.locator('#mosaicLiveStyle').input_value()==style
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
     editor.locator('#mosaicBatchStart').click()
-    assert editor.evaluate('effectBody.targets.map(t=>t.effect.style)')==['soft_blur','blur']
+    assert editor.evaluate('effectBody.targets.map(t=>t.effect.style)')==['blur','pixel']
+    assert editor.evaluate('effectBody.targets.every(t=>t.motion==="fixed"&&t.effect.strength==="medium"&&t.effect.expansion==="none")')
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/clip-preview'))")
 
 
+@pytest.mark.skip(reason=CLIP_PREVIEW_REMOVED)
 def test_effect_preview_sends_all_clip_regions_without_saving(editor):
     scan_result(editor)
     editor.evaluate("""() => {
@@ -1039,6 +1076,7 @@ def test_effect_preview_sends_all_clip_regions_without_saving(editor):
     assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
 
 
+@pytest.mark.skip(reason=CLIP_PREVIEW_REMOVED)
 def test_closing_running_clip_preview_detaches_without_cancelling_or_discarding_effect_draft(editor):
     scan_result(editor)
     editor.evaluate("""() => {
@@ -1269,19 +1307,20 @@ def test_manual_fixed_region_persists_and_generates_without_tracking(editor):
     assert editor.evaluate('fixedBody.targets[0].motion')=='fixed'
 
 
-def test_ai_region_defaults_to_tracking_and_can_switch_to_fixed(editor):
+def test_ai_region_is_fixed_without_a_position_choice(editor):
+    editor.evaluate('session.capabilities.tracking=true')
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-proposal]').click();editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
-    assert editor.locator('#mosaicMotion').input_value()=='tracked'
-    editor.locator('#mosaicMotion').select_option('fixed');editor.locator('#mosaicConfirm').click()
-    editor.locator('[data-effect-target]').click()
-    assert editor.locator('#mosaicEffectPreview').is_enabled()
-    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/clip-preview')){window.fixedPreview=body;return {id:'b'.repeat(32),status:'completed',...body};}return old(url,body);};}""")
-    editor.locator('#mosaicEffectPreview').click()
-    assert editor.evaluate('fixedPreview.targets[0].motion')=='fixed'
+    assert editor.locator('#mosaicMotion').input_value()=='fixed' and editor.locator('#mosaicMotion').is_hidden()
+    assert editor.locator('#mosaicTrack').is_hidden()
+    editor.locator('#mosaicConfirm').click()
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.fixedBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+    editor.locator('#mosaicBatchStart').click()
+    assert editor.evaluate('fixedBody.targets[0].motion')=='fixed'
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/clip-preview')||c.url.endsWith('/track'))")
 
 
-def test_manual_clip_multiple_regions_add_edit_remove_and_preview(editor):
+def test_manual_clip_multiple_regions_add_edit_remove_and_submit(editor):
     open_auto(editor);editor.locator('#mosaicAddClip').click();editor.locator('#mosaicManualAction').select_option('mosaic')
     def draw(x,y,w,h):
         b=editor.locator('#mosaicOverlay').bounding_box()
@@ -1306,10 +1345,10 @@ def test_manual_clip_multiple_regions_add_edit_remove_and_preview(editor):
     assert len(draft['targets'])==3 and draft['targets'][1]['x']==85
     editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()');editor.locator('#mosaicRemoveRegion').click()
     assert active_count(editor)==2
-    editor.locator('[data-effect-target]').click()
-    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/clip-preview')){window.multiPreview=body;return {id:'b'.repeat(32),status:'completed'};}return old(url,body);};}""")
-    editor.locator('#mosaicEffectPreview').click()
-    assert editor.evaluate('multiPreview.targets.length')==2
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.multiBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+    editor.locator('#mosaicBatchStart').click()
+    assert editor.evaluate('multiBody.targets.length')==2
+    assert editor.evaluate('multiBody.targets.every(t=>t.motion==="fixed")')
 
 
 def test_removed_ai_region_stays_removed_and_other_regions_survive(editor):
@@ -1404,13 +1443,17 @@ def test_card_edit_opens_clip_and_coordinates_belong_to_region(editor):
     assert abs(editor.locator('#mosaicStage').bounding_box()['height']-stage['height'])<1
 
 
-def test_saving_one_region_motion_preserves_sibling_default_tracking(editor):
+def test_saving_one_region_preserves_sibling_region(editor):
     editor.evaluate("findings.push({...findings[0],id:'1',x:10,w:20})")
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     editor.locator('[data-event-adopt]').click();editor.locator('[data-scan-event]').click()
-    editor.locator('#mosaicMotion').select_option('fixed');editor.locator('#mosaicConfirm').click()
+    before=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3')))).targets")
+    editor.locator('.mosaic-box').first.click()
+    editor.locator('#mosaicBoxX').fill('45');editor.locator('#mosaicBoxX').dispatch_event('change');editor.locator('#mosaicConfirm').click()
     draft=editor.evaluate("JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3'))))")
-    assert [t.get('motion','tracked') for t in draft['targets']]==['fixed','tracked']
+    assert [t['motion'] for t in draft['targets']]==['fixed','fixed']
+    changed=[i for i,(a,b) in enumerate(zip(before,draft['targets'])) if (a['x'],a['w'])!=(b['x'],b['w'])]
+    assert len(changed)==1,'only the edited region moves; its sibling keeps its box'
 
 
 @pytest.mark.parametrize('delete_selected', [False,True])

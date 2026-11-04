@@ -3,7 +3,7 @@ import pytest
 from test_mosaic_ui import editor,open_auto
 from test_mosaic_tracking_capability_ui import add_manual_mosaic
 
-pytestmark = pytest.mark.ui
+pytestmark = [pytest.mark.ui, pytest.mark.skip(reason='fixed-only mode removed the server-side clip effect preview entry (data-effect-target / #mosaicEffectPreview); these receipts are unreachable from the UI. Re-enable when tracking returns.')]
 
 
 def prepare_preview(page):
