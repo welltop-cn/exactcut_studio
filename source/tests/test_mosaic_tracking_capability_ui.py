@@ -29,9 +29,9 @@ def add_manual_mosaic(page,motion='fixed',initial_delete=False):
 
 
 def save_effect(page):
-    page.locator('[data-effect-target]').click()
-    page.locator('#mosaicEffectStyle').select_option('solid');page.locator('#mosaicEffectSave').click()
-    assert '本片段效果已保存' in page.locator('#mosaicStatus').inner_text()
+    page.locator('[data-scan-event]').first.click()
+    page.locator('#mosaicLiveStyle').select_option('solid')
+    assert '效果已保存' in page.locator('#mosaicStatus').inner_text()
 
 
 @pytest.mark.parametrize('initial_delete',[False,True])

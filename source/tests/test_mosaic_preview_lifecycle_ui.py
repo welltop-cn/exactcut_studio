@@ -16,6 +16,7 @@ def close_and_reopen(page):
     page.locator('#mosaicTrackClose').click();page.locator('#mosaicEffectCancel').click();page.locator('#mosaicClose').click()
     page.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     page.locator('#mosaicWorkspace').wait_for(state='visible')
+    page.locator('[data-scan-event]').first.click()
 
 
 def test_late_closed_preview_receipt_does_not_cancel_or_relabel_new_preview(editor):
@@ -126,6 +127,7 @@ def test_preview_receipt_two_tabs_refresh_and_material_switch_preserve_the_draft
         for name in ('editor-busy.js','editor-source.js','mosaic.js'):other.add_script_tag(content=(root/name).read_text())
     try:
         other.goto('http://fixture.test/');initialize();open_auto(other)
+        other.locator('[data-scan-event]').first.click()
         other.locator('[data-effect-target]').click();other.locator('#mosaicEffectPreview').click()
         other.wait_for_function("document.getElementById('mosaicTrackStatus').textContent==='预览已生成'")
         editor.evaluate("resolveOld({id:'1'.repeat(32),status:'running'})");editor.wait_for_timeout(50)

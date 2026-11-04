@@ -95,12 +95,10 @@ def test_boxes_only_on_reference_frame_and_manual_adjustment(editor):
     if not editor.locator('#mosaicNext').is_visible():editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
     editor.locator('#mosaicNext').click()
     assert editor.locator('#mosaicOverlay').is_hidden()
-    editor.locator('#mosaicAdjust > summary').click()
     editor.locator('[data-target-view]').click()
     editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     assert editor.locator('#mosaicBoxX').input_value()=='20'
-    editor.locator('#mosaicAdjust > summary').click()
     editor.locator('[data-target-remove]').click()
     assert editor.locator('[data-target-view]').count()==1
     assert editor.locator('[data-target-remove]').get_attribute('aria-pressed')=='false'
@@ -202,6 +200,7 @@ def test_scan_finds_range_and_region_without_manual_frame_selection(editor):
     assert editor.locator('#mosaicConfirm').is_hidden()
     assert editor.evaluate("calls.find(c=>c.url.endsWith('/scan')&&c.body).body")=={'reset_at':'','force':False}
     assert not editor.evaluate("calls.some(c=>c.url.endsWith('/locate'))")
+    editor.locator('[data-proposal]').click()
     confirm_region(editor)
     assert editor.locator('[data-target-view]').count()==1
     assert editor.locator('[data-scan-marker]').count()==1
@@ -281,6 +280,157 @@ def test_late_whole_scan_cannot_overwrite_reopened_results(editor):
     assert '新任务结果' in editor.locator('#mosaicScanEvents').inner_text()
 
 
+def test_preparation_shows_loading_until_ready_or_failed(editor):
+    editor.evaluate('''() => {
+      const original=window.api;
+      window.api=(url,body)=>url.endsWith('/open') ? new Promise((resolve,reject)=>{
+        window.finishOpen=()=>resolve(session);window.failOpen=()=>reject(Error('初始化失败'));
+      }) : original(url,body);
+    }''')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    assert editor.locator('#mosaicDialog').get_attribute('aria-busy') == 'true'
+    assert editor.locator('#mosaicPreparing').is_visible()
+    assert '正在准备视频' in editor.locator('#mosaicPreparing').inner_text()
+    assert not editor.locator('#mosaicWorkspace').is_visible()
+    assert not editor.locator('#mosaicBatchStart').is_visible()
+    editor.evaluate('finishOpen()')
+    editor.locator('#mosaicWorkspace').wait_for(state='visible')
+    assert editor.locator('#mosaicDialog').get_attribute('aria-busy') == 'false'
+    assert not editor.locator('#mosaicPreparing').is_visible()
+    assert editor.locator('#mosaicBatchStart').is_visible()
+    editor.locator('#mosaicClose').click()
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.evaluate('failOpen()')
+    editor.wait_for_function("document.querySelector('#mosaicStatus').textContent==='初始化失败'")
+    assert editor.locator('#mosaicDialog').get_attribute('aria-busy') == 'false'
+    assert not editor.locator('#mosaicPreparing').is_visible()
+    assert not editor.locator('#mosaicBatchStart').is_visible()
+
+
+@pytest.mark.parametrize('action', ['mosaic', 'delete'])
+@pytest.mark.parametrize('part,expected', [('start',[60,90]),('end',[30,120]),('move',[60,120])])
+def test_timeline_trim_updates_saved_clip_and_survives_reopen(editor, action, part, expected):
+    scan_result(editor)
+    editor.evaluate('''() => {
+      session.capabilities.tracking=true;const original=api;window.timelineSubmission=null;
+      window.api=async(url,body)=>{
+        if(url.endsWith('/render')){
+          if(!body)return {job:null};
+          timelineSubmission=body;return {id:'b'.repeat(32),status:'running',targets:body.targets,ranges:body.ranges};
+        }
+        if(url.includes('/render/'))return new Promise(()=>{});
+        return original(url,body);
+      };
+    }''')
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.locator('#mosaicOverlay').wait_for(state='visible')
+    editor.locator('[data-proposal]' if action=='mosaic' else '[data-event-delete="e1"]').click()
+    block = editor.locator('[data-timeline-event="e1"]')
+    block.wait_for(state='visible')
+    handle = (block if part=='move' else block.locator(f'[data-edge="{part}"]')).bounding_box()
+    rail = editor.locator('#mosaicTimelineTracks').bounding_box()
+    editor.mouse.move(handle['x'] + handle['width']/2, handle['y'] + handle['height']/2)
+    editor.mouse.down()
+    editor.mouse.move(handle['x'] + handle['width']/2 + rail['width']/10, handle['y'] + handle['height']/2)
+    editor.mouse.up()
+    editor.wait_for_function("expected=>{const e=JSON.parse(localStorage.getItem(Object.keys(localStorage).find(k=>k.includes('workbench.v3')))).clipEdits.e1;return e.start===expected[0]&&e.end===expected[1]}", arg=expected)
+    editor.locator('#mosaicClose').click()
+    open_auto(editor)
+    block.wait_for(state='visible')
+    assert block.get_attribute('data-start') == str(expected[0])
+    assert block.get_attribute('data-end') == str(expected[1])
+    assert not editor.locator('#mosaicTimeline input[type=range]').count()
+    editor.locator('#mosaicBatchStart').click()
+    editor.wait_for_function('window.timelineSubmission!==null')
+    if action=='delete':
+        assert editor.evaluate('timelineSubmission.ranges') == [expected]
+        assert editor.evaluate('timelineSubmission.targets') == []
+    else:
+        assert editor.evaluate('timelineSubmission.targets.map(t=>[t.start,t.end])') == [expected]
+
+
+@pytest.mark.parametrize('size', [(1512,717),(1440,900)])
+def test_workspace_panels_do_not_overlap_timeline_and_actions_are_in_header(editor, size):
+    editor.set_viewport_size({'width':size[0],'height':size[1]})
+    scan_result(editor)
+    editor.evaluate("scanJob.events=Array.from({length:8},(_,i)=>({...scanJob.events[0],id:'e'+i,start:i*30,end:(i+1)*30,seed_frame:i*30+15}))")
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e0"]').wait_for()
+    timeline=editor.locator('#mosaicTimeline').bounding_box()
+    for selector in ['.mosaic-library','.mosaic-side']:
+        box=editor.locator(selector).bounding_box()
+        assert box['y']+box['height'] <= timeline['y']
+    assert timeline['y']+timeline['height'] <= size[1]
+    assert editor.locator('.mosaic-header #mosaicBatchStart').is_visible()
+    assert editor.locator('.mosaic-header #mosaicDiscard').is_visible()
+    assert editor.locator('[data-mosaic-card]').first.bounding_box()['height'] <= 110
+
+
+def test_clip_list_scrolls_without_moving_timeline(editor):
+    editor.set_viewport_size({'width':1512,'height':717})
+    scan_result(editor)
+    editor.evaluate("scanJob.events=Array.from({length:8},(_,i)=>({...scanJob.events[0],id:'e'+i,start:i*30,end:(i+1)*30,seed_frame:i*30+15}))")
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    first=editor.locator('[data-mosaic-card="e0"]')
+    first.wait_for(state='visible')
+    before=editor.locator('#mosaicTimeline').bounding_box()
+    first.hover()
+    editor.mouse.wheel(0,1200)
+    editor.wait_for_function("document.querySelector('#mosaicTargets').scrollTop>0")
+    last=editor.locator('[data-mosaic-card="e7"]').bounding_box()
+    assert last['y']+last['height'] <= before['y']
+    assert editor.locator('#mosaicTimeline').bounding_box() == before
+
+
+def test_only_chosen_actions_show_timeline_and_mosaic_inspector(editor):
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    assert editor.locator('[data-timeline-event]').count()==0
+    assert editor.locator('#mosaicLiveControls').is_hidden()
+    assert editor.locator('#mosaicRegionTools').is_hidden()
+    assert editor.locator('#mosaicAdjust > summary').is_hidden()
+    editor.locator('[data-proposal]').click()
+    assert 'mosaic' in editor.locator('[data-timeline-event="e1"]').get_attribute('class')
+    assert editor.locator('#mosaicTargets [data-effect-target]').count()==0
+    assert editor.locator('#mosaicLiveControls').is_visible()
+    assert editor.locator('#mosaicRegionTools').is_visible()
+    editor.locator('[data-event-delete="e1"]').click()
+    assert 'deletion' in editor.locator('[data-timeline-event="e1"]').get_attribute('class')
+    assert editor.locator('#mosaicLiveControls').is_hidden()
+    assert editor.locator('#mosaicRegionTools').is_hidden()
+    editor.locator('#mosaicStart').fill('00:01:10')
+    editor.locator('#mosaicConfirm').click()
+    assert 'deletion' in editor.locator('[data-timeline-event="e1"]').get_attribute('class')
+    assert editor.locator('[data-timeline-event="e1"]').get_attribute('data-start')=='40'
+    assert active_count(editor)==0
+    editor.locator('[data-event-delete="e1"]').click()
+    assert editor.locator('[data-timeline-event]').count()==0
+
+
+def test_fixed_region_live_preview_changes_pixels_without_render(editor):
+    scan_result(editor)
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.locator('[data-scan-event="e1"]').click()
+    editor.locator('#mosaicOverlay').wait_for(state='visible')
+    editor.locator('[data-proposal]').click()
+    editor.locator('[data-edit-event="e1"]').click()
+    editor.locator('#mosaicMotion').select_option('fixed')
+    editor.locator('#mosaicConfirm').click()
+    editor.locator('#mosaicLiveStyle').select_option('solid')
+    editor.wait_for_function("document.querySelector('#mosaicLiveCanvas').getContext('2d').getImageData(80,48,1,1).data[0]===0 && !document.querySelector('#mosaicLiveCanvas').hidden")
+    assert editor.evaluate("document.querySelector('#mosaicLiveCanvas').getContext('2d').getImageData(2,2,1,1).data[0]") > 40
+    editor.locator('#mosaicCompare').click()
+    assert editor.locator('#mosaicLiveCanvas').is_hidden()
+    editor.locator('#mosaicCompare').click()
+    editor.locator('#mosaicLiveCanvas').wait_for(state='visible')
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/render')&&c.body)")
+
+
 def test_reopen_while_source_preparing_shares_request(editor):
     editor.evaluate('''() => {
       const original=window.api;
@@ -336,14 +486,19 @@ def test_running_scan_keeps_existing_regions_editable(editor):
     assert active_count(editor)==1
 
 
-def test_wide_list_and_fixed_adopt_next(editor):
+def test_three_column_workspace_and_fixed_adopt_next(editor):
     scan_result(editor)
     editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:100,end:150,seed_frame:120})")
     open_auto(editor)
     editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').click()
     editor.wait_for_function("!document.getElementById('mosaicConfirm').disabled")
-    assert editor.locator('.mosaic-side').bounding_box()['width']>=400
+    left=editor.locator('.mosaic-library').bounding_box()
+    preview=editor.locator('#mosaicStage').bounding_box()
+    right=editor.locator('.mosaic-side').bounding_box()
+    assert left['x']+left['width'] < preview['x']
+    assert preview['x']+preview['width'] < right['x']
+    assert editor.locator('#mosaicTimeline').bounding_box()['width'] > preview['width']
     assert editor.locator('#mosaicReview').evaluate("e=>!!e.closest('.mosaic-main')")
     editor.locator('[data-proposal="e1:0"]').click()
     editor.locator('#mosaicNextEvent').click()
@@ -358,14 +513,16 @@ def test_adopted_regions_are_in_same_full_height_list(editor):
     editor.locator('#mosaicScan').click()
     editor.locator('[data-scan-event="e1"]').click()
     editor.wait_for_function("!document.getElementById('mosaicConfirm').disabled")
+    editor.locator('[data-proposal]').click()
     confirm_region(editor)
     card=editor.locator('[data-mosaic-card="e1"]')
     assert '打码' in card.inner_text()
     assert card.locator('[data-target-view]').is_visible()
-    assert editor.locator('.mosaic-side #mosaicAdjust').is_hidden()
+    assert editor.locator('.mosaic-side #mosaicAdjust').evaluate('e=>e.open')
+    assert card.evaluate("e=>!!e.closest('.mosaic-library')")
     assert editor.locator('#mosaicSaved').count()==0
     card.locator('[data-target-view]').click()
-    assert editor.locator('#mosaicConfirm').inner_text()=='保存修改'
+    assert editor.locator('#mosaicConfirm').text_content()=='保存修改'
     assert card.locator('[data-target-remove]').get_attribute('aria-pressed')=='true'
     assert card.bounding_box()['height']<=110
     card.locator('[data-target-remove]').click()
@@ -733,12 +890,14 @@ def test_clip_effects_are_independent_persist_and_submit(editor):
     open_auto(editor);editor.locator('#mosaicScan').click()
     for event,style in [('e1','soft_blur'),('e2','blur')]:
         editor.locator(f'[data-proposal="{event}:0"]').click()
-        editor.locator(f'[data-mosaic-card="{event}"] [data-effect-target]').click()
+        editor.locator(f'[data-mosaic-card="{event}"] [data-scan-event]').click()
+        editor.locator('#mosaicLivePreviewAction [data-effect-target]').click()
         editor.locator('#mosaicEffectStyle').select_option(style)
         editor.locator('#mosaicEffectSave').click()
     editor.locator('#mosaicClose').click();open_auto(editor);editor.locator('#mosaicScan').click()
     for event,style in [('e1','soft_blur'),('e2','blur')]:
-        editor.locator(f'[data-mosaic-card="{event}"] [data-effect-target]').click()
+        editor.locator(f'[data-mosaic-card="{event}"] [data-scan-event]').click()
+        editor.locator('#mosaicLivePreviewAction [data-effect-target]').click()
         assert editor.locator('#mosaicEffectStyle').input_value()==style
         editor.locator('#mosaicEffectCancel').click()
     editor.evaluate("""() => {session.capabilities.tracking=true;const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.effectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
@@ -761,7 +920,8 @@ def test_effect_preview_sends_all_clip_regions_without_saving(editor):
     assert editor.locator('#mosaicClipPreview').count()==0
     editor.locator('[data-event-adopt="e1"]').click()
     editor.locator('[data-proposal="e2:0"]').click()
-    editor.locator('[data-mosaic-card="e1"] [data-effect-target]').click()
+    editor.locator('[data-mosaic-card="e1"] [data-scan-event]').click()
+    editor.locator('#mosaicLivePreviewAction [data-effect-target]').click()
     editor.locator('#mosaicEffectStyle').select_option('soft_blur')
     editor.locator('#mosaicEffectPreview').click()
     editor.locator('#mosaicTrackDialog').wait_for()
@@ -771,7 +931,8 @@ def test_effect_preview_sends_all_clip_regions_without_saving(editor):
     editor.locator('#mosaicTrackClose').click()
     assert editor.locator('#mosaicEffects').is_visible()
     editor.locator('#mosaicEffectCancel').click()
-    editor.locator('[data-mosaic-card="e1"] [data-effect-target]').click()
+    editor.locator('[data-mosaic-card="e1"] [data-scan-event]').click()
+    editor.locator('#mosaicLivePreviewAction [data-effect-target]').click()
     assert editor.locator('#mosaicEffectStyle').input_value()=='pixel'
 
 
@@ -823,15 +984,13 @@ def test_region_can_move_resize_edges_and_stay_inside_frame(editor):
 
 def test_adjust_sidebar_does_not_shrink_preview(editor):
     open_editor(editor)
-    editor.locator('#mosaicAdjust > summary').click()
     before=editor.locator('#mosaicStage').bounding_box()
     editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
     after=editor.locator('#mosaicStage').bounding_box()
     assert abs(before['height']-after['height'])<1
     assert editor.locator('#mosaicAdjust').bounding_box()['x']>after['x']+after['width']
-    assert editor.locator('.mosaic-scan-section').is_hidden()
+    assert editor.locator('.mosaic-scan-section').is_visible()
     assert editor.locator('#mosaicConfirm').is_visible()
-    editor.locator('#mosaicAdjust > summary').click()
     assert editor.locator('.mosaic-scan-section').is_visible()
 
 
@@ -1001,7 +1160,6 @@ def test_manual_fixed_region_persists_and_generates_without_tracking(editor):
     editor.locator('#mosaicClose').click();open_auto(editor)
     editor.locator('[data-target-view]').click();editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()')
     assert editor.locator('#mosaicMotion').input_value()=='fixed'
-    editor.locator('#mosaicAdjust > summary').click()
     editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.fixedBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
     assert editor.locator('#mosaicBatchStart').is_enabled()
     editor.locator('#mosaicBatchStart').click()
@@ -1046,7 +1204,7 @@ def test_manual_clip_multiple_regions_add_edit_remove_and_preview(editor):
     assert len(draft['targets'])==3 and draft['targets'][1]['x']==85
     editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()');editor.locator('#mosaicRemoveRegion').click()
     assert active_count(editor)==2
-    editor.locator('#mosaicAdjust > summary').click();editor.locator('[data-effect-target]').click()
+    editor.locator('[data-effect-target]').click()
     editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/clip-preview')){window.multiPreview=body;return {id:'b'.repeat(32),status:'completed'};}return old(url,body);};}""")
     editor.locator('#mosaicEffectPreview').click()
     assert editor.evaluate('multiPreview.targets.length')==2
@@ -1069,12 +1227,14 @@ def test_removed_ai_region_stays_removed_and_other_regions_survive(editor):
     assert editor.locator('.mosaic-box:visible').count()==0
 
 
-def test_remove_unadopted_ai_box_persists(editor):
+def test_unadopted_ai_box_is_not_editable_and_keeps_its_suggestion(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
-    editor.locator('[data-scan-event]').click();editor.locator('#mosaicAdjustToggle').evaluate('(el)=>el.click()');editor.locator('#mosaicRemoveRegion').click()
+    editor.locator('[data-scan-event]').click()
+    assert editor.locator('#mosaicRegionTools').is_hidden()
     editor.locator('#mosaicClose').click();open_auto(editor);editor.locator('[data-scan-event]').click()
     editor.locator('#mosaicFrame').wait_for(state='visible')
-    assert editor.locator('.mosaic-box:visible').count()==0
+    assert editor.locator('#mosaicRegionTools').is_hidden()
+    assert editor.locator('[data-proposal]').count()==1
     assert active_count(editor)==0
 
 
@@ -1119,7 +1279,8 @@ def test_clip_checkboxes_toggle_cancel_and_are_mutually_exclusive(editor):
     assert not delete.is_checked() and not mask.is_checked()
     mask.click()
     assert mask.is_checked() and not delete.is_checked()
-    assert card.locator('[data-effect-target]').is_visible()
+    assert card.locator('[data-effect-target]').count()==0
+    assert editor.locator('#mosaicLiveControls').is_visible()
     delete.click()
     assert delete.is_checked() and not mask.is_checked()
     assert card.locator('[data-effect-target]').count()==0
@@ -1132,6 +1293,7 @@ def test_clip_checkboxes_toggle_cancel_and_are_mutually_exclusive(editor):
 def test_card_edit_opens_clip_and_coordinates_belong_to_region(editor):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     assert editor.locator('#mosaicAdjustToggle').is_hidden()
+    editor.locator('[data-proposal]').click()
     stage=editor.locator('#mosaicStage').bounding_box()
     editor.locator('[data-edit-event="e1"]').click()
     assert editor.locator('#mosaicAdjust').evaluate('(el)=>el.open')
