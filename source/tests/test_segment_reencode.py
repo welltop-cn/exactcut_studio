@@ -72,6 +72,21 @@ def test_cut_copies_source_gops_and_matches_full_encode(tmp_path, events, monkey
     assert abs(float(audio(tmp_path/'smart.mp4')['duration'])-float(audio(tmp_path/'full.mp4')['duration'])) < 1/30
 
 
+@pytest.mark.integration
+@pytest.mark.parametrize('tail_frames', [1, 2])
+def test_short_encoded_tail_keeps_constant_frame_rate(tmp_path, events, tail_frames):
+    source = make_source(tmp_path/'source.mp4');meta = cutting.probe_source(source)
+    output = tmp_path/'smart.mp4'
+    result = cutting.render_video(source, output, [[150+tail_frames, 180]], meta)
+    event = used(events)
+    assert event['used'] is True, event
+    assert event['encoded_frames'] == tail_frames
+    assert result['frame_count'] == 150+tail_frames
+    assert frame_hashes(output)[:150] == frame_hashes(source)[:150]
+    video = next(s for s in cutting.ffprobe(output)['streams'] if s['codec_type'] == 'video')
+    assert video['avg_frame_rate'] == '30/1'
+
+
 def tracks(*spans):
     styles = ('pixel', 'blur')
     return [{'target': {'start': s, 'end': e, 'seed_frame': s, 'x': 16+40*i, 'y': 16, 'w': 48, 'h': 40, 'motion': 'fixed',

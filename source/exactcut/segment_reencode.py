@@ -198,8 +198,11 @@ def build(source, output, kept, meta, render, work, state, run, layers=None):
     command = ['ffmpeg', '-y', '-v', 'error', '-f', 'concat', '-safe', '0', '-i', str(listing), '-map', '0:v:0', '-c', 'copy']
     run(command+['-movflags', '+faststart', str(output)], light=True)
     def decode_order_ok(samples):
+        frame_ticks = 1/(rate*tick)
+        _require(frame_ticks.denominator == 1, 'frame duration is not an integer number of ticks')
         return (all(int(p['dts']) <= int(p['pts']) for p in samples)
-                and all(int(x['dts']) < int(y['dts']) for x, y in zip(samples, samples[1:])))
+                and all(int(x['dts']) < int(y['dts']) for x, y in zip(samples, samples[1:]))
+                and all(int(y['dts'])-int(x['dts']) == frame_ticks for x, y in zip(samples, samples[1:])))
     joined = packets(output, run)
     if not decode_order_ok(joined):
         run(command+['-bsf:v', f'setts=pts=PTS:dts=(N-2)/({fps}*TB)', '-movflags', '+faststart', str(output)], light=True)
