@@ -42,6 +42,53 @@ def test_context_and_redaction(diag, monkeypatch):
     assert (root / 'logs').stat().st_mode & 0o077 == 0
 
 
+@pytest.mark.parametrize('succeeds', [True, False])
+def test_segment_attempt_event_keeps_job_context(diag, succeeds):
+    from exactcut import segment_reencode
+    d, root = diag
+    def render():
+        if not succeeds:
+            raise ValueError('fixture fallback')
+        return 'rendered'
+    with d.context(job_id='job-x'):
+        result = segment_reencode.attempt(render, {})
+    assert result == ('rendered' if succeeds else None)
+    row = records(root)[0]
+    assert row['event'] == 'cut.segments'
+    assert row['job_id'] == 'job-x'
+    assert row['used'] is succeeds
+
+
+@pytest.mark.parametrize('fails', [False, True])
+def test_cutting_render_job_scopes_diagnostics_and_releases_locks(diag, monkeypatch, fails):
+    from contextlib import nullcontext
+    from exactcut import cutting, editor_resources
+    from exactcut.util import read_json, write_json_atomic
+    d, root = diag
+    job = {'id': 'job-x', 'ranges': []}
+    write_json_atomic(root / 'session.json', {'jobs': [job]})
+    monkeypatch.setattr(cutting, 'file_sha256', lambda path: 'source-hash')
+    monkeypatch.setattr(editor_resources, 'final_group', nullcontext)
+    def render(*args):
+        d.event('cut.segments', used=False, reason='not eligible')
+        if fails:
+            raise cutting.CutError('fixture failure')
+        return {'sha256': 'output-hash'}
+    monkeypatch.setattr(cutting, 'render_video', render)
+    closed = []
+    class Lease:
+        def close(self):
+            closed.append(d.current().get('job_id'))
+    with d.context(job_id='outer-job'):
+        cutting._render_job(root, {'source_sha256': 'source-hash', 'metadata': {}}, job, Lease(), Lease())
+        assert d.current()['job_id'] == 'outer-job'
+    row = next(r for r in records(root) if r['event'] == 'cut.segments')
+    assert row['job_id'] == 'job-x'
+    assert closed == ['job-x', 'job-x']
+    saved = read_json(root / 'session.json')['jobs'][0]
+    assert saved['status'] == ('failed' if fails else 'ready')
+
+
 def test_retention_size_limit_and_foreign_files(diag):
     d, root = diag
     d.event('startup')

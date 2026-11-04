@@ -516,25 +516,26 @@ def start_render(batch_id, session_id, ranges, mosaics=None):
 
 
 def _render_job(path, data, job, worker_lease, batch_lock):
-    output = path/(job['id']+'.mp4')
-    try:
-        if file_sha256(path/'source.mp4') != data['source_sha256']:
-            raise CutError('剪切原片校验失败，请重新打开成片')
-        from . import editor_resources
-        with editor_resources.final_group():
-            result = render_video(path/'source.mp4', output, job['ranges'], data['metadata'], job.get('mosaics') or [])
-        outcome = {'status': 'ready', 'output_sha256': result['sha256'], 'completed_at': now_iso()}
-    except Exception as exc:
-        output.unlink(missing_ok=True)
-        outcome = {'status': 'failed', 'error': str(exc) if isinstance(exc, CutError) else '剪切失败，请重试；原成片保留'}
-    try:
-        with lock_file(path/'state.lock', blocking=True):
-            latest = read_json(path/'session.json')
-            get_job(latest, job['id']).update(outcome)
-            write_json_atomic(path/'session.json', latest)
-    finally:
-        worker_lease.close()
-        batch_lock.close()
+    with diagnostics.context(job_id=job['id']):
+        output = path/(job['id']+'.mp4')
+        try:
+            if file_sha256(path/'source.mp4') != data['source_sha256']:
+                raise CutError('剪切原片校验失败，请重新打开成片')
+            from . import editor_resources
+            with editor_resources.final_group():
+                result = render_video(path/'source.mp4', output, job['ranges'], data['metadata'], job.get('mosaics') or [])
+            outcome = {'status': 'ready', 'output_sha256': result['sha256'], 'completed_at': now_iso()}
+        except Exception as exc:
+            output.unlink(missing_ok=True)
+            outcome = {'status': 'failed', 'error': str(exc) if isinstance(exc, CutError) else '剪切失败，请重试；原成片保留'}
+        try:
+            with lock_file(path/'state.lock', blocking=True):
+                latest = read_json(path/'session.json')
+                get_job(latest, job['id']).update(outcome)
+                write_json_atomic(path/'session.json', latest)
+        finally:
+            worker_lease.close()
+            batch_lock.close()
 
 
 def output_file(batch_id, session_id, job_id):

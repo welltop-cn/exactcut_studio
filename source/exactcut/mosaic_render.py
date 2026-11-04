@@ -6,7 +6,7 @@ import threading
 from pathlib import Path
 from PIL import Image, ImageChops
 from . import cutting, mosaic_session as sessions, mosaic_locate, mosaic_tracking as tracking
-from . import cutting_access, workflow, storage
+from . import cutting_access, workflow, storage, diagnostics
 from .media import bounded_ffmpeg
 from . import mosaic_effects as effects, processing_cancel
 from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_iso
@@ -372,8 +372,9 @@ def prepare_track(bid,sid,session,target,cfg,directory,*,on_tracking=None,valida
     return mosaic_inference.prepare(sessions.session_path(bid,sid),session,target,cfg,directory,on_tracking=on_tracking,validate=validate)
 
 def _work(bid,sid,path,job,cfg,leases,permit=None):
-    with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases or None), (editor_resources.encoding() if job.get('preview') else nullcontext()):
-        _work_cancelable(bid,sid,path,job,cfg,leases,permit)
+    with diagnostics.context(job_id=job['id']):
+        with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases or None), (editor_resources.encoding() if job.get('preview') else nullcontext()):
+            _work_cancelable(bid,sid,path,job,cfg,leases,permit)
 
 
 def _work_cancelable(bid,sid,path,job,cfg,leases,permit=None):
