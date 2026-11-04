@@ -13,7 +13,8 @@ from .runtime import data_root
 from .util import load_config
 
 _ROLES={'preview':('preview_tasks',2),'scan':('scan_tasks',2),'preprocess':('preprocess_tasks',2),
-        'media':('media_tasks',5),'final_media':('final_media_tasks',1),'frame':('frame_tasks',2),'transfer':('transfer_tasks',2)}
+        'hook':('hook_tasks',3),'locate':('locate_tasks',2),
+        'media':('media_tasks',5),'final_media':('final_media_tasks',1),'frame':('frame_tasks',2)}
 _active=ContextVar('editor_execution_stages',default=frozenset())
 _leases=ContextVar('editor_execution_leases',default={})
 _reserved=ContextVar('editor_initial_resource',default=None)
@@ -68,14 +69,19 @@ def acquire(kind,actor='admin'):
     raise cutting.ResourceBusy('frame' if kind=='frame' else 'compute')
 
 
-def wait(kind,actor='admin',*,timeout=1800):
-    """Only bounded existing workers may wait during a stage transition."""
-    deadline=time.monotonic()+timeout
+def wait(kind,actor='admin',*,timeout=None):
+    """Wait indefinitely in a cancellation scope when timeout is None.
+
+    Outside a cancellation scope, None keeps the 1800-second limit. An explicit
+    timeout always sets the limit, including inside a cancellation scope.
+    """
+    if timeout is None and not processing_cancel.scoped():timeout=1800
+    deadline=None if timeout is None else time.monotonic()+timeout
     while True:
         processing_cancel.check()
         try:return acquire(kind,actor)
         except cutting.ResourceBusy:
-            if time.monotonic()>=deadline:raise cutting.CutError('等待处理资源超时，请重试',503)
+            if deadline is not None and time.monotonic()>=deadline:raise cutting.CutError('等待处理资源超时，请重试',503)
             time.sleep(.05)
 
 

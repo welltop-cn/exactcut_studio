@@ -2,7 +2,7 @@
 from pathlib import Path
 import pytest
 from PIL import Image
-from exactcut import cutting, mosaic_render as render
+from exactcut import cutting, editor_resources, mosaic_render as render
 from test_cutting import make_video, frame_numbers, checker_video, gray_frames, block_span
 from test_cutting_api import ready, call
 from test_phase2_preview_api import fixture, serve
@@ -225,7 +225,7 @@ def test_stop_interrupts_owned_process_and_retains_session(ready,monkeypatch):
         assert sessions.read_session(bid,sid).get('reset_at','')==''
         assert file_sha256(source)==sha
         assert render.stop(bid,sid,job['id'],'')['status']=='cancelled'
-        with cutting.lock_file(cutting.lock_root()/'compute.lock'):pass
+        with editor_resources.acquire('final_media'):pass
         monkeypatch.setattr(render,'process_video',original_process)
         restarted=render.start(bid,sid,[],'',[[1,3]])
         assert not restarted.get('cancel_requested')
@@ -482,7 +482,7 @@ def test_discard_interrupts_composing_process_and_releases_compute(ready,monkeyp
     assert saved['status']=='cancelled',saved
     assert 'result' not in saved
     assert render.latest(bid,sid)['job']['status']=='cancelled'
-    with cutting.lock_file(cutting.lock_root()/'compute.lock'):pass
+    with editor_resources.acquire('final_media'):pass
 
 
 @pytest.mark.integration

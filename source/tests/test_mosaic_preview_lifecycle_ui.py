@@ -53,6 +53,9 @@ def test_old_stop_failure_cannot_overwrite_next_editor_message(editor):
     editor.locator('#mosaicEffectCancel').click();editor.locator('#mosaicClose').click()
     editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()');editor.locator('#mosaicWorkspace').wait_for(state='visible')
     editor.wait_for_function('rejectOldStop!==null')
+    # First-frame loading legitimately updates this message. Observe the new
+    # editor after its automatic scan has settled, then reject the old request.
+    editor.wait_for_function("document.getElementById('mosaicStatus').textContent==='点击片段查看画面，选择删除或打码；不选则不处理。'")
     message=editor.locator('#mosaicStatus').inner_text()
     editor.evaluate("rejectOldStop(new Error('old stop failed'))")
     editor.wait_for_timeout(50)

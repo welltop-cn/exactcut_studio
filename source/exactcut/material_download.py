@@ -23,7 +23,7 @@ def validate_downloaded_video(video):
         if length <= 0 or not any(s.get('codec_type') == 'video' for s in payload.get('streams', [])):
             raise ValueError('缺少视频轨道或有效时长')
         frame = run_checked(['ffmpeg', '-v', 'error', '-ss', f'{max(0, length - .2):.3f}',
-                             '-i', str(video), '-map', '0:v:0', '-frames:v', '1', '-f', 'framemd5', '-'], timeout=30)
+                             '-i', str(video), '-map', '0:v:0', '-frames:v', '1', '-f', 'framemd5', '-'], timeout=30, light=True)
         if not any(line.strip() and not line.startswith('#') for line in frame.stdout.splitlines()):
             raise ValueError('片尾尚未下载完整')
     except (ValueError, RuntimeError) as exc:

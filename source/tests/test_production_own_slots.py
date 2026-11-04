@@ -19,19 +19,19 @@ def stage_root(tmp_path,monkeypatch):
 
 
 def hold_all(stack):
-    for kind in ('media','frame','transfer'):
+    for kind in ('media','frame'):
         capacity=editor_resources.settings()[editor_resources._ROLES[kind][0]]
         for _ in range(capacity):stack.enter_context(editor_resources.acquire(kind))
 
 
 @pytest.mark.integration
-def test_workflow_child_media_and_transfer_run_while_editor_holds_every_slot(stage_root):
+def test_workflow_child_media_run_while_editor_holds_every_slot(stage_root):
     out=stage_root/'production.png';(stage_root/'.env').write_text('')
     # Real `python -m exactcut.workflow` entry; only the stage body is a fixture.
     code=("import runpy,sys\nfrom exactcut import stage_results,material_workers,media,editor_resources\n"
           "stage_results.run_child=lambda function,*args:function(*args)\nout=sys.argv[1]\n"
           "def body(*_):\n media.run_checked("+repr(FRAME)+"+[out]);media.ffprobe(out)\n"
-          " with editor_resources.stage('transfer'):pass\n return 0\n"
+          " return 0\n"
           "material_workers.retry_media_upload=body\n"
           "sys.argv=['workflow','media-upload','B','R']\nrunpy.run_module('exactcut.workflow',run_name='__main__')\n")
     with ExitStack() as held:
@@ -53,17 +53,6 @@ def test_editor_media_still_waits_for_its_own_slots(stage_root):
         assert worker.is_alive() and not out.exists(),'editor ffmpeg must wait while all media slots are held'
     worker.join(timeout=10)
     assert not worker.is_alive() and out.is_file()
-
-
-def test_editor_transfer_stage_still_waits(stage_root):
-    entered=threading.Event()
-    def upload():
-        with editor_resources.stage('transfer'):entered.set()
-    with ExitStack() as held:
-        hold_all(held)
-        threading.Thread(target=upload,daemon=True).start()
-        assert not entered.wait(.6)
-    assert entered.wait(5)
 
 
 def run_production_main(tmp_path,module,argv,setup,timeout=20,**popen):

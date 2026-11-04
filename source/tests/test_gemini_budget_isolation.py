@@ -27,7 +27,7 @@ def test_gemini_ignores_exhausted_openai_bucket_and_never_changes_it(ready,tmp_p
     client.files.upload.return_value.name='files/fixture';client.files.get.return_value=SimpleNamespace(state='ACTIVE',uri='fixture-uri')
     monkeypatch.setattr(genai,'Client',lambda **kwargs:client)
     if operation=='scan':
-        cfg={**cutting_scan.settings(),'max_refine_events':0};cutting_scan.detect(source,{'frame_count':90,'fps_num':30,'fps_den':1},cfg,'standard','fixture',lambda *a:None,SimpleNamespace(close=lambda:None))
+        cfg={**cutting_scan.settings(),'max_refine_events':0};cutting_scan.detect(source,{'frame_count':90,'fps_num':30,'fps_den':1},cfg,'standard','fixture',lambda *a:None)
     elif operation=='locate':mosaic_locate.detect(b'jpeg',{'width':160,'height':96},cutting_scan.settings(),'fixture')
     elif operation=='subtitle':preview_subtitle_model.ask(client,source,3000,preview_subtitles.settings(),time.monotonic()+500)
     elif operation=='safety-images':safety._gemini_images_json(client,'fixture','prompt',[])

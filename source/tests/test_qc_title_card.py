@@ -19,7 +19,7 @@ def frame_qc(tmp_path, monkeypatch):
             {'codec_type': 'video', 'width': size[0], 'height': size[1], 'avg_frame_rate': '30/1'},
             {'codec_type': 'audio', 'channels': render['audio_channels']} ]})
     def inspect(image, timeline=None, expected=1000):
-        monkeypatch.setattr(qc, 'run_checked', lambda args: image.save(args[-1]))
+        monkeypatch.setattr(qc, 'run_checked', lambda args, **kwargs: image.save(args[-1]))
         return qc.inspect_output(video, expected, config, timeline)
     return inspect, size, tmp_path
 

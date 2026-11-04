@@ -26,7 +26,6 @@ def poll(m,bid,sid):
 
 
 def coarse(*args,**kwargs):
-    args[6].close()
     return {'risk_events':[{'id':str(i),'start_frame':i*5,'end_frame':i*5+5,'category':'风险','evidence_zh':'证据'} for i in range(10)],'warnings':[]}
 
 
@@ -164,7 +163,7 @@ def test_stale_generation_cannot_publish(configured,monkeypatch):
     import threading
     m=module();bid,sid=setup(configured);entered=threading.Event();finish=threading.Event()
     def detect(*args,**kwargs):
-        args[6].close();entered.set();assert finish.wait(5)
+        entered.set();assert finish.wait(5)
         return {'risk_events':[],'warnings':[]}
     monkeypatch.setattr(cutting_scan,'detect',detect)
     m.start(bid,sid,'');path=sessions.session_path(bid,sid)/'scan.json'
@@ -184,12 +183,12 @@ def test_expired_coarse_deadline_skips_proxy(tmp_path,monkeypatch):
     from google import genai
     from types import SimpleNamespace
     from test_cutting_scan import META
-    calls=[];closed=[]
+    calls=[]
     monkeypatch.setattr(genai,'Client',lambda **k:SimpleNamespace(close=lambda:None))
     monkeypatch.setattr(cutting,'run',lambda *a:calls.append(True))
     with pytest.raises(cutting.CutError):
-        cutting_scan.detect(tmp_path/'source.mp4',META,{'model':'fixture','request_timeout_ms':1000},'standard','fixture',lambda _:None,SimpleNamespace(close=lambda:closed.append(True)),deadline=time.monotonic()-1)
-    assert not calls and closed
+        cutting_scan.detect(tmp_path/'source.mp4',META,{'model':'fixture','request_timeout_ms':1000},'standard','fixture',lambda _:None,deadline=time.monotonic()-1)
+    assert not calls
 
 
 @pytest.mark.integration

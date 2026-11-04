@@ -2,6 +2,7 @@
 
 Models are explicit test doubles here; independent acceptance uses actual Gemini/SAM.
 """
+from contextlib import ExitStack
 import base64
 import json
 import os
@@ -11,7 +12,7 @@ from http.client import HTTPConnection
 from pathlib import Path
 
 import pytest
-from exactcut import accounts,cutting,workflow,mosaic_session as sessions,mosaic_scan,mosaic_locate,mosaic_tracking as tracking,mosaic_render as render,cutting_scan
+from exactcut import editor_resources, accounts,cutting,workflow,mosaic_session as sessions,mosaic_scan,mosaic_locate,mosaic_tracking as tracking,mosaic_render as render,cutting_scan
 from exactcut.util import read_json,write_json_atomic,file_sha256
 from test_phase2_preview_api import fixture,serve
 from test_cutting_api import ready
@@ -38,11 +39,12 @@ def terminal(path):
 def test_scan_admission_and_completion_while_final_compute_remains_held(ready,tmp_path,monkeypatch):
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch)
     session=sessions.open_session(bid,rid,sha)
-    def detect(source,meta,cfg,policy,key,progress,compute,**kwargs):
-        if compute is not None:compute.close()
+    def detect(source,meta,cfg,policy,key,progress,**kwargs):
         return {'risk_events':[],'warnings':[]}
     monkeypatch.setattr(cutting_scan,'detect',detect)
-    with cutting.lock_file(cutting.lock_root()/'compute.lock'):
+    with ExitStack() as stack:
+        for _ in range(editor_resources.settings()['final_media_tasks']):
+            stack.enter_context(editor_resources.acquire('final_media'))
         job=mosaic_scan.start(bid,session['id'],'')
         path=sessions.session_path(bid,session['id'])/'scan.json'
         terminal(path)
@@ -54,7 +56,9 @@ def test_region_locate_uses_independent_frames_during_final_compute(ready,tmp_pa
     bid,rid,sha,source=ready;enable_models(tmp_path,monkeypatch)
     session=sessions.open_session(bid,rid,sha)
     monkeypatch.setattr(mosaic_locate,'detect',lambda *args,**kwargs:[])
-    with cutting.lock_file(cutting.lock_root()/'compute.lock'):
+    with ExitStack() as stack:
+        for _ in range(editor_resources.settings()['final_media_tasks']):
+            stack.enter_context(editor_resources.acquire('final_media'))
         job=mosaic_locate.start(bid,session['id'],0,6,0,'')
         path=sessions.session_path(bid,session['id'])/f"locate-{job['id']}.json"
         terminal(path)
@@ -67,7 +71,9 @@ def test_sam_preview_and_ffmpeg_complete_while_final_compute_remains_held(ready,
     session=sessions.open_session(bid,rid,sha)
     monkeypatch.setattr(tracking,'run_tracker',lambda src,directory,meta,target,cfg:make_track(directory,target,meta)['result'])
     target={'start':0,'end':6,'seed_frame':0,'x':10,'y':10,'w':20,'h':20}
-    with cutting.lock_file(cutting.lock_root()/'compute.lock'):
+    with ExitStack() as stack:
+        for _ in range(editor_resources.settings()['final_media_tasks']):
+            stack.enter_context(editor_resources.acquire('final_media'))
         job=render.start(bid,session['id'],[target],'',effect={'style':'solid'},preview=True)
         path=sessions.session_path(bid,session['id'])/f"render-{job['id']}.json"
         terminal(path)
@@ -104,8 +110,7 @@ def test_two_authenticated_users_enter_model_work_concurrently(ready,tmp_path,mo
             entered.append(time.monotonic())
             if len(entered)==2:both.set()
         assert finish.wait(8),'test worker was not released'
-    def detect(source,meta,cfg,policy,key,progress,compute,**kwargs):
-        if compute is not None:compute.close()
+    def detect(source,meta,cfg,policy,key,progress,**kwargs):
         barrier();return {'risk_events':[],'warnings':[]}
     def infer(source,directory,meta,target,cfg):
         barrier();return make_track(directory,target,meta)['result']

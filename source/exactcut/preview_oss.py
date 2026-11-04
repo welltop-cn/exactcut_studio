@@ -7,7 +7,7 @@ from urllib.parse import quote
 
 from .runtime import data_root, environment
 from .util import file_sha256, json_sha256, load_config, env, now_iso, read_json
-from . import diagnostics as diag, resource_locks, editor_resources
+from . import diagnostics as diag, resource_locks
 
 # Restricted namespaces: configuration cannot redirect writes into delivery keys.
 PREFIX = 'exactcut-previews/production'
@@ -131,7 +131,7 @@ def signed_preview(video: Path, batch_id: str, request_id: str, *, bucket=None, 
         verified = _ensure_uploaded(video, batch_id, request_id, bucket=bucket, receipt=receipt)
     else:
         # Playback only validates an existing receipt; it never copies, hashes,
-        # uploads or waits for a transfer slot/object lock in the request.
+        # uploads or waits for an object lock in the request.
         if not isinstance(receipt, dict):
             raise PreviewBusy('OSS 预览尚未准备')
         try:
@@ -218,15 +218,14 @@ def _ensure_uploaded(video: Path, batch_id: str, request_id: str, *, bucket, rec
     before = _identity(video)
     with tempfile.TemporaryDirectory(prefix='.oss-preview-', dir=video.parent) as directory:
         snapshot = Path(directory) / 'preview.mp4'
-        with editor_resources.stage('transfer'):
-            shutil.copyfile(video, snapshot)
-            if _identity(video) != before:
-                raise ValueError('成片正在更新，请稍后重试')
-            digest = file_sha256(snapshot)
+        shutil.copyfile(video, snapshot)
+        if _identity(video) != before:
+            raise ValueError('成片正在更新，请稍后重试')
+        digest = file_sha256(snapshot)
         key = prefix + digest + '.mp4'
         # The complete remote identity avoids fixed shards and same-prefix
         # collisions. A second process rechecks existence after the first put.
-        with resource_locks.hold('oss-object',[bucket.endpoint,bucket.bucket_name,key]), editor_resources.stage('transfer'):
+        with resource_locks.hold('oss-object',[bucket.endpoint,bucket.bucket_name,key]):
             if not bucket.object_exists(key):
                 try:
                     result = bucket.put_object_from_file(key, str(snapshot), headers={

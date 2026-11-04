@@ -36,7 +36,6 @@ def open_session(bid,rid,sha):
             cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha,readonly=True)
             sid=json_sha256([bid,rid,sha])[:32];path=session_path(bid,sid)
             if (path/'session.json').is_file():return get_session(bid,sid)
-            from . import editor_resources
             with lock_file(lock_root()/('mosaic-prepare-'+sid+'.lock'),blocking=True):
                 if (path/'session.json').is_file():return get_session(bid,sid)
                 source,_=workflow.preview_file(bid,rid)
@@ -45,11 +44,10 @@ def open_session(bid,rid,sha):
                 path.mkdir(parents=True,exist_ok=True)
                 try:
                     temporary=path/'source.partial.mp4'
-                    with editor_resources.stage('transfer'):
-                        with diagnostics.span('editor.prepare.copy', private_error=True):
-                            shutil.copyfile(source,temporary)
-                        with diagnostics.span('editor.prepare.hash', private_error=True):
-                            copied_sha=file_sha256(temporary)
+                    with diagnostics.span('editor.prepare.copy', private_error=True):
+                        shutil.copyfile(source,temporary)
+                    with diagnostics.span('editor.prepare.hash', private_error=True):
+                        copied_sha=file_sha256(temporary)
                     if copied_sha!=sha:raise CutError('原成片内容已变化，请重新打开',409)
                     meta=cutting.probe_source(temporary)
                     cutting_access.require_editable(workflow.folder(bid),rid,source_sha=sha,readonly=True)
@@ -96,7 +94,7 @@ def frame_file(batch_id, session_id, index):
             with diagnostics.span('editor.frame_generate', private_error=True, editor='mosaics'):
                 run(command + ['-i', str(path/'source.mp4'), '-an', '-vf', "scale=w='min(540,iw)':h=-2",
                      '-frames:v', str(size), '-fps_mode', 'passthrough', '-q:v', '2',
-                     '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60)
+                     '-start_number', str(start), str(Path(directory)/'%d.jpg')], 60, light=True)
             files = [Path(directory)/f'{n}.jpg' for n in range(start, start+size)]
             if not all(f.is_file() and f.stat().st_size for f in files):
                 raise CutError('准确帧窗口不完整，请重试')

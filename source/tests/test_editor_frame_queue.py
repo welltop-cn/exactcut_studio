@@ -58,7 +58,7 @@ def test_queued_frame_waits_for_busy_cache_and_other_cache_progresses(ready,monk
     mosaic_sid=mosaic_session.open_session(bid,rid,sha)['id']
     entered,release=threading.Event(),threading.Event();calls=[]
     def frames(module):
-        def run(command,timeout):
+        def run(command,timeout,**kwargs):
             calls.append((module.__name__,command))
             if module is cutting and len([c for c in calls if c[0]==cutting.__name__])==1:
                 entered.set();assert release.wait(15)

@@ -176,7 +176,7 @@ def still_image(project, base, options, render, work):
         # rounding a timestamp to the frame immediately before the actual end.
         png = work / 'last-frame.png'
         run_checked(['ffmpeg', '-y', '-v', 'error', '-sseof', '-1', '-i', str(base),
-                     '-map', '0:v:0', '-update', '1', str(png)])
+                     '-map', '0:v:0', '-update', '1', str(png)], light=True)
         if count < 1 or not png.exists():
             raise ValueError('无法提取素材最后一帧')
         with Image.open(png) as source:

@@ -214,12 +214,16 @@ def submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id=None):
         return job
 
 
+QUEUED_PROGRESS='排队中，轮到后自动开始处理'
+
+
 def execute(item,stop_event):
     from . import accounts
-    bid,sid=item['batch_id'],item['session_id'];path=queue.job_path(item);leases=[]
+    bid,sid=item['batch_id'],item['session_id'];path=queue.job_path(item);leases=[];slot=None
     try:
         leases.append(cutting.lock_file(path.with_suffix('.worker.lock')))
-        # Cancellation remains responsive while other compute users hold the lease.
+        # Stay queued (no asset gate held) until a final media slot is free; the
+        # slot is handed to the first final media stage. Cancel stays responsive.
         while True:
             job=read_json(path)
             if job.get('cancel_requested'):
@@ -229,8 +233,14 @@ def execute(item,stop_event):
             if job['status'] in {'completed','failed','cancelled'}:return
             if stop_event.is_set():return 'deferred'
             try:
-                leases.append(cutting.lock_file(cutting.lock_root()/'compute.lock',resource='compute'));break
-            except cutting.CutError:time.sleep(.1)
+                slot=editor_resources.acquire('final_media',item['actor']);break
+            except cutting.ResourceBusy:
+                if job.get('progress')!=QUEUED_PROGRESS:
+                    with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+                        job=read_json(path)
+                        if job['status']=='queued' and not job.get('cancel_requested'):
+                            job['progress']=QUEUED_PROGRESS;write_json_atomic(path,job)
+                time.sleep(.1)
         user=accounts.get(workflow.BATCHES.parent/'accounts.sqlite3',item['actor'])
         if not user or not user.get('enabled') or not accounts.allowed(workflow.folder(bid),user):raise cutting.CutError('发起账号已停用或无权访问项目',403)
         with cutting_access.gate(workflow.folder(bid),item['request_id'],allow_job=item['id']):
@@ -240,9 +250,11 @@ def execute(item,stop_event):
                 job=read_json(path)
                 if not job.get('cancel_requested'):job.update(status='running',stage='tracking',progress='正在准备处理视频')
                 write_json_atomic(path,job)
-        with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases),editor_resources.final_group():
+        with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases),editor_resources.final_group(),editor_resources.reservation(('final_media',slot)):
+            slot=None
             _work(bid,sid,path,job,job['config'],[])
     finally:
+        if slot:slot.close()
         for lease in reversed(leases):lease.close()
 
 
