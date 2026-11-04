@@ -38,9 +38,9 @@
   const activeCount=()=>targets.filter(t=>t.adopted!==false).length;
   const belongs=(t,e)=>t.eventId||e.id.startsWith('manual-')?t.eventId===e.id:(t.originStart??t.start)===e.start&&(t.originEnd??t.end)===e.end;
   const validTarget=t=>validBox(t)&&(t.motion===undefined||['fixed','tracked'].includes(t.motion))&&[t.start,t.end,t.seed_frame].every(Number.isInteger)&&t.start>=0&&t.start<=t.seed_frame&&t.seed_frame<t.end&&t.end<=meta().frame_count&&typeof t.label==='string'&&typeof t.reason==='string'&&(t.adopted===undefined||typeof t.adopted==='boolean');
-  function loadDraft(){
+  function loadDraft(serverDraft=null){
     savedRaw=localStorage.getItem(draftKey());legacyRaw=localStorage.getItem(key());oldDraftRaw=localStorage.getItem(oldDraftKey());
-    const draft=savedRaw===null?null:JSON.parse(savedRaw);
+    const draft=serverDraft??(savedRaw===null?null:JSON.parse(savedRaw));
     ignoredEvents=draft?.ignoredEvents||[];drawingEvents=draft?.drawingEvents||[];
     if([ignoredEvents,drawingEvents].some(ids=>!Array.isArray(ids)||ids.some(id=>typeof id!=='string')))throw Error('片段处理草稿无效');
     savedIgnoredEvents=[...ignoredEvents];savedDrawingEvents=[...drawingEvents];
@@ -98,11 +98,12 @@
   }
   function range(){const start=parse($('mosaicStart').value),end=parse($('mosaicEnd').value)+1;if(start>=end)throw Error('开始帧不能晚于结束帧');return {start,end};}
   function inRange(){try{const r=range();return wanted>=r.start&&wanted<r.end;}catch{return false;}}
+  const editorDraft=()=>({schema_version:1,targets,deletions,effect,clipEffects,manualClips,aiEvents,clipEdits,ignoredEvents,drawingEvents});
   function save(){
     clearRemovedClip();
     try{
       if(localStorage.getItem(draftKey())!==savedRaw||localStorage.getItem(key())!==legacyRaw||localStorage.getItem(oldDraftKey())!==oldDraftRaw)throw Error('草稿已在其他页面更新，请关闭后重新进入，避免覆盖。');
-      const value=JSON.stringify({schema_version:1,targets,deletions,effect,clipEffects,manualClips,aiEvents,clipEdits,ignoredEvents,drawingEvents});localStorage.setItem(draftKey(),value);
+      const value=JSON.stringify(editorDraft());localStorage.setItem(draftKey(),value);
       savedRaw=value;savedIgnoredEvents=[...ignoredEvents];savedDrawingEvents=[...drawingEvents];savedAiEvents=structuredClone(aiEvents);savedClipEdits=structuredClone(clipEdits);savedManualClips=structuredClone(manualClips);savedClipEffects=structuredClone(clipEffects);savedEffect={...effect};savedTargets=structuredClone(targets);savedDeletions=structuredClone(deletions);return true;
     }catch(e){ignoredEvents=[...savedIgnoredEvents];drawingEvents=[...savedDrawingEvents];aiEvents=structuredClone(savedAiEvents);clipEdits=structuredClone(savedClipEdits);manualClips=structuredClone(savedManualClips);clipEffects=structuredClone(savedClipEffects);effect={...savedEffect};targets=structuredClone(savedTargets);deletions=structuredClone(savedDeletions);editing=null;paint();status(e.message||'无法保存草稿，请保持窗口打开。',true);return false;}
   }
@@ -483,7 +484,7 @@
         sourceBinding.open();
       }else{video.src=appUrl(base()+'/source');video.load();}
       status(session.capabilities?.region_recognition?'可直接播放和添加片段；需要 AI 建议时点「识别整段视频」。':'本机未启用 Gemini 识别，可先手动框选目标。');
-      scanReadPending=!batchJob;paint();loadFrame();restoreBatch();restorePreviewNotice(version);
+      scanReadPending=true;paint();loadFrame();restoreBatch();restorePreviewNotice(version);
     }catch(e){if(version===epoch){$('mosaicPreparing').hidden=true;dialog.setAttribute('aria-busy','false');status(e.message,true);}}
   }
   function mount(){
@@ -790,6 +791,7 @@
     }else $('mosaicBatchStatus').textContent=EditorBusy.message(batchError||batchJob?.error||batchJob?.progress||'正在提交全部已打码区域…');
   }
   function restoreParameters(job){
+    if(job.editor_draft){loadDraft(structuredClone(job.editor_draft));return;}
     ignoredEvents=[];drawingEvents=[];legacyDraft=legacyJob(job);effect=simplified(job.effect);clipEffects={};aiEvents=[];clipEdits={};manualClips=[];
     targets=(job.targets||[]).map((t,i)=>{
       const eventId='manual-recovered-region-'+i;
@@ -810,7 +812,7 @@
     if(!context)return;
     const version=epoch,request=++batchToken,endpoint=base(),valid=()=>active(version)&&request===batchToken;
     const sourceSha=context.session.source_sha256;
-    const submitted=start?structuredClone({targets:adoptedTargets(),ranges:deleteRanges(),effect,reset_at:context.session.reset_at||'',submission_id:regionId()}):null;
+    const submitted=start?structuredClone({targets:adoptedTargets(),ranges:deleteRanges(),effect,editor_draft:editorDraft(),reset_at:context.session.reset_at||'',submission_id:regionId()}):null;
     batchLoading=true;batchError='';paintBatch();
     try{
       const result=await api(endpoint+'/render',submitted||undefined);
@@ -883,6 +885,8 @@
     if($('mosaicBatchStart').disabled)return;
     const saved=targets[editing],c=selectedBox();
     if(saved&&saved.adopted!==false){try{const r=range();if(!c||['x','y','w','h'].some(k=>c[k]!==saved[k])||r.start!==saved.start||r.end!==saved.end)throw Error('当前区域调整未生效，请重新调整后再生成完整视频。');}catch(e){status(e.message,true);return;}}
+    const pending=pendingCount();
+    if(pending&&!window.confirm(`还有 ${pending} 段待处理，这些段会保持原样。继续生成？`))return;
     const previousJob=batchJob;
     batchJob=null;resultBefore=false;$('mosaicBatchVideo').pause();$('mosaicBatchVideo').removeAttribute('src');$('mosaicBatchVideo').load();
     showResult(true);batchRequest(true,previousJob);
@@ -904,6 +908,8 @@
       if(awaitingDecision()){
         const job=await api(base()+'/discard-result',{job_id:batchJob.id,reset_at:context.session.reset_at||''});
         if(!active(version))return;batchJob=job;save();resultMode=false;paint();
+      }else if(batchJob?.status==='completed'&&batchJob.discarded_at){
+        if(save())dialog.close();
       }else{
         await api(base()+'/discard',{reset_at:context.session.reset_at||''});if(!active(version))return;clearDraft();dialog.close();
       }

@@ -204,9 +204,11 @@ def current(bid,sid,job,*,permit=None):
     return session
 
 
-def submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id=None):
+def submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id=None,editor_draft=None):
     if submission_id is not None and (not isinstance(submission_id,str) or not re.fullmatch('[0-9a-f]{32}',submission_id)):
         raise cutting.CutError('提交回执标识无效')
+    if editor_draft is not None and (not isinstance(editor_draft,dict) or editor_draft.get('schema_version')!=1):
+        raise cutting.CutError('编辑草稿格式无效')
     session=sessions.read_session(bid,sid);batch=workflow.folder(bid)
     # The asset gate serializes admission, including retries of a frozen task.
     from . import material_versions
@@ -229,7 +231,7 @@ def submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id=None):
         jid=uuid.uuid4().hex
         job={'schema_version':1,'id':jid,'queued_task':True,'status':'queued','stage':'queued',
              'source_sha256':session['source_sha256'],'reset_at':reset_at,'targets':targets,'ranges':ranges,
-             'effect':effect,'config':tracking.settings(),'fingerprint':fingerprint,'actor':actor,'submission_id':submission_id,
+             'effect':effect,'config':tracking.settings(),'fingerprint':fingerprint,'actor':actor,'submission_id':submission_id,'editor_draft':editor_draft,
              'created_at':now_iso(),'progress':'等待后台处理','completed_regions':0,'total_regions':len(targets)}
         queue.enqueue(bid,sid,session['request_id'],actor,job)
         return job
@@ -291,8 +293,8 @@ def discard_result(bid,sid,jid,reset_at):
             return job
 
 
-def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False,actor='admin',submission_id=None):
-    if not preview:return submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id)
+def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False,actor='admin',submission_id=None,editor_draft=None):
+    if not preview:return submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id,editor_draft)
     effect=effects.validate(effect)
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):
