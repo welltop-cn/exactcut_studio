@@ -73,6 +73,21 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,rang
         if key not in groups:groups[key]=(appearance,[])
         groups[key][1].append(track)
     if not groups:groups[tuple(effect.values())]=(effect,[])
+    if cutting.settings().get('segment_reencode') is True:
+        layers=list(groups.values())
+        def span_masks(start,end,directory):
+            directory.mkdir(parents=True,exist_ok=True);paths=[]
+            for index,(appearance,group) in enumerate(layers):
+                path=directory/f'mask-{index}.mkv'
+                encode_mask(path,meta,group,size,rate,appearance,progress,frames=range(start,end));paths.append(path)
+            return paths
+        video_layers={'appearances':[a for a,_ in layers],'intervals':[active_intervals(g) for _,g in layers],'masks':span_masks}
+        progress('正在合成有打码区域的片段，其余画面原样保留…')
+        actual=cutting.render_video(source,partial,ranges or [],meta,video_graph='segments',video_layers=video_layers,
+                                    copy_audio=not ranges,segments_only=True)
+        if actual is not None:
+            actual.pop('sha256');partial.replace(output)
+            return {'metadata':actual,'sha256':file_sha256(output),'bytes':output.stat().st_size}
     masks=[];appearances=[];intervals=[]
     for index,(appearance,group) in enumerate(groups.values()):
         mask_video=output.parent/f'combined-mask-{index}.mkv'
@@ -84,7 +99,7 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,rang
     graph=effects.layered_graph(meta,appearances,intervals)
     if ranges:
         progress('正在一次合成打码与删除片段…')
-        actual=cutting.render_video(source,partial,ranges,meta,video_graph=graph,video_inputs=masks)
+        actual=cutting.render_video(source,partial,ranges,meta,video_graph=graph,video_inputs=masks,_segments=False)
         actual.pop('sha256')
     else:
         cutting.run(['ffmpeg','-y','-v','error','-i',str(source),*[arg for mask in masks for arg in ('-i',str(mask))],'-filter_complex',graph,
@@ -98,7 +113,7 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,rang
 
 
 @editor_resources.media_operation
-def encode_mask(mask_video,meta,tracks,size,rate,effect,progress):
+def encode_mask(mask_video,meta,tracks,size,rate,effect,progress,frames=None):
     width,height=size
     progress('正在合并全部区域遮罩…')
     with (mask_video.with_suffix('.log')).open('wb') as log:
@@ -106,7 +121,7 @@ def encode_mask(mask_video,meta,tracks,size,rate,effect,progress):
         timer=threading.Timer(600,lambda:processing_cancel.terminate(process));timer.start()
         try:
             black=bytes(width*height);cached_active=None;cached_mask=None
-            for frame in range(meta['frame_count']):
+            for frame in (range(meta['frame_count']) if frames is None else frames):
                 processing_cancel.check()
                 active=tuple(i for i,t in enumerate(tracks) if not t.get('failed') and t['target']['start']<=frame<t['target']['end'])
                 if not active:raw=black

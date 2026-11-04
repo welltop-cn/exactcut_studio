@@ -109,6 +109,7 @@
     "max_queued_tasks": 30
   },
   "cutting": {
+    "segment_reencode": true,
     "enabled": false,
     "oss_playback_enabled": false,
     "max_source_bytes": 536870912,
