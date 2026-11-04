@@ -63,6 +63,23 @@ def test_expansion_is_pixel_identical_to_pillow_at_edges_and_for_gray_masks(size
     assert effects.expand(mask,level).tobytes()==expected.tobytes()
 
 
+@pytest.mark.parametrize('style',['pixel','blur','soft_blur','solid'])
+@pytest.mark.parametrize('level',['none','small','medium','large'])
+def test_prepare_mask_full_output_matches_rank_filter_reference(style,level):
+    """Whole prepare_mask output (incl. soft_blur feathering) equals the old MaxFilter pipeline."""
+    from PIL import ImageFilter, ImageChops
+    def reference(mask,effect):
+        effect=effects.validate(effect)
+        r=round(min(mask.size)*{'none':0,'small':.008,'medium':.016,'large':.03}[effect['expansion']])
+        core=mask.filter(ImageFilter.MaxFilter(r*2+1)) if r else mask
+        if effect['style']!='soft_blur' or not core.getbbox():return core
+        radius=max(1,round(min(core.size)*.015))
+        return ImageChops.lighter(core,core.filter(ImageFilter.MaxFilter(radius*2+1)).filter(ImageFilter.GaussianBlur(radius)))
+    mask=Image.new('L',(360,640));mask.paste(255,(0,500,200,640));mask.paste(255,(150,40,300,120));mask.putpixel((359,0),200)
+    effect={'style':style,'strength':'medium','expansion':level}
+    assert effects.prepare_mask(mask,effect).tobytes()==reference(mask,effect).tobytes()
+
+
 def test_soft_blur_preserves_core_and_feathers_only_outside():
     mask=Image.new('L',(200,200))
     mask.paste(255,(70,70,130,130))
