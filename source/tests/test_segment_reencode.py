@@ -18,7 +18,6 @@ def test_plan_encodes_cut_points_and_widened_effects_and_copies_whole_gops():
     assert segments.plan([[0, 70]], keys, [[62, 64]], 120) == [('copy', 0, 60), ('encode', 60, 70)]
 
 
-pytestmark_integration = pytest.mark.integration
 
 
 @pytest.fixture

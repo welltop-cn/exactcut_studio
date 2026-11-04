@@ -140,6 +140,17 @@ def build(source, output, kept, meta, render, work, state, run, layers=None):
              and Fraction(video['avg_frame_rate']) == rate and Fraction(video['r_frame_rate']) == rate,
              'unsupported source codec')
     tick = Fraction(video['time_base'])
+    encoder = ['-c:v', 'libx264', '-crf', str(render['crf']), '-preset', render['preset'], '-pix_fmt', 'yuv420p', '-r', fps]
+    colors = []
+    for field, option in (('color_primaries', '-color_primaries'), ('color_transfer', '-color_trc'),
+                          ('color_space', '-colorspace'), ('color_range', '-color_range')):
+        if video.get(field) not in (None, 'unknown', 'unspecified', 'reserved'):colors += [option, str(video[field])]
+    # SPS/PPS depend on settings and size, not content: one frame tells whether
+    # our encoder can continue this stream before any real piece is encoded.
+    trial = work/'segment-trial.mp4'
+    run(['ffmpeg', '-y', '-v', 'error', '-i', str(source), '-map', '0:v:0', '-an', '-frames:v', '1', *encoder, *colors, str(trial)], light=True)
+    trial_video = _probe(trial, run)
+    _require(all(trial_video.get(k) == video.get(k) for k in _COPY_FIELDS), 'encoder codec parameters differ from source')
     source_packets = packets(source, run)
     _timeline(source_packets, tick, rate, meta['frame_count'])
     keys = safe_keys(source, source_packets, tick, rate)
@@ -148,10 +159,6 @@ def build(source, output, kept, meta, render, work, state, run, layers=None):
     state['counts'] = dict(encoded_frames=sum(e-s for k, s, e in pieces if k == 'encode'),
                            copied_frames=sum(e-s for k, s, e in pieces if k == 'copy'), pieces=len(pieces))
     state['copied'], state['encoded'] = [], []
-    colors = []
-    for field, option in (('color_primaries', '-color_primaries'), ('color_transfer', '-color_trc'),
-                          ('color_space', '-colorspace'), ('color_range', '-color_range')):
-        if video.get(field) not in (None, 'unknown', 'unspecified', 'reserved'):colors += [option, str(video[field])]
     parts, cursor = [], 0
     for index, (kind, s, e) in enumerate(pieces):
         part = work/f'segment-{index}.mp4';n = e-s
@@ -166,8 +173,7 @@ def build(source, output, kept, meta, render, work, state, run, layers=None):
             filters = ['-filter_complex', graph, '-map', '[out]'] if graph else ['-map', '0:v:0', '-vf', 'setpts=PTS-STARTPTS']
             run(['ffmpeg', '-y', '-v', 'error', *_seek(s, rate), '-i', str(source),
                  *[arg for mask in masks for arg in ('-i', str(mask))], '-an', *filters, '-frames:v', str(n),
-                 '-c:v', 'libx264', '-crf', str(render['crf']), '-preset', render['preset'],
-                 '-pix_fmt', 'yuv420p', '-r', fps, *colors, str(part)])
+                 *encoder, *colors, str(part)])
             encoded = _probe(part, run)
             _require(all(encoded.get(k) == video.get(k) for k in _COPY_FIELDS), 'encoded piece codec parameters differ')
             samples = packets(part, run)

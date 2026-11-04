@@ -509,7 +509,9 @@ def test_mixed_processing_encodes_video_once_and_preserves_source_frame_mapping(
     source=make_video(tmp_path/'source.mp4',frames=30,fps='30000/1001')
     meta=cutting.probe_source(source);original=cutting.run;encodes=[]
     def run(args,*a,**kw):
-        if 'libx264' in args:encodes.append(args)
+        # The segment path's one-frame encoder trial (this ultrafast source cannot be continued) is not a video encode.
+        trial='-frames:v' in args and args[args.index('-frames:v')+1]=='1'
+        if 'libx264' in args and not trial:encodes.append(args)
         return original(args,*a,**kw)
     monkeypatch.setattr(cutting,'run',run)
     target={'start':15,'end':25,'seed_frame':20,'x':0,'y':0,'w':60,'h':40}
