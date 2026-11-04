@@ -444,7 +444,7 @@ aside>button,aside>.eyebrow,aside>.tabs{flex-shrink:0}
 
 <dialog id="mosaicTrackDialog" aria-labelledby="mosaicTrackTitle"><div class="row"><h2 id="mosaicTrackTitle">动态打码预览</h2><div class="actions"><button id="mosaicTrackStop" type="button">取消预览</button><button id="mosaicTrackClose">返回检查</button></div></div><div class="mosaic-preview-stage"><p id="mosaicTrackStatus" role="status"></p><video id="mosaicTrackVideo" controls playsinline hidden></video></div><p id="mosaicTrackHint" class="hint">仅预览当前区域、当前片段。</p></dialog>
 <dialog id="mosaicDialog" aria-labelledby="mosaicTitle">
-  <header class="mosaic-header"><div><h2 id="mosaicTitle">剪切打码</h2><small>选择片段删除或打码，生成后确认替换</small></div><small class="processing-autosave">自动保存 · 关闭后可继续</small><button id="mosaicClose" aria-label="关闭剪切打码">关闭</button></header>
+  <header class="mosaic-header"><div><h2 id="mosaicTitle" tabindex="-1">剪切打码</h2><small>选择片段删除或打码，生成后确认替换</small></div><small class="processing-autosave">自动保存 · 关闭后可继续</small><button id="mosaicClose" aria-label="关闭剪切打码">关闭</button></header>
   <div id="mosaicPreparing" hidden role="status"><span class="processing-spinner" aria-hidden="true"></span><strong>正在准备视频…</strong><small>首次打开需要一些时间，请稍候。</small></div>
   <div id="mosaicStatus" role="status" aria-live="polite"></div>
   <button id="mosaicResumePreview" type="button" class="secondary" hidden>查看后台片段预览</button>

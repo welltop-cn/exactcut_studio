@@ -12,6 +12,7 @@
   let stopPending=false,previewOperation=null;
   let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
   let sourceManager=null,sourceBinding=null,beforeBinding=null;
+  let validTimeRange=null;
   const pendingJob=(job=batchJob)=>['queued','running','cancelling'].includes(job?.status);
   const awaitingDecision=(job=batchJob)=>job?.status==='completed'&&!job?.discarded_at&&job?.replacement?.status!=='completed';
   const editLocked=()=>batchLoading||pendingJob()||awaitingDecision()||stopPending||mutationBusy;
@@ -89,7 +90,7 @@
   const guard=fn=>(...args)=>{try{return fn(...args);}catch(e){status(e.message,true);}};
   function clock(frame){const {fps_num:n,fps_den:d}=meta(),s=Math.floor(frame*d/n);return [Math.floor(s/60),s%60,frame-Math.ceil(s*n/d)].map(v=>String(v).padStart(2,'0')).join(':');}
   function parse(value){
-    const text=value.trim(),m=/^(\d+):([0-5]\d)(?::(\d{2}))?$/.exec(text);
+    const text=value.trim(),m=/^(\d+):([0-5]?\d)(?::(\d{2}))?$/.exec(text);
     if(!m&&!/^\d+$/.test(text))throw Error('请输入 分:秒 或 分:秒:帧，例如 1:05 或 01:05:00');
     const seconds=m?+m[1]*60+(+m[2]):+text,f=m?+(m[3]||0):0,{fps_num:n,fps_den:d}=meta(),first=Math.ceil(seconds*n/d);
     if(!Number.isSafeInteger(first)||f>=Math.ceil((seconds+1)*n/d)-first||first+f>=meta().frame_count)throw Error('时间超出原片范围');
@@ -116,6 +117,7 @@
   function motionHint(){return '固定位置 · 所选时间内保持此位置';}
   function paint(){
     if(!context)return;
+    try{validTimeRange=range();}catch{}
     for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
     const c=selectedBox(),accurate=ready===wanted&&!image.hidden&&video.paused;
     $('mosaicPosition').textContent=`${clock(wanted)} / ${clock(meta().frame_count-1)}`;
@@ -541,8 +543,12 @@
   $('mosaicFrameRetry').onclick=loadFrame;
   $('mosaicPrevious').onclick=()=>seek(wanted-1);$('mosaicNext').onclick=()=>seek(wanted+1);
   $('mosaicSeek').oninput=e=>seek(Number(e.target.value));
-  $('mosaicFrameNumber').onchange=guard(e=>seek(parse(e.target.value)));
-  for(const id of ['mosaicStart','mosaicEnd'])$(id).onchange=guard(()=>{
+  const timeGuard=fn=>(...args)=>{try{return fn(...args);}catch(e){
+    if(validTimeRange){$('mosaicStart').value=clock(validTimeRange.start);$('mosaicEnd').value=clock(validTimeRange.end-1);}
+    paint();status(e.message,true);
+  }};
+  $('mosaicFrameNumber').onchange=timeGuard(e=>seek(parse(e.target.value)));
+  for(const id of ['mosaicStart','mosaicEnd'])$(id).onchange=timeGuard(()=>{
     const r=range(),event=allEvents().find(e=>e.id===scanEvent);
     // Native blur can repeat an already committed change; preserve the pending click.
     const previous=event?eventRange(event):null;
@@ -556,12 +562,26 @@
   for(const id of ['mosaicStart','mosaicEnd','mosaicFrameNumber'])$(id).addEventListener('keydown',e=>{
     if(e.key==='Enter'){e.preventDefault();$(id).dispatchEvent(new Event('change'));}
   });
-  document.addEventListener('keydown',e=>{
+  let playbackSpaceDown=false;
+  dialog.addEventListener('keydown',e=>{
+    const space=e.code==='Space'||e.key===' ';
+    if(space&&playbackSpaceDown){e.preventDefault();return;}
     if(!context||!dialog.open||$('mosaicEffects').open||resultMode||editLocked()||e.defaultPrevented||e.ctrlKey||e.altKey||e.metaKey)return;
     if(e.target.closest('input,select,textarea,[contenteditable]:not([contenteditable="false"])'))return;
     if(e.key==='ArrowLeft'||e.key==='ArrowRight'){e.preventDefault();seek(wanted+(e.key==='ArrowLeft'?-1:1));}
-    else if(e.code==='Space'||e.key===' '){e.preventDefault();if(!e.repeat)$('mosaicPlay').click();}
+    // Buttons (including role=checkbox) own their native Space/Enter activation.
+    else if(space&&!e.target.closest('button,a,summary,[role="button"],[role="checkbox"]')){
+      e.preventDefault();playbackSpaceDown=true;
+      if(!e.repeat)$('mosaicPlay').click();
+    }
   });
+  document.addEventListener('keyup',e=>{
+    if((e.code==='Space'||e.key===' ')&&playbackSpaceDown){
+      // Consume the release too, even if focus moved to a button during keydown.
+      e.preventDefault();playbackSpaceDown=false;
+    }
+  });
+  window.addEventListener('blur',()=>{playbackSpaceDown=false;});
   $('mosaicMarkStart').onclick=()=>{$('mosaicStart').value=clock(wanted);$('mosaicStart').dispatchEvent(new Event('change'));};
   $('mosaicMarkEnd').onclick=()=>{$('mosaicEnd').value=clock(wanted);$('mosaicEnd').dispatchEvent(new Event('change'));};
   $('mosaicCandidates').onclick=e=>{const saved=e.target.closest('[data-saved-adjust]');if(saved){const drafts=[...regionDrafts.filter(d=>!candidates.some(c=>c.id===d.id)),...candidates.map(c=>({...c}))],start=$('mosaicStart').value,end=$('mosaicEnd').value;viewTarget(Number(saved.dataset.savedAdjust));regionDrafts=drafts;candidates=candidates.map(c=>drafts.find(d=>d.id===c.id)||c);$('mosaicStart').value=start;$('mosaicEnd').value=end;$('mosaicAdjust').open=true;paint();return;}const b=e.target.closest('[data-candidate]');if(b){selectRegion(b.dataset.candidate);paint();}};

@@ -539,7 +539,7 @@ def test_fixed_region_live_preview_changes_pixels_without_render(editor):
     editor.locator('#mosaicOverlay').wait_for(state='visible')
     editor.locator('#mosaicLiveCanvas.has-suggestions').wait_for(state='visible')
     assert editor.locator('.mosaic-box.suggestion').evaluate("el=>getComputedStyle(el).borderTopStyle")=='dashed'
-    assert editor.locator('.mosaic-box.suggestion').evaluate("el=>getComputedStyle(el).borderTopColor")=='rgb(242, 201, 76)'
+    assert editor.locator('.mosaic-box.suggestion').evaluate("el=>getComputedStyle(el).borderTopColor")=='rgb(255, 196, 0)'
     assert editor.evaluate('''() => {
       const canvas=$('mosaicLiveCanvas'),ctx=canvas.getContext('2d'),original=document.createElement('canvas');
       original.width=160;original.height=96;original.getContext('2d').drawImage($('mosaicFrame'),0,0);
@@ -846,7 +846,16 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     button=editor.locator('#mosaicBatchStart')
     assert button.is_visible() and button.is_enabled()
     # v1 targets carry no motion (= tracked): they open as fixed and the user is told so.
-    assert editor.locator('#mosaicBatchHint').inner_text().split('\n')==['删除 0 段 · 打码 2 段 · 全部已处理','旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。']
+    # The third legacy target (50–60, adopted:false) remains an undecided standalone card.
+    editor.wait_for_function("Object.keys(localStorage).some(k=>k.includes('workbench.v3'))")
+    draft=workbench_draft(editor)
+    pending=[t for t in draft['targets'] if t['adopted'] is False]
+    assert len(pending)==1 and (pending[0]['start'],pending[0]['end'])==(50,60)
+    pending_block=editor.locator(f'[data-timeline-event="target:{pending[0]["uid"]}"]')
+    assert 'suggestion' in pending_block.get_attribute('class').split()
+    assert pending_block.get_attribute('data-start')=='50'
+    assert editor.locator('[data-target-remove][aria-checked="false"]').count()==1
+    assert editor.locator('#mosaicBatchHint').inner_text().split('\n')==['删除 0 段 · 打码 2 段 · 待处理 1 段','旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。']
     button.click()
     assert editor.locator('#mosaicBatchDialog').is_visible()
     assert editor.evaluate('batchBody.targets.length')==2
@@ -1462,6 +1471,10 @@ def test_clip_checkboxes_toggle_cancel_and_are_mutually_exclusive(editor):
     assert card.locator('[data-effect-target]').count()==0
     delete.press('Space')
     assert not delete.is_checked() and not mask.is_checked()
+    assert workbench_draft(editor)['deletions']==[]
+    assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    delete.click();delete.click()
+    assert not delete.is_checked() and not mask.is_checked()
     mask.click();mask.click()
     assert not mask.is_checked()
 
@@ -1949,8 +1962,19 @@ def test_time_formats_commit_immediately_for_both_segment_types(editor, kind, co
     assert jump.input_value()=='01:05:00'
     jump.fill('65');jump.dispatch_event('change');assert jump.input_value()=='01:05:00'
     jump.fill('0:05');jump.press('Enter');assert jump.input_value()=='00:05:00'
+    jump.fill('0:9');jump.press('Enter');assert jump.input_value()=='00:09:00'
     jump.fill('1:99');jump.press('Enter')
     assert '请输入' in editor.locator('#mosaicStatus').inner_text()
+    assert jump.input_value()=='00:09:00'
+    start.fill('0:9');start.press('Enter')
+    assert workbench_draft(editor)['clipEdits'][segment]['start']==270
+    start.fill('0:99');start.press('Enter')
+    assert '请输入' in editor.locator('#mosaicStatus').inner_text()
+    assert start.input_value()=='00:09:00'
+    end.fill('0:8');end.press('Enter')
+    assert '开始帧不能晚于结束帧' in editor.locator('#mosaicStatus').inner_text()
+    assert end.input_value()=='01:05:00'
+    assert workbench_draft(editor)['clipEdits'][segment]=={'start':270,'end':1951}
 
 
 def timeline_point(page, frame):
@@ -2083,10 +2107,18 @@ def test_keyboard_navigation_obeys_editor_focus_and_effect_dialog(editor):
     editor.keyboard.press('ArrowRight');assert editor.locator('#mosaicFrameNumber').input_value()==before
     editor.evaluate("$('mosaicEffects').close()")
     # Count play/pause invocations without relying on a playable video fixture.
-    editor.evaluate("window.playClicks=0;$('mosaicPlay').onclick=()=>playClicks++")
+    editor.evaluate("() => {window.playClicks=0;$('mosaicPlay').onclick=()=>playClicks++}")
     editor.locator('#mosaicTitle').click();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==1
     editor.locator('#mosaicStart').focus();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==1
-    editor.locator('#mosaicClose').click();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==1
+    editor.locator('#mosaicPlay').focus();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==2
+    editor.locator('#mosaicPlay').press('Enter');assert editor.evaluate('playClicks')==3
+    editor.locator('#mosaicTitle').click()
+    editor.keyboard.down('Space');assert editor.evaluate('playClicks')==4
+    editor.keyboard.down('Space');assert editor.evaluate('playClicks')==4
+    # Releasing a shortcut must not activate a newly focused native button.
+    editor.locator('#mosaicPlay').focus();editor.keyboard.up('Space');assert editor.evaluate('playClicks')==4
+    editor.locator('#mosaicTitle').click();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==5
+    editor.locator('#mosaicClose').click();editor.keyboard.press('Space');assert editor.evaluate('playClicks')==5
 
 
 def test_short_timeline_suggestion_hides_entire_label_but_keeps_accessible_information(editor):
