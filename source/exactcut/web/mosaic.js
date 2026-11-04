@@ -2,7 +2,8 @@
 (() => {
   const dialog=$('mosaicDialog'), video=$('mosaicSource'), image=$('mosaicFrame'), overlay=$('mosaicOverlay');
   let context=null, epoch=0, token=0, wanted=0, ready=-1, candidates=[], selected=null, targets=[], editing=null;
-  let motion='fixed',regionDrafts=[],autoScanPending=false;
+  let motion='fixed',regionDrafts=[],autoScanPending=false,legacyDraft=false;
+  const legacyDraftHint='旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。';
   const trackingUnavailableHint='跟随目标当前不可用；请启用目标跟踪，或在编辑中明确改为固定位置并保存。';
   let loading=false, frameLoading=false, drawing=false, pointer=null, frameUrl=null, controller=null, timer;
   let batchJob=null,batchToken=0,batchLoading=false,batchError="";
@@ -44,8 +45,8 @@
     if(aiEvents.length)checkedReport({status:'completed',source_sha256:context.session.source_sha256,reset_at:context.session.reset_at||'',events:aiEvents});
     for(const r of Object.values(clipEdits))if(!r||![r.start,r.end].every(Number.isInteger)||r.start<0||r.start>=r.end||r.end>meta().frame_count)throw Error('片段时间草稿无效');
     savedAiEvents=structuredClone(aiEvents);savedClipEdits=structuredClone(clipEdits);
-    effect={...defaultEffect,...draft?.effect};savedEffect={...effect};
-    clipEffects=structuredClone(draft?.clipEffects||{});savedClipEffects=structuredClone(clipEffects);
+    effect=simplified(draft?.effect);savedEffect={...effect};
+    clipEffects=Object.fromEntries(Object.entries(draft?.clipEffects||{}).map(([k,e])=>[k,simplified(e)]));savedClipEffects=structuredClone(clipEffects);
     manualClips=draft?.manualClips||[];
     if(!Array.isArray(manualClips)||manualClips.length>40||manualClips.some(e=>typeof e.id!=='string'||!e.id.startsWith('manual-')||![e.start,e.end].every(Number.isInteger)||e.start<0||e.start>=e.end||e.end>meta().frame_count||e.status!=='needs_review'||!Array.isArray(e.candidates)||e.candidates.length))throw Error('手动片段草稿格式无效');
     savedManualClips=structuredClone(manualClips);
@@ -53,6 +54,9 @@
     if(!Array.isArray(deletions)||deletions.length>40||deletions.some(t=>![t.start,t.end].every(Number.isInteger)||t.start<0||t.start>=t.end||t.end>meta().frame_count))throw Error('本机删除草稿格式无效');
     savedDeletions=structuredClone(deletions);
     if(!Array.isArray(data)||data.length>320||!data.every(validTarget)||data.filter(t=>t.adopted!==false).length>8)throw Error('本机草稿格式无效，未覆盖原数据。');
+    // Fixed-only mode: older drafts may hold tracked regions or extra effect options.
+    // Convert them in memory and say so; a result rendered from the old plan stays unreplaceable (see samePlan).
+    legacyDraft=data.some(t=>t.adopted!==false&&t.motion!=='fixed')||[draft?.effect,...Object.values(draft?.clipEffects||{})].some(e=>e&&!simpleEffect(e));
     targets=data.map(t=>({...t,motion:'fixed',uid:t.uid||regionId(),adopted:t.adopted!==false}));
     savedTargets=structuredClone(targets);
   }
@@ -143,7 +147,10 @@
     if(editLocked()&&e.target.closest(mutationSelector)){e.preventDefault();e.stopImmediatePropagation();}
   },true);
   const clipKey=t=>t?(t.eventId||`${t.originStart??t.start}:${t.originEnd??t.end}`):null;
-  const effectFor=t=>{const saved={...effect,...clipEffects[clipKey(t)]};return {...defaultEffect,style:['blur','soft_blur'].includes(saved.style)?'blur':'pixel'};};
+  const simplified=e=>({...defaultEffect,style:['blur','soft_blur'].includes(e?.style)?'blur':'pixel'});
+  const simpleEffect=e=>['pixel','blur'].includes(e.style??defaultEffect.style)&&(e.strength??defaultEffect.strength)===defaultEffect.strength&&(e.expansion??defaultEffect.expansion)===defaultEffect.expansion;
+  const legacyJob=job=>(job?.targets||[]).some(t=>t.motion!=='fixed'||!simpleEffect({...job.effect,...t.effect}));
+  const effectFor=t=>simplified({...effect,...clipEffects[clipKey(t)]});
   let effectEditKey=null,effectDraft=null;
   function paintEffects(){
     $('mosaicEffectPreview').disabled=editLocked()||(!context?.session.capabilities?.tracking&&targets.some(t=>clipKey(t)===effectEditKey&&t.adopted!==false&&t.motion!=='fixed'));
@@ -651,7 +658,7 @@
     $('mosaicDiscard').disabled=mutationBusy||scanReport?.status==='running';
     $('mosaicClose').disabled=mutationBusy;
     $('mosaicBatchStart').textContent=running?'正在生成视频…':'生成处理后视频';
-    $('mosaicBatchHint').textContent=[`删除 ${deletions.length} 段 · 打码 ${segments} 段`,trackingUnavailable&&!running&&!awaitingDecision()?trackingUnavailableHint:'',batchError].filter(Boolean).join('\n');
+    $('mosaicBatchHint').textContent=[`删除 ${deletions.length} 段 · 打码 ${segments} 段`,trackingUnavailable&&!running&&!awaitingDecision()?trackingUnavailableHint:'',legacyDraft&&!running&&!awaitingDecision()?legacyDraftHint:'',batchError].filter(Boolean).join('\n');
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
     $('mosaicBatchClose').hidden=!showOutput;
@@ -665,7 +672,7 @@
     $('mosaicResultLabel').hidden=!done;$('mosaicResultLabel').textContent=resultBefore?'正在查看：处理前 · 原视频':'正在查看：处理后 · 生成结果';
     $('mosaicBatchBefore').setAttribute('aria-pressed',String(resultBefore));$('mosaicBatchAfter').setAttribute('aria-pressed',String(!resultBefore));
     $('mosaicBatchDownload').hidden=!done;$('mosaicBatchVideo').hidden=!done;
-    $('mosaicBatchVersion').textContent=batchJob&&!sameBatch()?'处理方案已变化。此结果对应生成时的选择；要应用新选择，请重新生成。':'';
+    $('mosaicBatchVersion').textContent=batchJob&&!sameBatch()?(legacyJob(batchJob)?'此结果由旧版处理方式（跟随目标或旧效果选项）生成，与当前固定位置方案不同，不能直接替换；请放弃结果后重新生成。':'处理方案已变化。此结果对应生成时的选择；要应用新选择，请重新生成。'):'';
     if(done){
       $('mosaicBatchStatus').textContent=batchError||'处理完成，请预览；确认替换或放弃结果后可继续编辑。';
       const outputUrl=appUrl(base()+'/render/'+batchJob.id+'/video?v='+encodeURIComponent(batchJob.completed_at||''));
@@ -684,12 +691,12 @@
     }else $('mosaicBatchStatus').textContent=EditorBusy.message(batchError||batchJob?.error||batchJob?.progress||'正在提交全部已打码区域…');
   }
   function restoreParameters(job){
-    effect={...defaultEffect,...job.effect};clipEffects={};aiEvents=[];clipEdits={};manualClips=[];
+    legacyDraft=legacyJob(job);effect=simplified(job.effect);clipEffects={};aiEvents=[];clipEdits={};manualClips=[];
     targets=(job.targets||[]).map((t,i)=>{
       const eventId='manual-recovered-region-'+i;
       manualClips.push({id:eventId,start:t.start,end:t.end,status:'needs_review',candidates:[]});
-      clipEffects[eventId]={...effect,...t.effect};
-      return {...t,eventId,uid:regionId(),adopted:true,label:'打码区域',reason:''};
+      clipEffects[eventId]=simplified({...job.effect,...t.effect});
+      return {...t,motion:'fixed',eventId,uid:regionId(),adopted:true,label:'打码区域',reason:''};
     });
     deletions=(job.ranges||[]).map(([start,end],i)=>{
       const eventId='manual-recovered-delete-'+i;
