@@ -1198,3 +1198,62 @@ def test_confirm_does_not_resume_archived_or_existing_execution(workspace):
     with pytest.raises(ValueError, match='暂停'):
         m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
     assert m.read(path)['control']['paused']
+
+
+RELOCATED = '/restored-elsewhere/.web-state/batches'
+
+
+def relocate(path):
+    """Rewrite stored media paths as if this data root was restored from elsewhere."""
+    prefix = str(w.BATCHES)
+    def walk(value):
+        if isinstance(value, dict): return {k: walk(v) for k, v in value.items()}
+        if isinstance(value, list): return [walk(v) for v in value]
+        if isinstance(value, str) and value.startswith(prefix + '/'): return RELOCATED + value[len(prefix):]
+        return value
+    state = walk(read_json(path / 'media-state.json'))
+    write_json_atomic(path / 'media-state.json', state)
+    return state
+
+
+def test_stored_paths_from_another_data_root_still_resolve(workspace):
+    from exactcut import material_workers
+    from exactcut.preview_oss import _identity
+    m, path, state = enrolled(media=True); rid = state['draft']['rows'][0]['request_id']
+    original, _ = m.current_file(path, rid)
+    state = relocate(path); vid = state['assets'][rid]['current_version']
+    assert state['versions'][vid]['master_path'].startswith(RELOCATED + '/')
+    master, record = w.preview_file(path.name, rid)
+    assert master == original and master.read_bytes() == b'pretend-video-for-upload-integrity-test'
+    receipt = {'key': 'k', 'sha256': record['output_sha256'], 'identity': _identity(master)}
+    m.save_receipt(path, rid, record, master, receipt, original=True)
+    state = m.read(path)
+    assert state['versions'][vid]['record']['original_oss']['sha256'] == record['output_sha256']
+    state = m.queue_delivery(path, {'revision': state['revision'], 'mutation_id': token(), 'request_id': rid,
+                                    'version_id': vid, 'sha256': record['output_sha256']})
+    event = next(iter(state['outbox'].values()))
+    material_workers.materialize(path, event)
+    copied = w.BATCHES / event['child_id'] / 'production/videos' / event['manifest']['requests'][0]['output_filename']
+    assert file_sha256(copied) == record['output_sha256']
+
+
+@pytest.mark.parametrize('stored', ['{root}/{bid}/../outside.mp4', '{root}/{other}/production/videos/x.mp4',
+                                    '/no-batch-segment/x.mp4', '{root}/{bid}', ''])
+def test_relocated_media_path_cannot_escape_its_batch(workspace, stored):
+    m, path, state = enrolled(media=True); rid = state['draft']['rows'][0]['request_id']; vid = state['assets'][rid]['current_version']
+    (path.parent / 'outside.mp4').write_bytes(b'outside')
+    state['versions'][vid]['master_path'] = stored.format(root=RELOCATED, bid=path.name, other=uuid.uuid4().hex)
+    write_json_atomic(path / 'media-state.json', state)
+    with pytest.raises(ValueError, match='路径无效'): m.current_file(path, rid)
+
+
+def test_legacy_edited_media_from_another_data_root_still_resolves(workspace):
+    from types import SimpleNamespace
+    from exactcut.preview import media_path
+    path = w.folder(imported()['id']); name = 'edited.mp4'
+    edited = path / 'production/edits/s1/master' / name; edited.parent.mkdir(parents=True); edited.write_bytes(b'edited')
+    stored = f'{RELOCATED}/{path.name}/production/edits/s1/master/{name}'
+    record = {'edited_media': {'master': stored, 'preview': stored}}
+    assert media_path(path, SimpleNamespace(output_filename=name), record) == edited
+    record['edited_media']['master'] = f'{RELOCATED}/{path.name}/production/videos/{name}'
+    with pytest.raises(ValueError, match='编辑成片路径无效'): media_path(path, SimpleNamespace(output_filename=name), record)

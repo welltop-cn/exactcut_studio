@@ -28,6 +28,25 @@ def registry(path):
     return path.parent.parent / 'media-registry' / (path.name + '.json')
 
 
+def media_file(path, stored):
+    """Map a stored absolute media path onto the batch directory as it is now.
+
+    Versions record absolute paths. After a data-root move or restore the prefix
+    differs, so only the part after ``batches/<batch_id>/`` is trusted.
+    """
+    parts = Path(str(stored or '')).parts
+    for index in range(len(parts) - 1, 0, -1):
+        if parts[index] == path.name and parts[index - 1] == 'batches':
+            relative = parts[index + 1:]
+            break
+    else:
+        raise ValueError('当前媒体路径无效')
+    file = path.joinpath(*relative) if relative else path
+    if not relative or '..' in relative or not file.resolve().is_relative_to(path.resolve()):
+        raise ValueError('当前媒体路径无效')
+    return file
+
+
 def managed(path):
     return (path / 'media-state.json').exists() or registry(path).exists()
 
@@ -455,7 +474,7 @@ def _queue_delivery(path, data):
     rid, vid = data.get('request_id'), data.get('version_id')
     snapshot = read(path)
     version = snapshot['versions'].get(vid, {})
-    master = Path(version.get('master_path', ''))
+    master = media_file(path, version.get('master_path'))
     if not master.is_file() or file_sha256(master) != data.get('sha256'):
         raise ValueError('成片校验失败，请重新预览')
     def apply(state):
@@ -491,8 +510,8 @@ def current_file(path, rid, *, lightweight=False):
     if state['deleted_at'] or not asset or asset['deleted_at'] or not asset['current_version']:
         raise ValueError('当前素材不存在或尚未制作完成')
     version = state['versions'][asset['current_version']]
-    file = Path(version['preview_path'] if lightweight and version.get('preview_path') else version['master_path'])
-    if not file.resolve().is_relative_to(path.resolve()) or file.is_symlink() or not file.is_file():
+    file = media_file(path, version['preview_path'] if lightweight and version.get('preview_path') else version['master_path'])
+    if file.is_symlink() or not file.is_file():
         raise ValueError('当前媒体路径无效')
     record = copy.deepcopy(version['record'])
     record['media_version_id'] = asset['current_version']
@@ -509,7 +528,7 @@ def save_receipt(path, rid, record, video, receipt, *, original=False):
         version = state['versions'][asset['current_version']]
         selected = version['master_path'] if original else version.get('preview_path') or version['master_path']
         expected = version['record']['output_sha256'] if original or not version.get('preview_path') else version['record']['preview']['sha256']
-        if str(video) != selected or receipt.get('identity') != identity or receipt.get('sha256') != expected:
+        if Path(video) != media_file(path, selected) or receipt.get('identity') != identity or receipt.get('sha256') != expected:
             raise ValueError('当前媒体回执不匹配')
         if original or not version.get('preview_path'): version['record']['original_oss'] = receipt
         else: version['record']['preview']['oss'] = receipt

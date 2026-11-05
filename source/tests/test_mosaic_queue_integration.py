@@ -244,3 +244,43 @@ def test_two_authenticated_users_fifo_fairness_and_actual_ffmpeg(ready,monkeypat
     finally:dispatcher.stop(timeout=None);app.shutdown();app.server_close()
 
 from interactive_test_support import interactive_dispatcher
+
+
+def test_managed_media_restored_under_another_data_root_still_opens_and_previews(ready):
+    bid,rid,sha,source=ready;batch=workflow.folder(bid)
+    material_versions.enroll(batch)
+    prefix=str(workflow.BATCHES)+'/';state=read_json(batch/'media-state.json')
+    for version in state['versions'].values():
+        for key in ('master_path','preview_path'):
+            if version.get(key):version[key]='/restored-elsewhere/.web-state/batches/'+version[key][len(prefix):]
+    write_json_atomic(batch/'media-state.json',state)
+    app=serve()
+    try:
+        code,session=call(app,'POST',f'/api/batches/{bid}/mosaics/open',{'request_id':rid,'source_sha256':sha})
+        assert code in {200,202},session
+        session=prepared(app,f'/api/batches/{bid}/mosaics',session)
+        assert session['id']
+        code,preview=call(app,'GET',f'/api/batches/{bid}/preview-url/{rid}')
+        assert code==200 and preview['url'],preview
+    finally:
+        app.shutdown();app.server_close()
+
+
+def test_unavailable_media_logs_specific_reason_behind_generic_message(ready,monkeypatch):
+    from exactcut import diagnostics
+    bid,rid,sha,source=ready;batch=workflow.folder(bid)
+    material_versions.enroll(batch)
+    state=read_json(batch/'media-state.json')
+    for version in state['versions'].values():version['master_path']='/no-batch-segment/missing.mp4'
+    write_json_atomic(batch/'media-state.json',state)
+    logged=[];monkeypatch.setattr(diagnostics,'event',lambda name,**fields:logged.append((name,fields)))
+    app=serve()
+    try:
+        code,body=call(app,'POST',f'/api/batches/{bid}/mosaics/open',{'request_id':rid,'source_sha256':sha})
+    finally:
+        app.shutdown();app.server_close()
+    assert code==400 and body['error']=='打码文件或处理资源暂不可用，请刷新后重试'
+    failures=[fields for name,fields in logged if name=='mosaic.request_failed']
+    assert len(failures)==1,logged
+    assert failures[0]['reason']=='当前媒体路径无效' and failures[0]['error_type']=='ValueError'
+    assert failures[0]['batch_id']==bid and failures[0]['route']=='open' and failures[0]['trace_id']==body['trace_id']

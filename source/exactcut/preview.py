@@ -47,7 +47,11 @@ def media_path(path, request, record, *, preview=False):
     edit = record.get('edited_media')
     if not edit:
         return path / ('production/previews' if preview else 'production/videos') / request.output_filename
-    file = Path(edit['preview' if preview else 'master'])
+    from .material_versions import media_file
+    try:
+        file = media_file(path, edit['preview' if preview else 'master'])
+    except ValueError:
+        raise ValueError('编辑成片路径无效') from None
     root = path / 'production/edits'
     if (not file.is_absolute() or not file.resolve().is_relative_to(root.resolve())
             or file.name != request.output_filename

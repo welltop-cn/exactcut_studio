@@ -82,4 +82,9 @@ def handle(handler,bid,suffix,method):
                 return handler.respond(202,mosaic_locate.start(bid,sid,data.get('start'),data.get('end'),data.get('seed_frame'),data.get('reset_at',''),actor=handler.user['username']))
             raise cutting.CutError('打码入口不存在',404)
     except cutting.CutError as exc:return cutting.respond_error(handler, exc)
-    except (ValueError,OSError,RuntimeError):return handler.respond(400,{'error':'打码文件或处理资源暂不可用，请刷新后重试'})
+    except (ValueError,OSError,RuntimeError) as exc:
+        # The user sees one generic message; the specific reason goes to diagnostics.
+        from . import diagnostics
+        diagnostics.event('mosaic.request_failed',level='warning',batch_id=bid,method=method,route=suffix,
+                          error_type=type(exc).__name__,reason=str(exc)[:500],trace_id=getattr(handler,'trace_id',None))
+        return handler.respond(400,{'error':'打码文件或处理资源暂不可用，请刷新后重试'})

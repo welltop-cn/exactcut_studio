@@ -47,7 +47,7 @@ def materialize(parent, event):
         target.parent.mkdir(parents=True, exist_ok=True)
         if not target.exists():
             temporary = target.with_name('.' + uuid.uuid4().hex + '.tmp')
-            shutil.copyfile(version['master_path'], temporary)
+            shutil.copyfile(m.media_file(parent, version['master_path']), temporary)
             if file_sha256(temporary) != event['sha256']: raise ValueError('交付副本校验失败')
             try: os.link(temporary, target)
             except FileExistsError: pass
