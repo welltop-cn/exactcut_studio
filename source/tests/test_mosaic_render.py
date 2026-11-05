@@ -35,6 +35,25 @@ def make_track(directory,target,meta,empty=()):
     return {'target':target,'directory':directory,'result':result}
 
 
+@pytest.mark.integration
+def test_fixed_mask_encoding_reuses_only_identical_active_regions(tmp_path,monkeypatch):
+    meta={'width':64,'height':48,'frame_count':15,'fps_num':30000,'fps_den':1001}
+    target={'start':1,'end':8,'motion':'fixed','x':0,'y':0,'w':20,'h':18}
+    tracks=[{'target':target,'result':meta},{'target':{**target,'start':5,'end':11,'x':32},'result':meta},
+            {'target':{**target,'start':0,'end':15},'failed':True}]
+    appearance={'style':'pixel','strength':'medium','expansion':'large'}
+    original=render.effects.prepare_mask;calls=[]
+    def prepare(mask,effect):
+        calls.append(1);return original(mask,effect)
+    monkeypatch.setattr(render.effects,'prepare_mask',prepare)
+    output=tmp_path/'mask.mkv'
+    render.encode_mask(output,meta,tracks,(64,48),'30000/1001',appearance,lambda text:None)
+    actual=cutting.run(['ffmpeg','-v','error','-i',str(output),'-fps_mode','passthrough','-f','rawvideo','-pix_fmt','gray','-'])
+    expected=b''.join(original(render.union_mask(frame,tracks,(64,48)),appearance).tobytes() for frame in range(15))
+    assert actual==expected
+    assert len(calls)==3,'only A, A+B, B need preparing; blank and failed regions need none'
+
+
 def test_mask_union_and_failure_never_erase_another_target(tmp_path):
     meta={'width':8,'height':6}
     t={'start':1,'end':4,'seed_frame':2,'x':0,'y':0,'w':2,'h':2}
@@ -490,7 +509,9 @@ def test_mixed_processing_encodes_video_once_and_preserves_source_frame_mapping(
     source=make_video(tmp_path/'source.mp4',frames=30,fps='30000/1001')
     meta=cutting.probe_source(source);original=cutting.run;encodes=[]
     def run(args,*a,**kw):
-        if 'libx264' in args:encodes.append(args)
+        # The segment path's one-frame encoder trial (this ultrafast source cannot be continued) is not a video encode.
+        trial='-frames:v' in args and args[args.index('-frames:v')+1]=='1'
+        if 'libx264' in args and not trial:encodes.append(args)
         return original(args,*a,**kw)
     monkeypatch.setattr(cutting,'run',run)
     target={'start':15,'end':25,'seed_frame':20,'x':0,'y':0,'w':60,'h':40}

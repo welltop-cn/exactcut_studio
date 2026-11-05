@@ -1,5 +1,5 @@
 """Shared, versioned mosaic appearance contract for previews and full renders."""
-from PIL import ImageFilter, ImageChops
+from PIL import ImageFilter, ImageChops, ImageOps
 from . import cutting
 
 DEFAULT={'style':'pixel','strength':'medium','expansion':'small'}
@@ -14,9 +14,25 @@ def validate(value=None):
     return result
 
 
+def maximum_mask(mask,radius):
+    if not radius:return mask
+    # A square maximum is separable. Doubling covered spans avoids the
+    # quadratic kernel scan in Pillow's rank filter, with identical L pixels.
+    current=ImageOps.expand(mask,border=radius,fill=0)
+    width,height=current.size;span=radius*2+1
+    for axis in (0,1):
+        covered=1
+        while covered<span:
+            step=min(covered,span-covered)
+            dx,dy=(step,0) if axis==0 else (0,step)
+            current=ImageChops.lighter(current,current.crop((dx,dy,width+dx,height+dy)))
+            covered+=step
+    return current.crop((0,0,*mask.size))
+
+
 def expand(mask,level):
     radius=round(min(mask.size)*{'none':0,'small':.008,'medium':.016,'large':.03}[level])
-    return mask.filter(ImageFilter.MaxFilter(radius*2+1)) if radius else mask
+    return maximum_mask(mask,radius)
 
 
 def prepare_mask(mask,effect=None):
@@ -25,7 +41,7 @@ def prepare_mask(mask,effect=None):
     if effect['style']!='soft_blur' or not core.getbbox():return core
     # Feather outward only: preserve full coverage of the selected core.
     radius=max(1,round(min(core.size)*.015))
-    outer=core.filter(ImageFilter.MaxFilter(radius*2+1)).filter(ImageFilter.GaussianBlur(radius))
+    outer=maximum_mask(core,radius).filter(ImageFilter.GaussianBlur(radius))
     return ImageChops.lighter(core,outer)
 
 

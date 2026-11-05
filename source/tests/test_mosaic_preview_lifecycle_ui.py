@@ -3,7 +3,7 @@ import pytest
 from test_mosaic_ui import editor,open_auto
 from test_mosaic_tracking_capability_ui import add_manual_mosaic
 
-pytestmark = pytest.mark.ui
+pytestmark = [pytest.mark.ui, pytest.mark.skip(reason='fixed-only mode removed the server-side clip effect preview entry (data-effect-target / #mosaicEffectPreview); these receipts are unreachable from the UI. Re-enable when tracking returns.')]
 
 
 def prepare_preview(page):
@@ -16,6 +16,7 @@ def close_and_reopen(page):
     page.locator('#mosaicTrackClose').click();page.locator('#mosaicEffectCancel').click();page.locator('#mosaicClose').click()
     page.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     page.locator('#mosaicWorkspace').wait_for(state='visible')
+    page.locator('[data-scan-event]').first.click()
 
 
 def test_late_closed_preview_receipt_does_not_cancel_or_relabel_new_preview(editor):
@@ -55,7 +56,7 @@ def test_old_stop_failure_cannot_overwrite_next_editor_message(editor):
     editor.wait_for_function('rejectOldStop!==null')
     # First-frame loading legitimately updates this message. Observe the new
     # editor after its automatic scan has settled, then reject the old request.
-    editor.wait_for_function("document.getElementById('mosaicStatus').textContent==='点击片段查看画面，选择删除或打码；不选则不处理。'")
+    editor.wait_for_function("document.getElementById('mosaicStatus').textContent==='点击片段查看画面，选择删除、打码或忽略。'")
     message=editor.locator('#mosaicStatus').inner_text()
     editor.evaluate("rejectOldStop(new Error('old stop failed'))")
     editor.wait_for_timeout(50)
@@ -126,6 +127,7 @@ def test_preview_receipt_two_tabs_refresh_and_material_switch_preserve_the_draft
         for name in ('editor-busy.js','editor-source.js','mosaic.js'):other.add_script_tag(content=(root/name).read_text())
     try:
         other.goto('http://fixture.test/');initialize();open_auto(other)
+        other.locator('[data-scan-event]').first.click()
         other.locator('[data-effect-target]').click();other.locator('#mosaicEffectPreview').click()
         other.wait_for_function("document.getElementById('mosaicTrackStatus').textContent==='预览已生成'")
         editor.evaluate("resolveOld({id:'1'.repeat(32),status:'running'})");editor.wait_for_timeout(50)

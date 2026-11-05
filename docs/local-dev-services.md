@@ -2,6 +2,16 @@
 
 整理日期：2026-11-04。这里保留默认开发约定和最近专项实例；旧端口、PID、启动脚本流水账见[历史清单](archive/local-dev-services-before-cleanup-2026-11-04.md)。
 
+## 2026-11-04：剪切打码时间轴开发预览
+
+- 本机 `takeover-m2.localhost:18793/home/` 保持原服务与数据，仅将 `feat/mosaic-timeline-live-preview` 的 `index.html`、`mosaic.js` 同步到运行工作树供用户围观；未重启 Python 后端。
+- 实现树为 `exact-cut-mosaic-editor`，从 main `9002646` 建立；当时后端 `098ffad` 与此 main 产品代码一致。健康检查 release 为 `development-backoff-098ffad`，前端为本轮开发版本。
+- Mac mini 的独立 `mosaic-editor-ui` 工作树用于回归，未更新其现有 dev 服务。
+- 本轮范围、测试与实时预览边界见[验收记录](archive/verification/mosaic-timeline-live-preview-2026-11-04.md)。
+
+以下保留两台 Mac 并发补验与暂停/退避修复时的盘点信息。
+
+
 ## 最近状态
 
 | 机器 / 入口 | 用途与最后依据 | 本次整理时的核对 |

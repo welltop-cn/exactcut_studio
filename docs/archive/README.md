@@ -12,6 +12,12 @@
 - [main 合并前审查](handoff/2026-11-04-main-merge-review.md)：两机全量原始结果、测试修正和合并条件；随后已在 `9002646` 合入并推送 main。
 - [长片合成范围外问题](verification/concurrency-followups-awaiting-approval.md)：A 长片仍失败，用户决定暂记，未实施拟议优化。
 
+## 剪切打码编辑器记录
+
+- [固定位置打码与性能交接](handoff/mosaic-fixed-simple-performance-grok-2026-11-04.md)
+- [时间轴与实时预览验收](verification/mosaic-timeline-live-preview-2026-11-04.md)
+- [分段重编码验收](verification/segment-reencode-2026-11-04.md)
+
 ## 按资料类型查找
 
 | 位置 | 内容 |

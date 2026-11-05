@@ -237,15 +237,17 @@
       await new Promise(r=>setTimeout(r,1000));
     }
   }
-  async function scan(retry = false) {
+  function scanLabel(){ $('cutScan').textContent=['queued','running','cancelling'].includes(scanReport?.status)?'识别中…':scanReport?.status==='completed'?'重新识别':'识别整段视频'; }
+  async function scan(retry = false, submit = retry) {
     if (!context) return;
     const version=epoch, token=++scanToken, base=path();
     const valid=()=>active(version)&&token===scanToken;
     scanLoading=true;syncRiskBulk();
-    $('cutScan').disabled=true; $('cutScanStatus').textContent='正在读取 AI 建议…';
+    $('cutScan').disabled=true; $('cutScanStatus').textContent=submit?'正在提交识别…':'正在读取已有识别记录…';
     try {
       let state=await api(base+'/scan/standard'); if (!valid()) return;
-      if (state.enabled && (retry || !state.report)) {
+      // Opening only reads an existing record; Gemini runs only after the user clicks.
+      if (state.enabled && submit) {
         await api(base+'/scan',{policy:'standard',force:retry,reset_at:context.session.reset_at||''}); if(!valid())return;
         if(retry){
           if(clips.some(c=>c.id===editingId&&c.origin==='ai')){editingId=null;selection=null;}
@@ -258,8 +260,9 @@
         scanReport=state.report;
         const events=scanReport?.status==='completed' ? scanReport.risk_events : [];
         if(scanReport?.status==='completed')ingestSuggestions(events);else paintRiskMarkers();
-        $('cutScanStatus').textContent=!state.enabled?'本机未启用识别，可手动选片段。':!scanReport?'暂无识别记录':scanReport&&['queued','running','cancelling'].includes(scanReport.status)?(scanReport.progress||'已接收，等待后台处理…'):['failed','cancelled','superseded'].includes(scanReport?.status)?EditorBusy.message(scanReport.error||scanReport.progress,scanReport?.status==='failed'?'识别未完成，请重试':'本次识别未完成'):events.length?'勾选要删除的片段；AI 建议仅供参考。':'本次抽样未发现疑似内容，仍请检查视频。';
-        if (!['queued','running','cancelling'].includes(scanReport?.status)) { $('cutScan').disabled=!state.enabled; return; }
+        $('cutScanStatus').textContent=!state.enabled?'本机未启用识别，可手动选片段。':!scanReport?'未识别。可点「识别整段视频」获取 AI 建议，也可直接手动选片段。':scanReport&&['queued','running','cancelling'].includes(scanReport.status)?(scanReport.progress||'已接收，等待后台处理…'):['failed','cancelled','superseded'].includes(scanReport?.status)?EditorBusy.message(scanReport.error||scanReport.progress,scanReport?.status==='failed'?'识别未完成，请重试':'本次识别未完成'):events.length?'勾选要删除的片段；AI 建议仅供参考。':'本次抽样未发现疑似内容，仍请检查视频。';
+        if (!['queued','running','cancelling'].includes(scanReport?.status)) { $('cutScan').disabled=!state.enabled; scanLabel(); return; }
+        scanLabel();
         await new Promise(r=>setTimeout(r,1500)); if(!valid())return; state=await api(base+'/scan/standard');
       }
     } catch(e) { if(valid()) { $('cutScanStatus').textContent=EditorBusy.message(e.message,'识别未完成，请重试'); $('cutScan').disabled=false; } }
@@ -269,7 +272,7 @@
     openController?.abort();openController=new AbortController();
     sourceManager?.dispose();sourceManager=sourceBinding=null;
     const version=++epoch; scanToken++; frameController?.abort(); frames.clear(); clearTimeout(seekTimer);
-    context=null;playbackError=false;pausePlayback(); clips=[];editingId=null;clipSerial=0;ranges=[];undo=[];selection=null;selectedJob=null;busy=false;wanted=0;frameReady=-1;quick=false;resultMode=false;scanReport=null;scanLoading=false;syncRiskBulk();
+    context=null;playbackError=false;pausePlayback(); clips=[];editingId=null;clipSerial=0;ranges=[];undo=[];selection=null;selectedJob=null;busy=false;wanted=0;frameReady=-1;quick=false;resultMode=false;scanReport=null;scanLoading=false;syncRiskBulk();scanLabel();
     $('cutEditor').hidden=true; $('cutReplaceConfirm').hidden=true; $('cutToast').hidden=true; $('cutDownload').hidden=true; $('cutReplace').hidden=true; $('cutContinue').hidden=true; $('cutRender').disabled=true;
     $('cutRanges').innerHTML='';$('cutRiskMarkers').innerHTML='';$('cutRangeEditor').hidden=true;
     $('cutTitle').textContent='剪切 · '+asset.title;
@@ -363,7 +366,7 @@
   for(const which of ['start','end'])$(which==='start'?'cutHandleStart':'cutHandleEnd').onkeydown=guarded(e=>{if(['ArrowLeft','ArrowRight'].includes(e.key)&&selection){e.preventDefault();endpoint(which,(which==='start'?selection[0]+1:selection[1])+(e.key==='ArrowLeft'?-1:1));}});
   $('cutRiskAddAll').onclick=guarded(()=>{if(busy||!clips.length)return;const checked=!clips.every(c=>c.checked);commitClips(clips.map(c=>({...c,checked})));});
   $('cutRiskMarkers').onclick=e=>{const b=e.target.closest('[data-clip-edit]');if(b)editClip(b.dataset.clipEdit);};
-  $('cutScan').onclick=()=>{if(busy||scanLoading)return;if(window.confirm('重新识别将重置 AI 建议及其勾选、微调，手动添加的片段保留。是否继续？'))scan(true);};
+  $('cutScan').onclick=()=>{if(busy||scanLoading)return;if(scanReport?.status!=='completed'){scan(false,true);return;}if(window.confirm('重新识别将重置 AI 建议及其勾选、微调，手动添加的片段保留。是否继续？'))scan(true);};
   $('cutRender').onclick=async()=>{if(busy||(selection&&!editingId)||!ranges.length)return;const version=epoch;busy=true;pausePlayback();paint();status('正在提交删除片段…');try{const job=await api(path()+'/render',plan());if(active(version))await watch(job.id,version);}catch(e){if(active(version))status(e.message,true);}finally{if(active(version)){busy=false;paint();}}};
   $('cutDiscard').onclick=async()=>{
     if(busy)return;
@@ -371,7 +374,7 @@
     try{
       await api(base+'/discard',{reset_at});
       try{localStorage.removeItem(key);localStorage.removeItem(key+'.clips');}catch{}
-      if(active(version)){dialog.close();toast('已放弃本次剪切，项目原片未改变。下次打开会重新识别。');}
+      if(active(version)){dialog.close();toast('已放弃本次剪切，项目原片未改变。AI 建议需重新点「识别整段视频」获取。');}
     }catch(e){if(active(version))status(e.message,true);}
     finally{if(active(version)){busy=false;paint();}}
   };

@@ -136,13 +136,18 @@ def probe_source(source):
         if abs(start) > float(tick) or any(s.get('rotation', 0) % 360 for s in video.get('side_data_list', [])):
             raise CutError('暂不支持带时间偏移或旋转标记的视频，请使用项目生成的成片')
         with diagnostics.span('editor.prepare.probe_timestamps', private_error=True):
-            raw = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_frames',
-                       '-show_entries', 'frame=best_effort_timestamp_time', '-of', 'json', str(source)], 60)
-        frames = json.loads(raw)['frames']
-        if not frames or any(abs(Fraction(f['best_effort_timestamp_time']) - Fraction(n, 1)/rate)
-                             > max(tick*2, Fraction(2, 1000000)) for n, f in enumerate(frames)):
+            # Container packet timestamps are what the decoder presents; reading them
+            # needs no decode. Decode errors are caught by the full -xerror decode of outputs.
+            raw = run(['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_packets',
+                       '-show_entries', 'packet=pts,flags', '-of', 'json', str(source)], 60, light=True)
+        packets = json.loads(raw)['packets']
+        if any('D' in p.get('flags', '') or p.get('pts') in (None, 'N/A') for p in packets):
+            raise CutError('视频时间戳不连续，无法可靠剪切')
+        times = sorted(Fraction(int(p['pts']))*tick for p in packets)
+        if not times or any(abs(t - Fraction(n, 1)/rate) > max(tick*2, Fraction(2, 1000000))
+                            for n, t in enumerate(times)):
             raise CutError('暂不支持可变帧率视频，请使用项目生成的恒定帧率成片')
-        count = len(frames)
+        count = len(times)
         if abs(duration - float(count/rate)) > float(1/rate):
             raise CutError('视频时间戳不连续，无法可靠剪切')
         if audio and (abs(float(audio['start_time'])) > .05
@@ -154,14 +159,33 @@ def probe_source(source):
         raise CutError('无法读取完整的成片帧信息') from exc
 
 
-def render_video(source, output, ranges, meta, mosaics=None, *, video_graph=None, video_inputs=()):
+def render_video(source, output, ranges, meta, mosaics=None, *, video_graph=None, video_inputs=(),
+                 video_layers=None, copy_audio=False, segments_only=False, _segments=None):
+    """video_layers describes video_graph per layer so only changed GOPs need encoding
+    (see segment_reencode.build). copy_audio keeps the source audio packets (no deletion).
+    segments_only returns None instead of running the full encode; _segments=False forces it."""
     mosaics = normalize_mosaics([] if mosaics is None else mosaics, meta)
     if ranges:
         kept = keep_ranges(ranges, meta['frame_count'])
-    elif mosaics:
+    elif mosaics or copy_audio:
         kept = [[0, meta['frame_count']]]
     else:
         raise CutError('请添加删除范围或打码区域')
+    if _segments is None:
+        from . import segment_reencode
+        eligible = (segment_reencode.enabled(settings()) and not mosaics
+                    and (video_graph is None or video_layers is not None))
+        if eligible:
+            state = {}
+            result = segment_reencode.attempt(lambda: render_video(
+                source, output, ranges, meta, video_graph=video_graph, video_inputs=video_inputs,
+                video_layers=video_layers, copy_audio=copy_audio, _segments=state), state)
+            if result is not None:
+                return result
+        else:
+            diagnostics.event('cut.segments', used=False, reason='not eligible')
+        if segments_only or copy_audio:
+            return None
     expected = sum(b-a for a, b in kept)
     num, den = meta['fps_num'], meta['fps_den']
     rate = Fraction(num, den)
@@ -189,11 +213,23 @@ def render_video(source, output, ranges, meta, mosaics=None, *, video_graph=None
             video_args = ['-filter_complex', ';'.join(parts), '-map', '[vout]']
         else:
             video_args = ['-vf', tail]
-        run(['ffmpeg', '-y', '-v', 'error', '-i', str(source), *[arg for path in video_inputs for arg in ('-i',str(path))], '-an', *video_args,
-             '-c:v', 'libx264', '-crf', str(render['crf']), '-preset', render['preset'],
-             '-pix_fmt', 'yuv420p', '-r', f'{num}/{den}', '-movflags', '+faststart', str(video_only)])
+        if isinstance(_segments, dict):
+            from . import segment_reencode
+            segment_reencode.build(source, video_only, kept, meta, render, work, _segments, run, video_layers)
+        else:
+            run(['ffmpeg', '-y', '-v', 'error', '-i', str(source), *[arg for path in video_inputs for arg in ('-i',str(path))], '-an', *video_args,
+                 '-c:v', 'libx264', '-crf', str(render['crf']), '-preset', render['preset'],
+                 '-pix_fmt', 'yuv420p', '-r', f'{num}/{den}', '-movflags', '+faststart', str(video_only)])
         final = video_only
-        if meta['has_audio']:
+        if meta['has_audio'] and copy_audio:
+            final = work/'final.mp4'
+            run(['ffmpeg', '-y', '-v', 'error', '-i', str(video_only), '-i', str(source), '-map', '0:v:0',
+                 '-map', '1:a:0', '-c', 'copy', '-movflags', '+faststart', str(final)], light=True)
+            from .segment_reencode import packets
+            identity = lambda path: [(p['pts'], p['dts'], p['duration'], p['data_hash']) for p in packets(path, run, 'a:0')]
+            if identity(final) != identity(source):
+                raise CutError('音频复制校验失败，结果未保存')
+        elif meta['has_audio']:
             total_samples = round(Fraction(meta['frame_count']*audio_rate, 1)/rate)
             raw, cut = work/'source.pcm', work/'cut.pcm'
             run(['ffmpeg', '-y', '-v', 'error', '-i', str(source), '-vn', '-af',
@@ -218,11 +254,14 @@ def render_video(source, output, ranges, meta, mosaics=None, *, video_graph=None
         result = probe_source(final)
         if any(result[k] != meta[k] for k in ('fps_num', 'fps_den', 'width', 'height', 'has_audio')) or result['frame_count'] != expected:
             raise CutError('剪切帧数或格式校验失败，结果未保存')
-        if meta['has_audio']:
+        if meta['has_audio'] and not copy_audio:
             audio = next(s for s in ffprobe(final)['streams'] if s['codec_type'] == 'audio')
             if abs(float(audio['duration']) - float(expected/rate)) > max(float(1/rate), 2048/audio_rate):
                 raise CutError('剪切音画时长校验失败，结果未保存')
-        run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(final), '-f', 'null', '-'])
+        if isinstance(_segments, dict):
+            segment_reencode.validate(final, source, kept, meta, work, _segments, run)
+        else:
+            run(['ffmpeg', '-v', 'error', '-xerror', '-i', str(final), '-f', 'null', '-'])
         result['sha256'] = file_sha256(final)
         final.replace(output)
         return result

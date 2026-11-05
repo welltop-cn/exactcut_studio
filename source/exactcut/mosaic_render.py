@@ -73,6 +73,21 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,rang
         if key not in groups:groups[key]=(appearance,[])
         groups[key][1].append(track)
     if not groups:groups[tuple(effect.values())]=(effect,[])
+    if cutting.settings().get('segment_reencode') is True:
+        layers=list(groups.values())
+        def span_masks(start,end,directory):
+            directory.mkdir(parents=True,exist_ok=True);paths=[]
+            for index,(appearance,group) in enumerate(layers):
+                path=directory/f'mask-{index}.mkv'
+                encode_mask(path,meta,group,size,rate,appearance,progress,frames=range(start,end));paths.append(path)
+            return paths
+        video_layers={'appearances':[a for a,_ in layers],'intervals':[active_intervals(g) for _,g in layers],'masks':span_masks}
+        progress('正在合成有打码区域的片段，其余画面原样保留…')
+        actual=cutting.render_video(source,partial,ranges or [],meta,video_graph='segments',video_layers=video_layers,
+                                    copy_audio=not ranges,segments_only=True)
+        if actual is not None:
+            actual.pop('sha256');partial.replace(output)
+            return {'metadata':actual,'sha256':file_sha256(output),'bytes':output.stat().st_size}
     masks=[];appearances=[];intervals=[]
     for index,(appearance,group) in enumerate(groups.values()):
         mask_video=output.parent/f'combined-mask-{index}.mkv'
@@ -84,7 +99,7 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,rang
     graph=effects.layered_graph(meta,appearances,intervals)
     if ranges:
         progress('正在一次合成打码与删除片段…')
-        actual=cutting.render_video(source,partial,ranges,meta,video_graph=graph,video_inputs=masks)
+        actual=cutting.render_video(source,partial,ranges,meta,video_graph=graph,video_inputs=masks,_segments=False)
         actual.pop('sha256')
     else:
         cutting.run(['ffmpeg','-y','-v','error','-i',str(source),*[arg for mask in masks for arg in ('-i',str(mask))],'-filter_complex',graph,
@@ -98,18 +113,24 @@ def compose(source,output,meta,tracks,progress=lambda text:None,effect=None,rang
 
 
 @editor_resources.media_operation
-def encode_mask(mask_video,meta,tracks,size,rate,effect,progress):
+def encode_mask(mask_video,meta,tracks,size,rate,effect,progress,frames=None):
     width,height=size
     progress('正在合并全部区域遮罩…')
     with (mask_video.with_suffix('.log')).open('wb') as log:
         process=processing_cancel.spawn(bounded_ffmpeg(['ffmpeg','-y','-v','error','-f','rawvideo','-pix_fmt','gray','-s',f'{width}x{height}','-r',rate,'-i','pipe:0','-an','-c:v','ffv1',str(mask_video)]),stdin=subprocess.PIPE,stdout=subprocess.DEVNULL,stderr=log)
         timer=threading.Timer(600,lambda:processing_cancel.terminate(process));timer.start()
         try:
-            black=bytes(width*height)
-            for frame in range(meta['frame_count']):
+            black=bytes(width*height);cached_active=None;cached_mask=None
+            for frame in (range(meta['frame_count']) if frames is None else frames):
                 processing_cancel.check()
-                active=any(t['target']['start']<=frame<t['target']['end'] for t in tracks)
-                process.stdin.write(effects.prepare_mask(union_mask(frame,tracks,size),effect).tobytes() if active else black)
+                active=tuple(i for i,t in enumerate(tracks) if not t.get('failed') and t['target']['start']<=frame<t['target']['end'])
+                if not active:raw=black
+                elif all(tracks[i]['target'].get('motion')=='fixed' for i in active):
+                    if active!=cached_active:
+                        cached_mask=effects.prepare_mask(union_mask(frame,tracks,size),effect).tobytes();cached_active=active
+                    raw=cached_mask
+                else:raw=effects.prepare_mask(union_mask(frame,tracks,size),effect).tobytes()
+                process.stdin.write(raw)
                 if frame%120==0:progress(f"合并遮罩 {frame+1} / {meta['frame_count']} 帧")
             process.stdin.close()
             if process.wait(timeout=60):raise cutting.CutError('遮罩视频生成失败，未生成成片')
@@ -183,9 +204,11 @@ def current(bid,sid,job,*,permit=None):
     return session
 
 
-def submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id=None):
+def submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id=None,editor_draft=None):
     if submission_id is not None and (not isinstance(submission_id,str) or not re.fullmatch('[0-9a-f]{32}',submission_id)):
         raise cutting.CutError('提交回执标识无效')
+    if editor_draft is not None and (not isinstance(editor_draft,dict) or editor_draft.get('schema_version')!=1):
+        raise cutting.CutError('编辑草稿格式无效')
     session=sessions.read_session(bid,sid);batch=workflow.folder(bid)
     # The asset gate serializes admission, including retries of a frozen task.
     from . import material_versions
@@ -208,7 +231,7 @@ def submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id=None):
         jid=uuid.uuid4().hex
         job={'schema_version':1,'id':jid,'queued_task':True,'status':'queued','stage':'queued',
              'source_sha256':session['source_sha256'],'reset_at':reset_at,'targets':targets,'ranges':ranges,
-             'effect':effect,'config':tracking.settings(),'fingerprint':fingerprint,'actor':actor,'submission_id':submission_id,
+             'effect':effect,'config':tracking.settings(),'fingerprint':fingerprint,'actor':actor,'submission_id':submission_id,'editor_draft':editor_draft,
              'created_at':now_iso(),'progress':'等待后台处理','completed_regions':0,'total_regions':len(targets)}
         queue.enqueue(bid,sid,session['request_id'],actor,job)
         return job
@@ -270,8 +293,8 @@ def discard_result(bid,sid,jid,reset_at):
             return job
 
 
-def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False,actor='admin',submission_id=None):
-    if not preview:return submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id)
+def start(bid,sid,targets,reset_at,ranges=None,effect=None,preview=False,actor='admin',submission_id=None,editor_draft=None):
+    if not preview:return submit(bid,sid,targets,reset_at,ranges,effect,actor,submission_id,editor_draft)
     effect=effects.validate(effect)
     session=sessions.read_session(bid,sid)
     with cutting_access.gate(workflow.folder(bid),session['request_id']):

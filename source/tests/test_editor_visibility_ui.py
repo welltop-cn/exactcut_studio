@@ -16,7 +16,7 @@ def test_hidden_first_frame_resumes_latest_frame(request, kind, mode, immediate)
     page.evaluate('''({kind,mode})=>{
       window.hiddenForTest=false;Object.defineProperty(document,'hidden',{get:()=>hiddenForTest,configurable:true});
       window.changeVisibility=hidden=>{hiddenForTest=hidden;document.dispatchEvent(new Event('visibilitychange'))};
-      window.frameCalls=[];window.scanPosts=0;const oldApi=api;window.api=async(url,body)=>{if(kind==='mosaic'&&url.endsWith('/scan')){if(body){scanPosts++;return {id:'auto-task',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]}}return {enabled:true,report:null};}return oldApi(url,body)};
+      window.frameCalls=[];window.scanPosts=0;window.scanReads=0;const oldApi=api;window.api=async(url,body)=>{if(kind==='mosaic'&&url.endsWith('/scan')){if(!body)scanReads++;if(body){scanPosts++;return {id:'auto-task',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]}}return {enabled:true,report:null};}return oldApi(url,body)};
       const original=fetch;window.fetch=async(url,options)=>{
         if(!String(url).includes('/frame/'))return original(url,options);
         frameCalls.push(String(url));
@@ -43,5 +43,5 @@ def test_hidden_first_frame_resumes_latest_frame(request, kind, mode, immediate)
     page.wait_for_function('frameCalls.length===2')
     page.wait_for_function(f"!document.getElementById('{kind}Frame').hidden")
     if kind=='mosaic':
-        page.wait_for_function('scanPosts===1')
-    assert page.evaluate('scanPosts')==(1 if kind=='mosaic' else 0)
+        page.wait_for_function('scanReads===1')  # The existing record is read only after the first frame.
+    assert page.evaluate('scanPosts')==0
