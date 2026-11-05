@@ -34,10 +34,13 @@
 - 这些 ACL 不起作用也无害；如需撤销（root）：`setfacl -x u:deploy /srv/exactcut/data; setfacl -R -x u:deploy /srv/exactcut/data/logs; setfacl -R -d -x u:deploy /srv/exactcut/data/logs`。
 - 下次发版：应用写日志时不要用 chmod 清掉组位／ACL mask（例如只在新建时设权限，或改为 0750/0640 配专用只读组）。
 
-## 补充 2：root 定时日志复制（待马涛执行，时间待补）
+## 补充 2：root 定时日志复制（2026-11-05 12:33 马涛本人 root 执行）
 - 用户决定：马涛 12:17 选择「先写 root 定时复制脚本给他执行，应用 chmod 那处下次发版再改」。
 - deploy 侧（已做，2026-11-05 12:32）：脚本副本放在 `~/exactcut-monitor/root-feed/log_feed.py`；`~/exactcut-monitor/config.json` 新增 `log_dir: /home/deploy/exactcut-monitor/feed`；监控脚本同步到当前分支版本。
 - root 侧（马涛执行）：复制脚本到 `/usr/local/sbin/exactcut-log-feed.py`，建 `/var/lib/exactcut-log-feed`（700），首次 `--bootstrap` 只建游标不复制历史，建 `/etc/cron.d/exactcut-log-feed` 每 5 分钟运行，日志写 `/var/log/exactcut-log-feed.log`。
 - 输出：`/home/deploy/exactcut-monitor/feed/events-YYYYMMDD-feed.jsonl`，目录 750、文件 640、属主 deploy，保留 7 天。
 - 回滚（root）：`rm -f /etc/cron.d/exactcut-log-feed /usr/local/sbin/exactcut-log-feed.py /var/log/exactcut-log-feed.log; rm -rf /var/lib/exactcut-log-feed /home/deploy/exactcut-monitor/feed`；deploy 侧删除 `config.json` 中的 `log_dir`。
-- 执行时间与验证结果：待补。
+- 执行：马涛 12:33 回复「好了」，本人用 root 执行了上述安装命令（含 `--bootstrap`）。
+- 验证（deploy 只读）：12:33:26 feed 目录已建（750，deploy:deploy）；`/etc/cron.d/exactcut-log-feed` 存在；12:33:57 手动运行监控，扫描状态由「目录不存在」变为「正常」，发送「报错扫描已恢复」成功，未推历史。
+- 12:35:01 root cron 首轮：`复制 0 行；基线 否；清理 0 个文件`；12:35:01 deploy 监控 cron 正常运行，无自身错误。
+- 限制：feed 只含 12:33 bootstrap 之后的新报错，看不到历史报错。
