@@ -114,10 +114,14 @@ def frame_index_ready(path, drama, episode):
 
 def status(path, drama, episodes, jobs, manifest):
     states = []
+    frame_episodes = set(getattr(manifest, 'frame_episodes', set()) or ())
+    if not frame_episodes and (path / 'source-prefetch.json').exists():
+        frame_episodes = set(read_json(path / 'source-prefetch.json').get('frame_episodes') or ())
     for episode in episodes:
         state = {'episode': episode, 'status': 'waiting', 'received_bytes': 0, 'total_bytes': 0}
         matches = [job for job in jobs if job.get('project') == drama and episode in job.get('episodes', [])]
         job = max(matches, key=lambda j: j.get('created', 0), default=None)
+        saved = {}
         if job:
             file = result_path(path, job['id'])
             result = read_json(file) if file.exists() else {}
@@ -127,23 +131,33 @@ def status(path, drama, episodes, jobs, manifest):
                 state.update(status='waiting')
             elif saved.get('status') == 'ready' and saved.get('signature') != signature(drama, episode):
                 state.update(status='waiting')
-            elif job.get('status') in {'failed', 'interrupted'} and state['status'] != 'ready':
+            elif job.get('status') in {'failed', 'interrupted'} and state['status'] not in {'ready', 'downloading', 'indexing'}:
                 state.update(status='failed')
             elif state['status'] == 'waiting' and job.get('status') in {'queued', 'running'}:
                 state.update(status='queued')
-        if cached(drama, episode):
-            state.update(status='ready')
-            state.pop('error_info', None)
-        if episode in getattr(manifest, 'frame_episodes', set()):
+        if episode in frame_episodes:
             if frame_index_ready(path, drama, episode):
                 state.update(status='ready')
                 state.pop('error_info', None)
-            elif job and job.get('status') in {'queued', 'running'}:
-                state.update(status='queued')
+            elif state['status'] in {'downloading', 'indexing'}:
+                pass
+            elif cached(drama, episode):
+                if job and job.get('status') in {'queued', 'running'}:
+                    state.update(status='indexing', received_bytes=0, total_bytes=0)
+                    state.pop('error_info', None)
+                elif job and job.get('status') in {'failed', 'interrupted'}:
+                    state.update(status='failed')
+                else:
+                    state.update(status='waiting')
             elif job and job.get('status') in {'failed', 'interrupted'}:
                 state.update(status='failed')
+            elif job and job.get('status') in {'queued', 'running'} and state['status'] == 'waiting':
+                state.update(status='queued')
             else:
                 state.update(status='waiting')
+        elif cached(drama, episode):
+            state.update(status='ready')
+            state.pop('error_info', None)
         states.append(state)
     explanation = timing_explanation(manifest, workflow.ROOT / 'projects' / drama, wait=False)
     by_episode = {state['episode']: state for state in states}
@@ -154,6 +168,61 @@ def status(path, drama, episodes, jobs, manifest):
                 segment['source_status'] = state['status'] if state['status'] != 'ready' else 'checking'
     return {'drama_id': drama, 'episodes': states, 'timing_explanation': explanation}
 
+
+
+def format_episode_progress(state):
+    """Render one status dict as short Chinese progress text."""
+    names = {
+        'waiting': '等待下载',
+        'queued': '下载排队中',
+        'downloading': '下载中',
+        'indexing': '建帧索引',
+        'ready': '已就绪',
+        'failed': '失败',
+        'waiting_resource': '等待资源',
+        'skipped': '等待下载',
+    }
+    status_name = state.get('status') or 'waiting'
+    label = names.get(status_name, status_name)
+    received = int(state.get('received_bytes') or 0)
+    total = int(state.get('total_bytes') or 0)
+    if status_name == 'downloading' and total > 0:
+        pct = min(100, received * 100 // total)
+        def mb(n):
+            return f'{n / (1024 * 1024):.1f}'.rstrip('0').rstrip('.')
+        label += f' {mb(received)}/{mb(total)} MB（{pct}%）'
+    if status_name == 'failed' and isinstance(state.get('error_info'), dict) and state['error_info'].get('action'):
+        label += ' · ' + str(state['error_info']['action'])
+    return f"{state.get('episode', '')} {label}".strip()
+
+
+def episode_readiness_message(path, drama, episode):
+    """Explain why a frame-index save failed for one episode."""
+    if frame_index_ready(path, drama, episode):
+        return f'{episode} 已就绪'
+    desired = read_json(path / 'source-prefetch.json') if (path / 'source-prefetch.json').exists() else {}
+    saved = None
+    results = path / 'source-prefetch-results'
+    if results.is_dir():
+        latest = None
+        for file in results.glob('*.json'):
+            result = read_json(file)
+            item = (result.get('episodes') or {}).get(episode)
+            if not isinstance(item, dict):
+                continue
+            stamp = str(result.get('updated_at') or '')
+            if latest is None or stamp >= latest[0]:
+                latest = (stamp, item)
+        if latest:
+            saved = dict(latest[1])
+            saved.setdefault('episode', episode)
+    if saved and saved.get('status') in {'downloading', 'indexing', 'queued', 'waiting', 'failed', 'waiting_resource'}:
+        return format_episode_progress(saved) + '，请稍后再保存并校验'
+    if cached(drama, episode):
+        return f'{episode} 建帧索引尚未完成，请稍后再保存并校验'
+    if desired.get('drama_id') == drama and episode in (desired.get('episodes') or []):
+        return f'{episode} 等待下载，请稍后再保存并校验'
+    return f'{episode} 正片或帧索引尚未就绪，请稍后再保存并校验'
 
 def download_progress(path, drama, episodes, jobs):
     """Read queued production's required sources without mutating its runtime."""
@@ -204,6 +273,8 @@ def run(batch_id, job_id):
             if not needs_frames or signature(job['project'], episode) is None:
                 source_cache.ensure(job['project'], [episode], on_progress=progress)
             if needs_frames:
+                state.update(status='indexing', received_bytes=0, total_bytes=0)
+                store()
                 from .source_frames import prepare
                 prepare(path, {'drama_id': job['project'], 'rows': [{'clips': [
                     {'episode': episode, 'time_format': 'source_frames_v1'}]}]}, episode)

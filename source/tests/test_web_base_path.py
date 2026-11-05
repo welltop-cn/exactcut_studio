@@ -41,7 +41,17 @@ def request(app, method, path, data=None, headers=None):
     try:
         connection.request(method, path, None if data is None else json.dumps(data), headers or {})
         response = connection.getresponse()
-        return response.status, dict(response.getheaders()), response.read()
+        pairs = response.getheaders()
+        headers_out = {}
+        set_cookies = []
+        for name, value in pairs:
+            if name.lower() == 'set-cookie':
+                set_cookies.append(value)
+            headers_out[name] = value
+        if set_cookies:
+            headers_out['Set-Cookie'] = set_cookies[0]
+            headers_out['Set-Cookies'] = set_cookies
+        return response.status, headers_out, response.read()
     finally:
         connection.close()
 
@@ -51,8 +61,10 @@ def login(app):
                                 {'username': 'admin', 'password': app.password},
                                 {'X-Exactcut-Request': '1'})
     assert status == 200
-    assert '; Path=/home/;' in headers['Set-Cookie']
-    return {'Cookie': headers['Set-Cookie'].split(';')[0], 'X-Exactcut-Request': '1'}
+    cookies = headers.get('Set-Cookies') or [headers.get('Set-Cookie', '')]
+    session = next((item for item in cookies if '; Path=/home/;' in item and 'Max-Age=604800' in item), '')
+    assert session, cookies
+    return {'Cookie': session.split(';', 1)[0], 'X-Exactcut-Request': '1'}
 
 
 def test_prefixed_login_redirect_pages_and_session(app):
@@ -235,3 +247,33 @@ def test_brand_reference_is_lazy_and_version_cached(app):
     assert status == 200 and image.startswith(b'\xff\xd8')
     assert headers['Content-Type'] == 'image/jpeg'
     assert 'immutable' in headers['Cache-Control']
+
+
+def test_login_clears_legacy_root_path_session_cookie(app):
+    status, headers, _ = request(app, 'POST', '/home/api/login',
+                                 {'username': 'admin', 'password': app.password},
+                                 {'X-Exactcut-Request': '1'})
+    assert status == 200
+    cookies = headers.get('Set-Cookies') or []
+    assert any('Path=/home/' in item and 'exactcut_session=' in item and 'Max-Age=604800' in item for item in cookies)
+    assert any(item.startswith('exactcut_session=; Path=/; Max-Age=0') for item in cookies)
+
+
+def test_duplicate_session_cookies_prefer_valid_token(app):
+    headers = login(app)
+    valid = headers['Cookie'].split('=', 1)[1]
+    stale = 'deadbeef' * 4
+    # Stale Path=/ cookie after the valid one (SimpleCookie last-wins would have failed).
+    status, _, body = request(app, 'GET', '/home/api/me', headers={
+        'Cookie': f'exactcut_session={valid}; exactcut_session={stale}',
+        'X-Exactcut-Request': '1',
+    })
+    assert status == 200, body
+    data = __import__('json').loads(body)
+    assert data.get('username') == 'admin'
+    # Valid after stale also works.
+    status, _, body = request(app, 'GET', '/home/api/me', headers={
+        'Cookie': f'exactcut_session={stale}; exactcut_session={valid}',
+        'X-Exactcut-Request': '1',
+    })
+    assert status == 200, body

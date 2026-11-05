@@ -1107,29 +1107,43 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('X-Content-Type-Options', 'nosniff')
         self.send_header('X-Frame-Options', 'DENY')
         self.send_header('Referrer-Policy', 'no-referrer')
-        if getattr(self, 'response_cookie', None):
-            self.send_header('Set-Cookie', self.response_cookie)
+        cookies = list(getattr(self, 'response_cookies', None) or [])
+        if getattr(self, 'response_cookie', None) and self.response_cookie not in cookies:
+            cookies.append(self.response_cookie)
+        for item in cookies:
+            self.send_header('Set-Cookie', item)
         self.end_headers()
         self.wfile.write(body)
 
     def cookie(self, token):
         proto = (self.headers.get('X-Forwarded-Proto') or '').split(',')[0].strip().lower()
         secure = '; Secure' if proto == 'https' else ''
-        self.response_cookie = f'exactcut_session={token}; Path={self.public_url("/")}; HttpOnly; SameSite=Strict; Max-Age=604800{secure}'
+        primary = f'exactcut_session={token}; Path={self.public_url("/")}; HttpOnly; SameSite=Strict; Max-Age=604800{secure}'
+        self.response_cookie = primary
+        cookies = [primary]
+        # Older builds used Path=/; clear that leftover so it cannot override /home/ sessions.
+        if getattr(getattr(self, 'server', None), 'base_path', ''):
+            cookies.append(f'exactcut_session=; Path=/; Max-Age=0; HttpOnly; SameSite=Strict{secure}')
+        self.response_cookies = cookies
 
     def authorized(self):
         self.user = None
         self.session_token = ''
         db = getattr(self.server, 'auth_db', None)
-        cookies = SimpleCookie()
-        try:
-            cookies.load(self.headers.get('Cookie',''))
-        except Exception:
-            pass
-        if db and 'exactcut_session' in cookies:
-            self.session_token = cookies['exactcut_session'].value
-            self.user = accounts.session(db, self.session_token)
-        else:
+        header = self.headers.get('Cookie', '') or ''
+        tokens = []
+        for part in header.split(';'):
+            item = part.strip()
+            if item.lower().startswith('exactcut_session='):
+                tokens.append(item.split('=', 1)[1])
+        if db and tokens:
+            for token in tokens:
+                user = accounts.session(db, token)
+                if user:
+                    self.session_token = token
+                    self.user = user
+                    break
+        if not self.user:
             try:
                 scheme, encoded = self.headers.get('Authorization','').split(' ',1)
                 username, password = base64.b64decode(encoded,validate=True).decode().split(':',1)
