@@ -281,6 +281,33 @@ def test_late_whole_scan_cannot_overwrite_reopened_results(editor):
     assert '新任务结果' in editor.locator('#mosaicScanEvents').inner_text()
 
 
+def test_preparation_shows_loading_until_ready_or_failed(editor):
+    editor.evaluate('''() => {
+      const original=window.api;
+      window.api=(url,body)=>url.endsWith('/open') ? new Promise((resolve,reject)=>{
+        window.finishOpen=()=>resolve(session);window.failOpen=()=>reject(Error('初始化失败'));
+      }) : original(url,body);
+    }''')
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    assert editor.locator('#mosaicDialog').get_attribute('aria-busy') == 'true'
+    assert editor.locator('#mosaicPreparing').is_visible()
+    assert '正在准备视频' in editor.locator('#mosaicPreparing').inner_text()
+    assert not editor.locator('#mosaicWorkspace').is_visible()
+    assert not editor.locator('#mosaicBatchStart').is_visible()
+    editor.evaluate('finishOpen()')
+    editor.locator('#mosaicWorkspace').wait_for(state='visible')
+    assert editor.locator('#mosaicDialog').get_attribute('aria-busy') == 'false'
+    assert not editor.locator('#mosaicPreparing').is_visible()
+    assert editor.locator('#mosaicBatchStart').is_visible()
+    editor.locator('#mosaicClose').click()
+    editor.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
+    editor.evaluate('failOpen()')
+    editor.wait_for_function("document.querySelector('#mosaicStatus').textContent==='初始化失败'")
+    assert editor.locator('#mosaicDialog').get_attribute('aria-busy') == 'false'
+    assert not editor.locator('#mosaicPreparing').is_visible()
+    assert not editor.locator('#mosaicBatchStart').is_visible()
+
+
 def test_reopen_while_source_preparing_shares_request(editor):
     editor.evaluate('''() => {
       const original=window.api;

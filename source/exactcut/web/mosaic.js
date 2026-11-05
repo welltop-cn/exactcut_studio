@@ -409,6 +409,7 @@
     autoScanPending=false;clearRemovedClip();scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;addingClip=false;manualClips=[];aiEvents=[];clipEdits={};$('mosaicAdjust').open=false;$('mosaicEffects').close();
     image.hidden=true;overlay.hidden=true;$('mosaicWorkspace').hidden=true;$('mosaicTitle').textContent='剪切打码 · '+asset.title;
     for(const v of $('assets').querySelectorAll('video'))v.pause();
+    $('mosaicPreparing').hidden=false;dialog.setAttribute('aria-busy','true');dialog.querySelector('.mosaic-batch-footer').hidden=true;
     if(!dialog.open)dialog.showModal();status('正在准备原片，首次打开需要一些时间；关闭后重新进入会继续等待…');
     try{
       const session=await prepare(batch,asset,()=>version===epoch&&dialog.open&&!document.hidden);
@@ -424,6 +425,7 @@
         restoreParameters(batchJob);
       }else loadDraft();
       resultMode=awaitingDecision();
+      $('mosaicPreparing').hidden=true;dialog.setAttribute('aria-busy','false');dialog.querySelector('.mosaic-batch-footer').hidden=false;
       $('mosaicWorkspace').hidden=false;
       if(session.capabilities?.oss_playback){
         sourceManager=EditorSource.create({endpoint:base()+'/source-url',local:base()+'/source',enabled:true});
@@ -432,7 +434,7 @@
       }else{video.src=appUrl(base()+'/source');video.load();}
       status(session.capabilities?.region_recognition?'正在加载视频首帧，准备完成后自动识别…':'本机未启用 Gemini 识别，可先手动框选目标。');
       autoScanPending=!batchJob;paint();loadFrame();restoreBatch();restorePreviewNotice(version);
-    }catch(e){if(version===epoch)status(e.message,true);}
+    }catch(e){if(version===epoch){$('mosaicPreparing').hidden=true;dialog.setAttribute('aria-busy','false');status(e.message,true);}}
   }
   function mount(){
     if(!currentUser?.features?.cutting||!current)return;
