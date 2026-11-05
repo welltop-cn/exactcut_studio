@@ -25,6 +25,11 @@ def result_path(job, jobs):
 
 
 def fingerprint(job, batches, root, *, source_digests=None, config=None, _retry_errors=False):
+    if job.get('action') == 'prefetch':
+        # The child checks the current desired plan before each episode. Editing
+        # that plan must not invalidate resource-wait evidence for this job.
+        return json_sha256({'action': 'prefetch', 'project': job.get('project'),
+                            'episodes': job.get('episodes', [])})
     path = batches / job.get('batch_id', '')
     values = {'phase': job.get('phase'), 'request_id': job.get('request_id'), 'config': {key: value for key, value in (load_config() if config is None else config).items() if job.get('phase') == 'render' and key in {'render', 'qc', 'safety'}}}
     for name in ('confirmed.json', 'source-prefetch.json'):
@@ -50,6 +55,30 @@ def fingerprint(job, batches, root, *, source_digests=None, config=None, _retry_
                 sources[episode] = None
         values['sources'] = sources
     return json_sha256(values)
+
+
+def legacy_prefetch_wait(job, result, batches):
+    """Only recover sealed, output-free waits written before scoped fingerprints."""
+    if job.get('action') != 'prefetch' or job.get('phase') is not None: return False
+    if result.get('version') != 1 or result.get('status') != 'waiting_resource' or result.get('exit_code') != 75: return False
+    if result.get('artifacts') != [] or result.get('source_evidence') != {} or 'publication' in result or 'publication_sha256' in result: return False
+    seal = result.get('evidence_sha256')
+    if seal is None or seal != json_sha256({key: value for key, value in result.items() if key != 'evidence_sha256'}): return False
+    if result.get('input_fingerprint') != job.get('input_fingerprint'): return False
+    due = result.get('not_before')
+    if type(due) not in (int, float) or not 0 < due < float('inf'): return False
+    path = batches / job.get('batch_id', '')
+    plan = path / 'source-prefetch.json'
+    if not plan.is_file(): return False
+    desired = read_json(plan)
+    if not isinstance(desired, dict) or not isinstance(desired.get('episodes'), list): return False
+    episodes = job.get('episodes')
+    if desired.get('drama_id') != job.get('project') or not isinstance(episodes, list) or not episodes: return False
+    if not all(isinstance(episode, str) and episode in desired.get('episodes', []) for episode in episodes): return False
+    values = {'phase': None, 'request_id': job.get('request_id'), 'config': {},
+              'source-prefetch.json': desired}
+    if (path / 'confirmed.json').is_file(): values['confirmed.json'] = read_json(path / 'confirmed.json')
+    return result['input_fingerprint'] == json_sha256(values)
 
 
 def artifacts(job, batches, root):
@@ -117,7 +146,7 @@ def verified(job, jobs, batches, root, *, config=None, _retry_errors=False):
     try:
         result = read_json(file)
         if result['job_id'] != job['id'] or result['phase'] != job.get('phase') or result['attempt'] != job.get('attempt', 1): return None
-        if result['input_fingerprint'] != fingerprint(job, batches, root, config=config, _retry_errors=_retry_errors): return None
+        if result['input_fingerprint'] != fingerprint(job, batches, root, config=config, _retry_errors=_retry_errors) and not legacy_prefetch_wait(job, result, batches): return None
         for artifact in result['artifacts']:
             path = Path(artifact['path'])
             if not path.is_file() or path.is_symlink() or path.stat().st_size != artifact['bytes'] or file_sha256(path) != artifact['sha256']: return None
@@ -365,7 +394,7 @@ def scheduler_verified(job, jobs, batches, root):
                     if row is not None: return None
                 elif row is None or str(path) != row['path'] or file_identity(path) != row['stat']: return None
             current = fingerprint(job, batches, root, source_digests={episode: row['sha256'] if row else None for episode, row in evidence.items()})
-            if result['input_fingerprint'] != current: return None
+            if result['input_fingerprint'] != current and not legacy_prefetch_wait(job, result, batches): return None
             for row in result['artifacts']:
                 if file_identity(row['path']) != row['stat'] or row['bytes'] != row['stat'][2]: return None
             if 'publication' in result and json_sha256(result['publication']) != result['publication_sha256']: return None
