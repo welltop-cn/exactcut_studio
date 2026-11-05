@@ -191,6 +191,46 @@ def open_auto(page):
     page.wait_for_function("!document.getElementById('mosaicBatchDialog').hidden || (!document.getElementById('mosaicScan').disabled && !document.getElementById('mosaicWorkspace').hidden) || !document.getElementById('mosaicStop').hidden")
 
 
+def render_with_pending_segments(page, pending):
+    with page.expect_event('dialog') as confirmation:
+        page.once('dialog', lambda dialog: dialog.accept())
+        page.locator('#mosaicBatchStart').click()
+    assert confirmation.value.type == 'confirm'
+    assert confirmation.value.message == f'还有 {pending} 段待处理，这些段会保持原样。继续生成？'
+
+
+@pytest.mark.parametrize('credential_state', ['missing', 'empty', 'unset'])
+def test_scan_unavailable_offers_manual_segments(editor, tmp_path, monkeypatch, credential_state):
+    from exactcut import cutting, cutting_scan
+    from exactcut.error_guidance import guidance
+
+    credential = tmp_path / 'scan.env'
+    if credential_state == 'empty':
+        credential.write_text('')
+    monkeypatch.setenv('EXACTCUT_CUT_SCAN_ENV', str(credential))
+    if credential_state == 'unset':
+        monkeypatch.delenv('EXACTCUT_CUT_SCAN_ENV')
+    with pytest.raises(cutting.CutError) as failure:
+        cutting_scan.credential()
+    body = {'error': str(failure.value), 'error_info': guidance(str(failure.value))}
+    editor.evaluate('''body => {
+      const original=api;
+      window.api=async(url,data)=>{
+        if(url.endsWith('/scan')&&data)throw EditorBusy.error(new Response('',{status:503}),body);
+        return original(url,data);
+      };
+    }''', body)
+    open_auto(editor)
+    editor.locator('#mosaicScan').click()
+    editor.wait_for_function("document.getElementById('mosaicScanStatus').textContent==='识别服务暂不可用，可以先手动添加片段。'")
+    assert '原片' not in editor.locator('#mosaicScanStatus').inner_text()
+    editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicStart').fill('00:00:03')
+    editor.locator('#mosaicEnd').fill('00:00:08')
+    editor.locator('#mosaicAddSubmit').click()
+    assert editor.locator('[data-manual-card]').count() == 1
+
+
 def test_scan_finds_range_and_region_without_manual_frame_selection(editor):
     scan_result(editor)
     open_auto(editor)
@@ -856,7 +896,7 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     assert pending_block.get_attribute('data-start')=='50'
     assert editor.locator('[data-target-remove][aria-checked="false"]').count()==1
     assert editor.locator('#mosaicBatchHint').inner_text().split('\n')==['删除 0 段 · 打码 2 段 · 待处理 1 段','旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。']
-    button.click()
+    render_with_pending_segments(editor, 1)
     assert editor.locator('#mosaicBatchDialog').is_visible()
     assert editor.evaluate('batchBody.targets.length')==2
     assert editor.evaluate('batchBody.targets.map(t=>t.start)')==[10,30]
