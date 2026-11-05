@@ -45,3 +45,16 @@ def test_public_message_preserves_business_guidance_and_hides_exception_dump():
     assert public_message('识别失败：ConnectionError GET https://internal.example/path') == '操作未完成，请稍后重试；如仍失败，请联系管理员'
     assert public_message('') == ''
     assert public_message(ConnectionError('connection reset')) == '操作未完成，请稍后重试；如仍失败，请联系管理员'
+
+
+@pytest.mark.parametrize('message', ['识别凭据文件不可用或缺少 Gemini 密钥', '自动识别未启用；请使用本机识别启动参数',
+                                     '自动识别配置不完整或超出本机处理范围'])
+def test_scan_unavailable_is_not_reported_as_missing_source(message):
+    from exactcut.error_guidance import guidance
+    info = guidance(message)
+    assert (info['code'], info['title']) == ('recognition_unavailable', '识别服务暂不可用，可以先手动添加片段。')
+
+
+def test_missing_source_keeps_source_title():
+    from exactcut.error_guidance import guidance
+    assert guidance('缺少第 3 集正片')['title'] == '原片缺失或无法完整读取'

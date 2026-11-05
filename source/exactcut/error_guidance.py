@@ -72,7 +72,7 @@ def guidance(message, stage=None, *, continuation=False, fbbm_status=None):
     elif any(s in lower for s in ('时长不符', 'qc未通过', '时长不一致')):
         code, title, action = 'qc', '成片时长或格式校验未通过', '查看时长校对及技术详情；检查原片，必要时修改时间线后重新制作。'
     elif str(message) in ('识别凭据文件不可用或缺少 Gemini 密钥', '请以 --scan-ai-env 指定本机识别凭据文件',
-                          '整片识别未启用；请配置本机识别凭据', '自动识别配置不完整或超出本机处理范围'):
+                          '整片识别未启用；请配置本机识别凭据', '自动识别配置不完整或超出本机处理范围') or any(s in lower for s in ('自动识别', '识别凭据', 'gemini')):
         code, title, action = 'recognition_unavailable', '识别服务暂不可用，可以先手动添加片段。', ''
     elif any(s in lower for s in ('缺少', '正片', '尾帧', 'decode', 'moov atom')):
         code, title, action = 'source', '原片缺失或无法完整读取', '检查所需集数和原片完整性，再重试获取与制作。'

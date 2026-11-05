@@ -52,7 +52,8 @@ def test_helper_network_error_is_friendly(frame_page):
     page = frame_page
     page.evaluate("()=>{api=async()=>{throw new TypeError('Failed to fetch')}}")
     page.add_script_tag(content=(Path(__file__).parents[1] / 'exactcut/web/helper.js').read_text())
-    page.locator('#helpNav').click()
+    assert page.locator('#helpNav').is_hidden()
+    page.evaluate("()=>document.getElementById('helpNav').onclick()")
     page.locator('#helpQuestion').fill('当前进行到哪一步？')
     page.locator('#helpSend').click()
     page.wait_for_function("document.getElementById('helpMessages').textContent.includes('暂时无法取得回答，请稍后重试')")
