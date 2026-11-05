@@ -6,7 +6,7 @@ import pytest
 from PIL import Image
 
 from exactcut import renderer
-from exactcut.media import ffprobe, run_checked
+from exactcut.media import encoder_scope, ffprobe, run_checked
 from exactcut.util import load_config
 
 pytestmark = [pytest.mark.integration, pytest.mark.skipif(not shutil.which('ffmpeg'), reason='requires ffmpeg')]
@@ -22,6 +22,15 @@ def frame_hashes(path, stream='v:0'):
 def timestamps(path):
     return json.loads(run_checked(['ffprobe', '-v', 'error', '-select_streams', 'v:0',
         '-show_frames', '-show_entries', 'frame=best_effort_timestamp_time', '-of', 'json', str(path)]).stdout)['frames']
+
+
+@pytest.fixture
+def single_thread_encoder():
+    """Frame-threaded libx264 (MB-tree on) is not bit-reproducible under CPU
+    contention, so tests that compare two separate encodes frame by frame pin
+    the encoder to one thread. Production thread counts are unaffected."""
+    with encoder_scope(1):
+        yield
 
 
 @pytest.fixture
@@ -88,7 +97,7 @@ def test_splice_rejects_a_boundary_that_decodes_differently(hook_case, tmp_path,
 
 
 @pytest.mark.parametrize('fade_ms', [0, 400])
-def test_prefix_matches_original_overlay_filter(hook_case, tmp_path, monkeypatch, fade_ms):
+def test_prefix_matches_original_overlay_filter(hook_case, tmp_path, monkeypatch, fade_ms, single_thread_encoder):
     from exactcut import hook_splice
     source, render = hook_case
     render['hook_fade_out_ms'] = fade_ms
@@ -114,7 +123,7 @@ def test_prefix_matches_original_overlay_filter(hook_case, tmp_path, monkeypatch
 
 
 @pytest.mark.parametrize('mode', ['open_gop', 'mpeg4', 'no_audio'])
-def test_format_guards_and_audio_optional(hook_case, tmp_path, monkeypatch, mode):
+def test_format_guards_and_audio_optional(hook_case, tmp_path, monkeypatch, mode, single_thread_encoder):
     from exactcut import hook_splice
     source, render = hook_case
     changed = tmp_path / 'changed.mp4'

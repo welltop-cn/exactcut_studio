@@ -13,7 +13,7 @@ from .util import file_sha256, json_sha256, read_json, write_json_atomic, now_is
 from . import mosaic_queue as queue
 import uuid
 import time
-from contextlib import nullcontext
+from contextlib import ExitStack, nullcontext
 from .runtime import mutation_lock, maintenance_file
 from . import editor_resources,mosaic_mps
 
@@ -252,6 +252,7 @@ def execute(item,stop_event):
             if job.get('cancel_requested'):
                 with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
                     job=read_json(path);job.update(status='cancelled',progress='已停止生成，参数已保留');write_json_atomic(path,job)
+                    for lease in reversed(leases):lease.close()
                 return
             if job['status'] in {'completed','failed','cancelled'}:return
             if stop_event.is_set():return 'deferred'
@@ -275,7 +276,8 @@ def execute(item,stop_event):
                 write_json_atomic(path,job)
         with processing_cancel.scope(lambda:read_json(path).get('cancel_requested',False),leases=leases),editor_resources.final_group(),editor_resources.reservation(('final_media',slot)):
             slot=None
-            _work(bid,sid,path,job,job['config'],[])
+            # Publish terminal state only after worker and batch locks are free.
+            _work(bid,sid,path,job,job['config'],leases)
     finally:
         if slot:slot.close()
         for lease in reversed(leases):lease.close()
@@ -352,11 +354,16 @@ def _work(bid,sid,path,job,cfg,leases,permit=None):
 
 def _work_cancelable(bid,sid,path,job,cfg,leases,permit=None):
     cancelled=False
-    def update(**fields):
+    def update(*,release=(),**fields):
         with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
             saved=read_json(path)
             if saved.get('cancel_requested'):raise processing_cancel.Cancelled()
             saved.update(fields);write_json_atomic(path,saved)
+            # Readers take the state lock, so they see a terminal status only
+            # after every lock this worker held is released.
+            for close in release:close()
+    def release_leases():
+        for lease in reversed(leases):lease.close()
     try:
         session=current(bid,sid,job,permit=permit);source=path.parent/'source.mp4';directory=path.parent/f"render-{job['id']}"
         if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片校验失败')
@@ -378,15 +385,16 @@ def _work_cancelable(bid,sid,path,job,cfg,leases,permit=None):
             result=process_preview(source,directory/'mosaic.mp4',session['metadata'],tracks,lambda text:update(progress=text),job.get('effect'))
         else:
             result=process_video(source,directory/'mosaic.mp4',session['metadata'],tracks,job.get('ranges',[]),lambda text:update(progress=text),effect=job.get('effect'))
-        with cutting_access.gate(workflow.folder(bid),session['request_id'],allow_job=job['id'] if job.get('queued_task') else None,readonly=permit is not None):
+        with ExitStack() as gate:
+            gate.enter_context(cutting_access.gate(workflow.folder(bid),session['request_id'],allow_job=job['id'] if job.get('queued_task') else None,readonly=permit is not None))
             current(bid,sid,job,permit=permit)
             if file_sha256(source)!=job['source_sha256']:raise cutting.CutError('原片已变化，本次成片失效')
             result.update(skipped_frames=len(skipped),warnings=warnings,region_count=len(tracks),notice='请预览检查遮挡效果；无告警不代表没有漏遮。')
-            update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='处理后视频已生成，可预览和下载')
+            update(status='completed',stage='completed',completed_at=now_iso(),result=result,progress='处理后视频已生成，可预览和下载',release=(gate.close,release_leases))
     except processing_cancel.Cancelled:
         cancelled=True
     except Exception as exc:
-        try:update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '完整视频生成失败，请重试；原片保留')
+        try:update(status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '完整视频生成失败，请重试；原片保留',release=(release_leases,))
         except processing_cancel.Cancelled:cancelled=True
     finally:
         try:
