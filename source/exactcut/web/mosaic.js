@@ -455,6 +455,7 @@
   async function open(batch,asset){
     releasePreparation?.();scanController?.abort();
     sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;
+    thumbnailEpoch++;thumbnailCancel?.();thumbnailCancel=null;thumbnailSource='';
     detachClipPreview();stopWorkspacePreview();previewOperation=null;const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;playbackError=false;pausePlayback();motion='fixed';wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
     batchToken++;batchJob=null;batchLoading=false;stopPending=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
     scanReadPending=false;scanSubmitting=false;clearRemovedClip();scanToken++;scanLoading=false;scanReport=null;scanSessionId=null;scanError='';scanEvent=null;addingClip=false;manualClips=[];aiEvents=[];clipEdits={};$('mosaicAdjust').open=false;$('mosaicEffects').close();
@@ -1239,12 +1240,11 @@
   });
   timeline.onpointercancel=()=>{const item=timelineDrag?.item,sequence=timelineDrag?.seekSequence;timelineDrag=null;timelineSignature='';if(context){if(item?.event&&sequence===seekSequence)viewScanEvent(item.id);else if(item&&sequence===seekSequence)viewTarget(item.index);paint();}};
   let thumbnailCancel=null,thumbnailCacheKey='';
-  const thumbnailCache=new Map();
+  const thumbnailCache=new Map(),filmstripCache=new Map();
   new ResizeObserver(()=>{if(context&&dialog.open)scheduleThumbnails();}).observe(timeline);
   function scheduleThumbnails(){
     if(!context||!dialog.open||!timeline.clientWidth)return;
-    const rawSource=video.currentSrc||video.getAttribute('src');if(!rawSource)return;
-    const source=new URL(rawSource,location.href).href,total=meta().frame_count,fps=rate();
+    const endpoint=base(),source=new URL(appUrl(endpoint+'/source'),location.href).href,total=meta().frame_count,fps=rate();
     const count=Math.max(1,Math.ceil(timeline.clientWidth/56));
     const cacheKey=JSON.stringify([source,context.session.source_sha256,total,fps]);
     const signature=cacheKey+':'+count;if(signature===thumbnailSource)return;
@@ -1257,10 +1257,48 @@
       const start=Math.floor(i*total/count),end=Math.max(start+1,Math.floor((i+1)*total/count)),middle=Math.floor((start+end)/2);
       const cached=[...thumbnailCache.keys()].filter(f=>f>=start&&f<end).sort((a,b)=>Math.abs(a-middle)-Math.abs(b-middle))[0];
       const frame=Math.min(total-1,cached??middle),c=document.createElement('canvas');c.width=112;c.height=116;
-      c.setAttribute('aria-label','原片缩略图 '+clock(frame));strip.append(c);
+      c.setAttribute('aria-label','原片缩略图 '+clock(frame));c.dataset.frame=Math.min(total-1,middle);strip.append(c);
       if(cached!==undefined)c.getContext('2d').drawImage(thumbnailCache.get(cached),0,0);
       else pending.push({index:i,frame,canvas:c});
     }
+    const abort=new AbortController(),cancel=()=>abort.abort();thumbnailCancel=cancel;
+    const valid=()=>version===thumbnailEpoch&&dialog.open;
+    const deadline=setTimeout(cancel,90000);
+    const cancelled=new Promise((_,reject)=>abort.signal.addEventListener('abort',()=>reject(Error('缩略图等待已结束')),{once:true}));
+    const load=async()=>{
+      const sha=context.session.source_sha256;
+      if(filmstripCache.has(sha))return filmstripCache.get(sha);
+      while(!abort.signal.aborted&&valid()){
+        // api applies appUrl and is also the editor's mockable request boundary.
+        const sheet=await api(endpoint+'/filmstrip',undefined,{signal:abort.signal});
+        if(!valid()||abort.signal.aborted)throw Error('缩略图等待已结束');
+        if(sheet.status==='ready'){
+          const result=new Promise((resolve,reject)=>{
+            const img=new Image(),timer=setTimeout(()=>reject(Error('缩略图加载超时')),10000);
+            img.onload=()=>{clearTimeout(timer);resolve(img);};img.onerror=()=>{clearTimeout(timer);reject(Error('缩略图不可用'));};img.src=appUrl(sheet.url);
+          }).then(image=>({sheet,image}));
+          filmstripCache.set(sha,result);
+          result.catch(()=>{if(filmstripCache.get(sha)===result)filmstripCache.delete(sha);});
+          if(filmstripCache.size>32)filmstripCache.delete(filmstripCache.keys().next().value);
+          return result;
+        }
+        if(sheet.status!=='running')throw Error('缩略图生成失败');
+        await new Promise(resolve=>{
+          const done=()=>{clearTimeout(timer);abort.signal.removeEventListener('abort',done);resolve();},timer=setTimeout(done,1000);
+          abort.signal.addEventListener('abort',done,{once:true});
+        });
+      }
+      throw Error('缩略图等待已结束');
+    };
+    Promise.race([load(),cancelled]).then(({sheet,image})=>{
+      if(!valid())return;
+      for(const c of strip.children){
+        const frame=Number(c.dataset.frame),tile=sheet.frames.reduce((best,f,i)=>Math.abs(f-frame)<Math.abs(sheet.frames[best]-frame)?i:best,0);
+        c.getContext('2d').drawImage(image,(tile%sheet.columns)*sheet.tile_width,Math.floor(tile/sheet.columns)*sheet.tile_height,sheet.tile_width,sheet.tile_height,0,0,c.width,c.height);
+      }
+    }).catch(()=>{if(valid())fallbackThumbnails(source,pending,version,fps,strip);}).finally(()=>{clearTimeout(deadline);if(thumbnailCancel===cancel)thumbnailCancel=null;});
+  }
+  function fallbackThumbnails(source,pending,version,fps,strip){
     if(!pending.length)return;
     // First cover the whole strip sparsely, then fill the gaps.
     pending.sort((a,b)=>(a.index%4!==0)-(b.index%4!==0)||a.index-b.index);

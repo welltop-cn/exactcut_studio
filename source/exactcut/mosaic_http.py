@@ -30,7 +30,7 @@ def handle(handler,bid,suffix,method):
             if method=='GET' and preparation:
                 from . import editor_preparation
                 return handler.respond(200,editor_preparation.state('mosaics',bid,preparation[1]))
-            match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|source-url|scan|discard|discard-result|replace|stop|clip-preview|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/(?:preview|stop))?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
+            match=re.fullmatch(r'([0-9a-f]{32})(?:/(source|source-url|filmstrip(?:/image)?|scan|discard|discard-result|replace|stop|clip-preview|frame/[0-9]+|locate(?:/[0-9a-f]{32})?|track(?:/[0-9a-f]{32}(?:/(?:preview|stop))?)?|render(?:/[0-9a-f]{32}(?:/video)?)?))?',suffix)
             if not match:raise cutting.CutError('打码入口不存在',404)
             sid,action=match.groups();session=sessions.read_session(bid,sid)
             if action!='replace' and not (method=='GET' and action and re.fullmatch(r'render/[0-9a-f]{32}',action)):
@@ -55,6 +55,10 @@ def handle(handler,bid,suffix,method):
                 if action=='source-url':
                     from . import editor_source
                     return handler.respond(200,editor_source.resolve(bid,session,f'/api/batches/{bid}/mosaics/{sid}/source'))
+                if action in {'filmstrip','filmstrip/image'}:
+                    from . import editor_filmstrip
+                    if action=='filmstrip':return handler.respond(200,editor_filmstrip.state(bid,sid))
+                    return handler.respond(200,editor_filmstrip.image_file(bid,sid).read_bytes(),'image/jpeg',cache='private, max-age=31536000, immutable')
                 if action=='source':return handler.stream_video(sessions.session_path(bid,sid)/'source.mp4')
                 if action.startswith('frame/'):
                     from . import editor_frames
