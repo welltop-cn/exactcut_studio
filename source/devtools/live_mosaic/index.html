@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Exact Cut · 实时打码实验</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#111820;color:#e6eef2;font:14px system-ui}header{padding:20px 28px;border-bottom:1px solid #35424c;display:flex;align-items:center;gap:16px}h1{font-size:19px;margin:0}small,.hint{color:#9cabb8;line-height:1.7}header span{color:#47dbc4}main{display:grid;grid-template-columns:minmax(0,1fr) 300px;gap:22px;padding:24px;max-width:1600px;margin:auto}.stage{position:relative;background:#080c10;aspect-ratio:16/9;touch-action:none;overflow:hidden;border-radius:10px}canvas{width:100%;height:100%;object-fit:contain;display:block}#box{position:absolute;border:2px solid #47dbc4;cursor:move;touch-action:none;transform-origin:center}#handle{position:absolute;right:-7px;bottom:-7px;background:#47dbc4;width:13px;height:13px;cursor:nwse-resize}aside{padding:20px;background:#1c2630;border-radius:10px}label{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:17px 0}input[type=range]{width:150px;accent-color:#47dbc4}input[type=number]{width:90px}select,input[type=number],button,.file{color:#e6eef2;background:#293743;border:1px solid #455563;border-radius:6px;padding:8px}button,.file{cursor:pointer}button:hover,.file:hover{border-color:#47dbc4}#play{background:#47dbc4;color:#102c27}.controls{display:flex;align-items:center;gap:10px;margin:15px 0}#seek{flex:1;width:auto}#stats{font-variant-numeric:tabular-nums;color:#47dbc4}.actions{display:flex;gap:10px;flex-wrap:wrap;margin:16px 0}.file input{display:none}#error{color:#ffb0a5}#source{display:none}hr{border:0;border-top:1px solid #35424c;margin:22px 0}@media(max-width:850px){main{grid-template-columns:1fr;padding:12px}header{padding:15px}aside{padding:16px}}
+.stage{max-height:50vh}.timeline{background:#18222c;border:1px solid #35424c;border-radius:8px;padding:12px;margin:14px 0}.timeline-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.timeline-toolbar label{margin:0}.timeline-toolbar input[type=range]{width:130px}#frameNumber{width:85px}#timelineScroll{overflow:auto;margin-top:12px;position:relative;overscroll-behavior:contain}#timelineContent{position:relative;height:158px;min-width:100%;touch-action:none;user-select:none}#ruler{height:28px;position:relative;border-bottom:1px solid #455563}#ruler span{position:absolute;white-space:nowrap;border-left:1px solid #718492;padding-left:4px;font-size:10px;color:#c0cbd5;height:24px}#thumbs{position:absolute;top:32px;height:64px;left:0;right:0;background:#101820;overflow:hidden}#thumbs canvas{position:absolute;width:100px;height:64px;border-right:1px solid #3d5262;object-fit:cover}#mosaicLane{position:absolute;top:108px;height:38px;width:100%;background:#111a22}#mosaicRange{position:absolute;top:0;height:38px;min-width:2px;background:#246e65;border:1px solid #47dbc4;color:#c8fff4;cursor:grab;touch-action:none;overflow:hidden}#mosaicRange span{display:block;padding:9px 15px;white-space:nowrap;pointer-events:none;font-size:12px}#rangeStart,#rangeEnd{position:absolute;top:0;height:100%;width:10px;background:#47dbc4;cursor:ew-resize;z-index:2}#rangeStart{left:0}#rangeEnd{right:0}#playhead{position:absolute;top:0;bottom:0;width:2px;background:#ffbf68;pointer-events:none;z-index:3}#playhead:before{content:'';position:absolute;top:0;left:-4px;border-top:9px solid #ffbf68;border-left:5px solid transparent;border-right:5px solid transparent}.timeline .hint{margin:8px 0 0;font-size:12px}#frameStatus{color:#ffcf8f}
+</style>
+<header><h1>Exact Cut · 实时打码</h1><span>本地实验</span><small>拖动区域即可看效果</small></header>
+<main><section><div class="stage" id="stage"><canvas id="output" width="960" height="540"></canvas><div id="box"><i id="handle"></i></div></div><div class="controls"><button id="play">播放</button><input id="seek" aria-label="播放进度" type="range" min="0" max="34.1" step="0.01" value="0"><span id="clock">0.00 / 0.00</span></div><div class="timeline"><div class="timeline-toolbar"><button id="prevFrame" aria-label="上一帧">◀ 上一帧</button><button id="nextFrame" aria-label="下一帧">下一帧 ▶</button><label>帧<input id="frameNumber" type="number" min="0" value="0" step="1"></label><span id="timecode">00:00:00</span><label>缩放<input id="zoom" type="range" min="0.2" max="32" step="0.2" value="1"></label><label>帧率<select id="fps"><option value="24">24</option><option value="25">25</option><option value="29.97002997002997">29.97</option><option value="30" selected>30</option><option value="60">60</option></select></label></div><div id="timelineScroll" tabindex="0" aria-label="视频时间轴，左右方向键逐帧"><div id="timelineContent"><div id="ruler"></div><div id="thumbs"></div><div id="mosaicLane"><div id="mosaicRange"><i id="rangeStart" role="slider" aria-label="打码开始帧" tabindex="0"></i><span>打码区域</span><i id="rangeEnd" role="slider" aria-label="打码结束帧（不含）" tabindex="0"></i></div></div><div id="playhead"></div></div></div><p class="hint">视频轨道 · 拖动定位，放大后查看逐帧刻度　／　打码轨道 · 拖两端调整时间，拖中间整体移动</p><p id="frameStatus" class="hint">加载帧信息…</p></div><div class="actions"><label class="file">选择本机视频<input id="file" type="file" accept="video/*"></label><button id="sample">查看上传录屏</button><button id="synthetic">测试画面</button><button id="reset">重置区域</button></div><p id="name" class="hint">正在加载上传录屏…</p><p id="stats" data-frames="0" data-errors="0">等待画面</p><p id="error" role="status"></p><p class="hint">选择的本机视频只在浏览器内读取。此页验证固定区域实时预览；自动跟踪与正式导出尚未接入。录屏中的已有打码属于原画面。</p></section>
+<aside><strong>区域与效果</strong><label>启用打码<input id="enabled" type="checkbox" checked></label><label>效果<select id="style"><option value="blur">模糊</option><option value="pixel">马赛克</option><option value="solid">黑色遮挡</option></select></label><label>形状<select id="shape"><option value="ellipse">椭圆</option><option value="rect">矩形</option></select></label><label>强度<input id="strength" type="range" min="4" max="70" value="24"></label><label>边缘柔化<input id="feather" type="range" min="0" max="30" value="5"></label><label>旋转<input id="rotation" type="range" min="-180" max="180" value="0"></label><hr><strong>生效时间（秒）</strong><label>开始<input id="start" type="number" min="0" step="0.1" value="0"></label><label>结束<input id="end" type="number" min="0" step="0.1" value="34.1"></label><p class="hint">拖动绿框移动，拖动右下角缩放。调整效果时不需要生成视频。</p><hr><label>对照原画<input id="original" type="checkbox"></label><p class="hint">预览最长边 960 像素。下方计时只衡量本机绘制开销，不包含网络等待，也不代表最终成片耗时。</p></aside></main>
+<video id="source" playsinline preload="auto" src="/sample.mp4"></video>
+<script src="timeline.js"></script>
+<script>
+(() => {
+const $=id=>document.getElementById(id), video=$('source'), canvas=$('output'), ctx=canvas.getContext('2d');
+const base=document.createElement('canvas'), effect=document.createElement('canvas'), mask=document.createElement('canvas'), tiny=document.createElement('canvas');
+const b=base.getContext('2d'), e=effect.getContext('2d'), m=mask.getContext('2d'), t=tiny.getContext('2d');
+let region={x:.5,y:.5,w:.25,h:.28}, synthetic=false, objectUrl=null, drag=null, frames=0, costs=[], lastStats=0, errors=0;
+let exactImage=null,exactEpoch=0,sample=true,sampleMetadata=null,exactQueue=Promise.resolve();
+const num=id=>Number($(id).value), duration=()=>synthetic?10:(Number.isFinite(video.duration)?video.duration:0);
+const timeline=new LiveMosaicTimeline({video,getDuration:duration,isSynthetic:()=>synthetic,onDraw:()=>draw(),onSeek:(frame,accurate)=>seekFrame(frame,accurate)});
+async function seekFrame(frame,accurate=false){
+ const version=++exactEpoch;exactImage=null;video.pause();const seconds=frame/timeline.fps;$('seek').value=seconds;
+ if(synthetic){draw();return;}
+ video.currentTime=Math.min(duration()-.00001,seconds+.2/timeline.fps);
+ if(accurate&&sample&&sampleMetadata){
+  $('frameStatus').textContent=`正在读取准确帧 ${frame}…`;
+  let release;const previous=exactQueue;exactQueue=new Promise(resolve=>release=resolve);await previous;
+  if(version!==exactEpoch){release();return;}
+  const image=new Image();image.src=`/frame/${frame}.jpg`;
+  try{await image.decode();if(version!==exactEpoch)return;exactImage=image;draw();$('frameStatus').textContent=`准确帧 ${frame} · ${timeline.timecode(frame)} · 已按源视频帧序号读取`;}
+  catch(error){if(version===exactEpoch)$('frameStatus').textContent='准确帧读取失败，可重试逐帧按钮。';}
+  finally{release();}
+ }else if(!sample&&!synthetic)$('frameStatus').textContent='本机文件按所选帧率定位；浏览器画面尚未做逐帧校准。';
+ else if(sample)$('frameStatus').textContent='快速预览定位中，松手后读取准确帧。';
+}
+fetch('/metadata').then(r=>r.ok?r.json():null).then(meta=>{if(!meta)return;sampleMetadata=meta;if(sample){timeline.setFps(meta.fps);timeline.refresh();$('frameStatus').textContent=`源视频 ${meta.fps.toFixed(3)} fps · 共 ${meta.frame_count} 帧 · 逐帧按钮读取准确帧`;}}).catch(()=>{});
+function geometry(){const r=$('stage').getBoundingClientRect(), s=Math.min(r.width/canvas.width,r.height/canvas.height);return {s,left:(r.width-canvas.width*s)/2,top:(r.height-canvas.height*s)/2,r};}
+function paintBox(){const g=geometry();Object.assign($('box').style,{left:g.left+(region.x-region.w/2)*canvas.width*g.s+'px',top:g.top+(region.y-region.h/2)*canvas.height*g.s+'px',width:region.w*canvas.width*g.s+'px',height:region.h*canvas.height*g.s+'px',transform:`rotate(${num('rotation')}deg)`});$('box').hidden=!$('enabled').checked||$('original').checked;}
+function setup(w,h){const scale=Math.min(1,960/Math.max(w,h));for(const c of [canvas,base,effect,mask]){c.width=Math.round(w*scale);c.height=Math.round(h*scale);}paintBox();}
+function draw(){
+ if(!synthetic&&video.readyState<2)return;
+ const begin=performance.now(),w=canvas.width,h=canvas.height,time=synthetic?num('seek'):video.currentTime;
+ try{
+ if(synthetic){const colors=['#ff3737','#2dd857','#367eff','#ffe63b','#b747dc','#35d4d1'];for(let i=0;i<6;i++){b.fillStyle=colors[i];b.fillRect(i*w/6,0,w/6,h);}b.fillStyle='#fff';b.font='bold 40px system-ui';b.fillText('实时打码 · 拖动区域试试',35,80);}else b.drawImage(exactImage&&video.paused?exactImage:video,0,0,w,h);
+ ctx.drawImage(base,0,0);
+ if($('enabled').checked&&!$('original').checked&&time>=num('start')&&time<num('end')){
+ const style=$('style').value; e.clearRect(0,0,w,h);e.filter='none';e.imageSmoothingEnabled=true;
+ if(style==='solid'){e.fillStyle='#000';e.fillRect(0,0,w,h);}
+ else if(style==='pixel'){const block=num('strength')*w/640;tiny.width=Math.max(1,Math.round(w/block));tiny.height=Math.max(1,Math.round(h/block));t.drawImage(base,0,0,tiny.width,tiny.height);e.imageSmoothingEnabled=false;e.drawImage(tiny,0,0,w,h);}
+ else{e.filter=`blur(${num('strength')*w/640}px)`;e.drawImage(base,0,0);e.filter='none';}
+ m.clearRect(0,0,w,h);m.save();m.translate(region.x*w,region.y*h);m.rotate(num('rotation')*Math.PI/180);m.filter=`blur(${num('feather')}px)`;m.fillStyle='#fff';m.beginPath();if($('shape').value==='ellipse')m.ellipse(0,0,region.w*w/2,region.h*h/2,0,0,Math.PI*2);else m.rect(-region.w*w/2,-region.h*h/2,region.w*w,region.h*h);m.fill();m.restore();
+ e.globalCompositeOperation='destination-in';e.drawImage(mask,0,0);e.globalCompositeOperation='source-over';ctx.drawImage(effect,0,0);
+ }
+ frames++;costs.push(performance.now()-begin);if(costs.length>120)costs.shift();$('stats').dataset.frames=frames;
+ if(performance.now()-lastStats>400){const sorted=[...costs].sort((a,b)=>a-b);$('stats').textContent=`${w} × ${h} · 绘制均值 ${(costs.reduce((a,b)=>a+b,0)/costs.length).toFixed(1)} ms · P95 ${sorted[Math.floor(sorted.length*.95)].toFixed(1)} ms`;lastStats=performance.now();}
+ $('clock').textContent=`${time.toFixed(2)} / ${duration().toFixed(2)}`;if(!synthetic)$('seek').value=time;paintBox();timeline.update(time);
+ }catch(error){errors++;$('stats').dataset.errors=errors;$('error').textContent=error.message;}
+}
+for(const id of ['enabled','style','shape','strength','feather','rotation','start','end','original'])$(id).addEventListener('input',draw);
+function load(url,name){exactEpoch++;exactImage=null;sample=url==='/sample.mp4';synthetic=false;video.pause();video.src=url;video.load();$('start').value=0;$('name').textContent=name;$('error').textContent='';$('play').textContent='播放';if(sample&&sampleMetadata)timeline.setFps(sampleMetadata.fps);$('fps').disabled=sample;timeline.setSource(url);$('frameStatus').textContent=sample?'逐帧按钮读取源视频准确帧':'本机文件需选择帧率；浏览器画面尚未做逐帧校准。';}
+video.addEventListener('loadedmetadata',()=>{setup(video.videoWidth,video.videoHeight);$('seek').max=duration();$('end').value=duration().toFixed(3);timeline.refresh();});
+for(const name of ['loadeddata','seeked','pause'])video.addEventListener(name,draw);
+video.addEventListener('error',()=>{$('error').textContent='示例未加载，可选择本机视频，或点击测试画面。';});
+video.addEventListener('play',()=>{exactEpoch++;exactImage=null;$('play').textContent='暂停';$('frameStatus').textContent='正在播放 · 暂停后可逐帧检查';});video.addEventListener('pause',()=>{$('play').textContent='播放';});
+$('play').onclick=()=>{if(synthetic){$('error').textContent='测试画面为静态图，请选择视频验证播放。';return;}if(video.paused)video.play().catch(error=>$('error').textContent=error.message);else video.pause();};
+$('seek').oninput=()=>timeline.seek(Math.round(num('seek')*timeline.fps),false);
+$('seek').onchange=()=>timeline.seek(Math.round(num('seek')*timeline.fps),true);
+$('file').onchange=()=>{const file=$('file').files[0];if(!file)return;if(objectUrl)URL.revokeObjectURL(objectUrl);objectUrl=URL.createObjectURL(file);load(objectUrl,`本机视频：${file.name}`);};
+$('sample').onclick=()=>load('/sample.mp4','你上传的剪映操作录屏（34.1 秒）');
+$('synthetic').onclick=()=>{exactEpoch++;exactImage=null;sample=false;video.pause();synthetic=true;setup(960,540);$('seek').max=10;$('seek').value=0;$('start').value=0;$('end').value=10;$('name').textContent='彩条测试画面';$('error').textContent='';$('fps').disabled=false;timeline.setFps(30);timeline.setSource(null);timeline.refresh();$('frameStatus').textContent='彩条测试 · 30 fps 时间轴';draw();};
+$('reset').onclick=()=>{region={x:.5,y:.5,w:.25,h:.28};$('rotation').value=0;draw();};
+$('box').onpointerdown=event=>{event.preventDefault();const g=geometry();drag={x:event.clientX,y:event.clientY,region:{...region},resize:event.target.id==='handle',g};$('box').setPointerCapture(event.pointerId);};
+$('box').onpointermove=event=>{if(!drag)return;const dx=(event.clientX-drag.x)/drag.g.s/canvas.width,dy=(event.clientY-drag.y)/drag.g.s/canvas.height,r=drag.region;if(drag.resize){const a=num('rotation')*Math.PI/180,lx=dx*canvas.width*Math.cos(a)+dy*canvas.height*Math.sin(a),ly=-dx*canvas.width*Math.sin(a)+dy*canvas.height*Math.cos(a);region.w=Math.max(.025,Math.min(1,r.w+2*lx/canvas.width));region.h=Math.max(.025,Math.min(1,r.h+2*ly/canvas.height));}else{region.x=Math.max(region.w/2,Math.min(1-region.w/2,r.x+dx));region.y=Math.max(region.h/2,Math.min(1-region.h/2,r.y+dy));}draw();};
+for(const name of ['pointerup','pointercancel','lostpointercapture'])$('box').addEventListener(name,()=>drag=null);
+new ResizeObserver(paintBox).observe($('stage'));
+$('fps').disabled=true;timeline.setSource('/sample.mp4');
+if(video.requestVideoFrameCallback){const next=()=>{if(!synthetic)draw();video.requestVideoFrameCallback(next);};video.requestVideoFrameCallback(next);}else{const next=()=>{if(!video.paused)draw();requestAnimationFrame(next);};requestAnimationFrame(next);}
+})();
+</script></html>

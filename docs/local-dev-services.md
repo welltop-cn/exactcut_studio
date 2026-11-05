@@ -1,5 +1,12 @@
 # 本地 dev 服务与专项测试交接
 
+## 实时打码独立实验（用户要求围观，保留运行）
+
+- 入口 http://localhost:18884/ ，仅绑定127.0.0.1；时间轴版本PID26602，操作前重新核对。
+- 工作树 `/Users/matao/code/exact-cut-live-mosaic`，分支 `experiment/live-mosaic-preview`；启动器 `source/devtools/live_mosaic/server.py`，私有记录 `source/.dev-state/live-mosaic/`。
+- 仅提供独立实时打码实验页及用户本次上传录屏；时间轴准确帧读取使用有界FFmpeg，未接入项目账号、自动跟踪、成片编码或发布。其他dev未动。用户围观结束后只停止本实例。
+- 验证范围和限制见 [实验记录](verification/live-mosaic-preview-experiment.md)。
+
 ## 2026-11-03：18883实际验收收尾，A最终FAIL待用户统一看
 
 - 当前PID97825（操作前实核），应用源码`05b2faf74e37e611f5b0a59065fb199e08786bae`，cwd为`cut-mosaic-18883-source-delivery/source`。原URL和data root不变，development/worker1/AI1、fetch0/外写0/PUBLISH0、OSS预览关闭、原MPS不变。此前PID15988/worker0记录为历史。
