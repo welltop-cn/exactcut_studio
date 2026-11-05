@@ -88,9 +88,10 @@ const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 const start=source.indexOf('async function restoreWorkspace('),end=source.indexOf('\n(async()=>',start);
 assert(start>=0&&end>start);
 (async()=>{for(const [saved,hash,expected] of [['a','','a'],['a','#b','b'],['a','#missing','a'],[null,'',null]]){
-const opened=[],calls=[];let empty=0;
-const ctx=vm.createContext({location:{hash},api:async(path,data)=>{calls.push(path);return {batch_id:saved}},refreshBatches:async()=>[{id:'a'},{id:'b'}],openBatch:async id=>opened.push(id),showEmptyWorkspace:()=>empty++});
+const opened=[],calls=[],listeners=new Map();let empty=0;
+const ctx=vm.createContext({window:{addEventListener:(event,handler)=>listeners.set(event,handler)},location:{hash},api:async(path,data)=>{calls.push(path);return {batch_id:saved}},refreshBatches:async()=>[{id:'a'},{id:'b'}],openBatch:async id=>opened.push(id),showEmptyWorkspace:()=>empty++});
 vm.runInContext(source.slice(start,end),ctx);await vm.runInContext('restoreWorkspace()',ctx);
+assert.equal(typeof listeners.get('hashchange'),'function');
 assert.deepEqual(calls,['/api/workspace']);assert.deepEqual(opened,expected?[expected]:[]);assert.equal(empty,expected?0:1);
 }})().catch(e=>{console.error(e);process.exit(1)});
 '''
