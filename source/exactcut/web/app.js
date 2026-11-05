@@ -604,6 +604,7 @@ async function restoreWorkspace(workspace){
  const id=linked&&batches.some(b=>b.id===linked)?linked:workspace.batch_id;
  if(id)await openBatch(id,{refreshList:false});else showEmptyWorkspace();
 }
+window.addEventListener('hashchange',()=>{const id=location.hash.slice(1);if(id&&id!==selectedId&&batchCache.some(b=>b.id===id))openBatch(id).catch(e=>toast(e.message,true))});
 (async()=>{try{const initial=await Promise.all([api('/api/me'),api('/api/workspace',{})]);currentUser=initial[0];$('accountName').textContent=currentUser.name+' · '+(currentUser.role==='admin'?'管理员':'制作人');$('accountsNav').hidden=currentUser.role!=='admin';$('storageNav').hidden=currentUser.role!=='admin';$('usageNav').hidden=currentUser.role!=='admin';await restoreWorkspace(initial[1]);refreshQueue();$('connection').textContent='● 已连接 · 状态自动同步'}catch(e){showEmptyWorkspace(true);toast(e.message,true)}finally{polling=false}})();setInterval(scheduledPoll,3000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)scheduledPoll(true)});
 $('retryWorkspace').onclick=()=>operation($('retryWorkspace'),async()=>{if(selectedId)await openBatch(selectedId);else await restoreWorkspace();await poll()});
 
