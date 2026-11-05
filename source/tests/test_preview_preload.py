@@ -129,3 +129,29 @@ const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
 '''
     result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_failed_preview_retries_upload_only_from_retry_button():
+    source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
+    script = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict');
+const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
+(async()=>{
+ const urls=[],message={},retry={hidden:true};
+ const replies=[{ok:false},{ok:true,json:async()=>({status:'preparing',retry_after_ms:1})},{ok:true,json:async()=>({url:'https://oss.invalid/1',expires_in:900})}];
+ const video={dataset:{previewRequest:'R1',previewBatch:'a'},isConnected:true,paused:true,pause(){},load(){},removeAttribute(){},querySelectorAll(){return []},
+  closest(){return {querySelector:s=>s.includes('retry')?retry:message}}};
+ const ctx=vm.createContext({AbortController,Date,encodeURIComponent,setTimeout,clearTimeout,DOMException,
+  current:{id:'a',assets:[{request_id:'R1',preview:'/preview'}]},activeTab:'review',selectedId:'a',appUrl:p=>p,$:id=>id==='workspace'?{hidden:false}:{querySelectorAll:()=>[video]},
+  fetch:async url=>{urls.push(url);return replies.shift()}});
+ vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
+ vm.runInContext(source.slice(source.indexOf('const previewRequests='),source.indexOf('function renderAssets(')),ctx);ctx.video=video;
+ await vm.runInContext('loadPreview(video)',ctx);
+ assert.equal(retry.hidden,false);assert.deepEqual(urls,['/api/batches/a/preview-url/R1']);
+ retry.onclick();await new Promise(r=>setTimeout(r,400));
+ assert.deepEqual(urls.slice(1),['/api/batches/a/preview-url/R1?retry=1','/api/batches/a/preview-url/R1']);
+ assert.equal(video.dataset.previewState,'ready');
+})().catch(e=>{console.error(e);process.exitCode=1});
+'''
+    result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr

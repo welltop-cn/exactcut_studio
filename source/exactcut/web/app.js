@@ -497,7 +497,7 @@ async function prepareDownload(link){
   if(error?.name!=='AbortError'&&note&&link.isConnected&&current?.id===id)note.textContent=error.message||'下载准备失败，请重试';
  }finally{clearTimeout(timer);downloadWaiters.delete(key);if(link.isConnected)delete link.dataset.waiting}
 }
-async function loadPreview(video,{resume=false,position=0}={}){
+async function loadPreview(video,{resume=false,position=0,force=false}={}){
  const id=video.dataset.previewBatch;if(!previewIsActive(video,id)||previewRequests.has(video))return;
  const controller=new AbortController();previewRequests.set(video,controller);video.dataset.previewState='loading';
  const card=video.closest('.asset'),message=card.querySelector('.playback-message'),retry=card.querySelector('.preview-retry');
@@ -506,7 +506,7 @@ async function loadPreview(video,{resume=false,position=0}={}){
  try{
   let result;
   for(;;){
-   const response=await fetch(appUrl(`/api/batches/${id}/preview-url/${encodeURIComponent(video.dataset.previewRequest)}`),{signal:controller.signal,cache:'no-store'});
+   const response=await fetch(appUrl(`/api/batches/${id}/preview-url/${encodeURIComponent(video.dataset.previewRequest)}${force?'?retry=1':''}`),{signal:controller.signal,cache:'no-store'});force=false;
    if(!response.ok)throw Error('预览暂时不可用，请重试');
    result=await response.json();
    if(!result||result.status!=='preparing')break;
@@ -524,7 +524,7 @@ async function loadPreview(video,{resume=false,position=0}={}){
   video.preload='auto';video.src=appUrl(result.url);video.load();message.textContent='视频正在预加载，可点击 ▶ 播放。';
  }catch(error){if(previewIsActive(video,id)&&previewRequests.get(video)===controller){video.dataset.previewState='failed';message.textContent='预览准备失败，请点击重试';retry.hidden=false}}
  finally{clearTimeout(timer);if(previewRequests.get(video)===controller)previewRequests.delete(video)}
- retry.onclick=()=>{video.onerror=null;video.pause();video.removeAttribute('src');video.load();delete video.dataset.previewState;loadPreview(video)};
+ retry.onclick=()=>{video.onerror=null;video.pause();video.removeAttribute('src');video.load();delete video.dataset.previewState;loadPreview(video,{force:true})};
 }
 function preparePreviewLoads(){
  if(activeTab!=='review'||!current||$('workspace').hidden)return;

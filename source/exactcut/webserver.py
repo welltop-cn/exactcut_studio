@@ -1337,6 +1337,12 @@ class Handler(BaseHTTPRequestHandler):
                     except preview_oss.PreviewBusy:
                         # No valid receipt: queue a bounded OSS copy and let the
                         # client poll; never upload, stream locally or sign here.
+                        # A failed copy is retried only on an explicit user retry,
+                        # never by polling.
+                        retry = str((getattr(self, 'query', {}) or {}).get('retry', [''])[0]) == '1'
+                        if not retry and preview_oss.preparation_status(batch_id, request_id, output, record, original=original) == 'failed':
+                            return self.respond(503, {'error': '预览准备失败，请重试',
+                                                      'code': 'preview_prepare_failed', 'retryable': True})
                         job = preview_oss.prepare_async(batch_id, request_id, output, record,
                                                         original=original, actor=self.user['username'])
                         diag.event('preview.oss_preparing', level='info', batch_id=batch_id)

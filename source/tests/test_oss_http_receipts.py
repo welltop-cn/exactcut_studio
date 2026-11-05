@@ -249,14 +249,35 @@ def test_source_change_supersedes_old_preparation_and_uploads_new_copy(app, tmp_
     assert digest != new_digest
 
 
-def test_failed_upload_is_retryable(app, tmp_path, monkeypatch):
-    bucket = ControlledBucket(); bucket.release.set(); bucket.failures = 1
+def test_failed_upload_stops_polling_and_retries_only_on_request(app, tmp_path, monkeypatch):
+    import time
+    class Counting(ControlledBucket):
+        attempts = 0
+        def put_object_from_file(self, *args, **kwargs):
+            Counting.attempts += 1
+            return super().put_object_from_file(*args, **kwargs)
+    bucket = Counting(); bucket.release.set(); bucket.failures = 1
     headers, batch_id, _, _, _, _ = _preview_fixture(app, tmp_path, monkeypatch, bucket=bucket)
+    url = f'/home/api/batches/{batch_id}/preview-url/R1'
     with _dispatcher():
-        status, _, _ = request(app, 'GET', f'/home/api/batches/{batch_id}/preview-url/R1', headers=headers)
+        status, _, _ = request(app, 'GET', url, headers=headers)
         assert status == 202
+        deadline = time.monotonic() + 10
+        while True:
+            status, _, body = request(app, 'GET', url, headers=headers)
+            if status == 503: break
+            assert status == 202 and time.monotonic() < deadline, body
+            time.sleep(.05)
+        failed = json.loads(body)
+        assert failed['retryable'] is True and failed['code'] == 'preview_prepare_failed'
+        for _ in range(5):  # polling never re-uploads a failed copy
+            assert request(app, 'GET', url, headers=headers)[0] == 503
+        time.sleep(.2)
+        assert Counting.attempts == 1
+        status, _, body = request(app, 'GET', url + '?retry=1', headers=headers)
+        assert status == 202 and json.loads(body)['status'] == 'preparing'
         status, _, body = _poll_signed(app, headers, batch_id)
-    assert json.loads(body)['expires_in'] == 900 and len(bucket.puts) == 1
+    assert json.loads(body)['expires_in'] == 900 and len(bucket.puts) == 1 and Counting.attempts == 2
 
 
 def test_download_returns_preparing_not_local_bytes(app, tmp_path, monkeypatch):
