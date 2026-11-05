@@ -253,20 +253,33 @@ def resident_identity(job, process=None):
     return pid, token
 
 
+PAUSE_MESSAGE = '已请求暂停：制作进度保留'
+PAUSE_CUTTING_ERROR = '剪切/打码进行中，完成后再暂停'
+ARCHIVE_MESSAGE = '已归档：制作任务暂停并保留进度；剪切/打码任务已取消，不保留进度'
+
+
+def cutting_active(bid):
+    """Queued/running cut or mosaic tasks; pause waits for them, archive cancels them."""
+    from . import mosaic_queue as queue
+    return any(item['batch_id'] == bid and queue.report(item)['status'] in {'queued', 'running', 'cancelling'}
+               for item in queue.load()['tasks'])
+
+
 def change(path, action):
     diag.event('batch.control_requested', batch_id=path.name, action=action)
-    from .cutting_access import require_unfrozen
-    # Only the cut/mosaic freeze applies here, not the media gate: legacy production
-    # stages hold that gate for the whole stage, and pause/archive must reach them.
+    from .mosaic_render import cancel_batch
+    # Legacy production holds the media gate throughout a stage. Controls must
+    # still reach it; completed edit results do not freeze project controls.
     with LOCK:
-        require_unfrozen(path)
         control = read(path)
         state = read_json(path / 'runtime.json')
         if action == 'pause':
+            if cutting_active(path.name):
+                raise ValueError(PAUSE_CUTTING_ERROR)
             if state['status'] not in ACTIVE and not recorded_children(path):
                 raise ValueError('此批次当前没有正在执行或排队的任务')
             control['paused'] = True
-            write(path, control, '已请求暂停，保留当前进度')
+            write(path, control, PAUSE_MESSAGE)
             signal_children(path, signal.SIGSTOP)
         elif action == 'resume':
             if control.get('archived'):
@@ -276,11 +289,12 @@ def change(path, action):
             control['paused'] = False
             write(path, control, '已请求继续，等待执行位置')
         elif action == 'archive':
+            cancel_batch(path.name)
             control['archived'] = True
             control['archived_at'] = now_iso()
             if state['status'] in ACTIVE or recorded_children(path):
                 control['paused'] = True
-            write(path, control, '已归档；正在执行的任务保留进度并暂停')
+            write(path, control, ARCHIVE_MESSAGE)
             signal_children(path, signal.SIGSTOP)
         elif action == 'unarchive':
             control['archived'] = False

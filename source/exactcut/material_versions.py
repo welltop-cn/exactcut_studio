@@ -245,7 +245,7 @@ def _enroll(path):
     return state
 
 
-def _mutation(path, data, action, operation):
+def _mutation(path, data, action, operation, *, control_frozen=True):
     key = data.get('mutation_id') or data.get('submission_token')
     if not isinstance(key, str) or not re.fullmatch(r'[a-zA-Z0-9-]{16,80}', key):
         raise ValueError('缺少有效幂等标识，请刷新重试')
@@ -269,14 +269,15 @@ def _mutation(path, data, action, operation):
             rid=item['request_id']
             metadata=lambda s:{k:v for k,v in s['draft'].items() if k!='rows'}
             if (state['assets'].get(rid)!=frozen_before['assets'].get(rid)
-                    or state['control']!=frozen_before['control'] or state['deleted_at']!=frozen_before['deleted_at']
+                    or (control_frozen and state['control']!=frozen_before['control']) or state['deleted_at']!=frozen_before['deleted_at']
                     or metadata(state)!=metadata(frozen_before)
                     or any(v.get('asset_id')==rid and v!=frozen_before['versions'].get(k) for k,v in state['versions'].items())):
                 require_unfrozen(path,rid)
         state['revision'] += 1
         state['updated_at'] = now_iso()
-        message = {'confirm': '内容已确认，等待制作', 'pause': '已请求暂停',
-                   'resume': '已请求继续', 'archive': '已归档', 'unarchive': '已取消归档'}.get(action)
+        from .batch_control import PAUSE_MESSAGE, ARCHIVE_MESSAGE
+        message = {'confirm': '内容已确认，等待制作', 'pause': PAUSE_MESSAGE,
+                   'resume': '已请求继续', 'archive': ARCHIVE_MESSAGE, 'unarchive': '已取消归档'}.get(action)
         if message:
             state.setdefault('events', []).append({'at': state['updated_at'], 'message': message})
         # The operation receipt is immutable; live project detail is deliberately
@@ -376,19 +377,32 @@ def restore(path, rid, data):
 
 
 def control(path, action, data):
+    from . import batch_control
     def apply(state):
         if action == 'delete':
             if _blocked(state): raise ValueError('项目仍有交付待核实，不能删除')
             state['deleted_at'] = now_iso()
             for asset in state['assets'].values(): _invalidate(asset, state)
-        elif action == 'pause': state['control']['paused'] = True
+        elif action == 'pause':
+            if batch_control.cutting_active(path.name): raise ValueError(batch_control.PAUSE_CUTTING_ERROR)
+            state['control']['paused'] = True
         elif action == 'resume':
             if state['control']['archived']: raise ValueError('请先取消归档')
             state['control']['paused'] = False
-        elif action == 'archive': state['control'].update(archived=True, paused=True)
+        elif action == 'archive':
+            _cancel_cutting(path)
+            state['control'].update(archived=True, paused=True)
         elif action == 'unarchive': state['control']['archived'] = False
         else: raise ValueError('未知操作')
-    return _mutation(path, data, action, apply)
+    # Pause/resume/archive/unarchive are not held back by completed results awaiting
+    # confirm; pause refuses running cut/mosaic, archive cancels it; delete keeps the freeze.
+    return _mutation(path, data, action, apply, control_frozen=action == 'delete')
+
+
+def _cancel_cutting(path):
+    """Runs after the revision check, before the control change is persisted."""
+    from .mosaic_render import cancel_batch
+    cancel_batch(path.name)
 
 
 def reserved_names(path):
@@ -618,7 +632,7 @@ def sidebar(path):
 
 
 def detail(path):
-    from . import workflow as w
+    from . import workflow as w, batch_control
     from .intake import validate_draft, download_plan, clip_editor
     from .error_guidance import guidance, redact
     from urllib.parse import quote
@@ -719,7 +733,7 @@ def detail(path):
                'message': runtime_message(status, has_preview=any(a.get('preview') for a in assets),
                                           pending_changes=pending_changes,
                                           paused=control['paused']), 'updated_at': state['updated_at'],
-               'events': events, 'request_parallel': True, 'executor_running': 'processing' in candidates,
+               'events': events, 'cutting_active': batch_control.cutting_active(path.name), 'request_parallel': True, 'executor_running': 'processing' in candidates,
                'observation': {}, 'error_info': None,
                'download_complete': bool(downloads) and all(downloads)}
     if runtime['status'] == 'publishing' and any((a.get('error_info') or {}).get('code') == 'delivery_read_retry' for a in assets):

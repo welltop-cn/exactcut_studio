@@ -545,6 +545,7 @@ def detail(batch_id):
     from .progress import observation
     from .error_guidance import guidance, redact
     r = data['runtime']
+    r['cutting_active'] = batch_control.cutting_active(batch_id)
     r['observation'] = observation(r, paused=r.get('paused', False))
     r['error_info'] = guidance(r.get('message'), r.get('stage')) if r['status'] in {'failed', 'interrupted'} else None
     r['message'] = redact(r.get('message'))

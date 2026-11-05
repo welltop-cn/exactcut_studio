@@ -16,6 +16,7 @@ import time
 from contextlib import ExitStack, nullcontext
 from .runtime import mutation_lock, maintenance_file
 from . import editor_resources,mosaic_mps
+from . import diagnostics as diag
 
 
 def validate_targets(meta,targets):
@@ -332,13 +333,36 @@ def stop(bid,sid,jid,reset_at):
         if not job:raise cutting.CutError('生成任务不存在',404)
         if job.get('queued_task'):current(bid,sid,job)
         else:mosaic_locate.current(bid,sid,job,readonly=True)
-        if job['status']=='queued':
-            job.update(status='cancelled',cancel_requested=True,progress='已取消排队，参数已保留')
-            write_json_atomic(path,job)
-        elif job['status'] in {'running','cancelling'}:
-            job.update(cancel_requested=True,**({'status':'cancelling'} if job.get('queued_task') else {}),progress='正在停止生成…')
-            write_json_atomic(path,job)
+        if request_stop(job):write_json_atomic(path,job)
         return job
+
+
+def request_stop(job):
+    """The single stop transition: queued is cancelled now, running stops cooperatively."""
+    if job['status']=='queued':
+        job.update(status='cancelled',cancel_requested=True,progress='已取消排队，参数已保留')
+    elif job['status'] in {'running','cancelling'}:
+        job.update(cancel_requested=True,**({'status':'cancelling'} if job.get('queued_task') else {}),progress='正在停止生成…')
+    else:return False
+    return True
+
+
+def cancel_batch(bid):
+    """Project archive: stop every queued or running final cut/mosaic task.
+
+    Completed results awaiting confirm/discard are left untouched. Cancelled tasks
+    are never resubmitted automatically. Caller holds the batch gate."""
+    stopped=[]
+    for item in queue.load()['tasks']:
+        if item['batch_id']!=bid:continue
+        path=queue.job_path(item)
+        if not path.exists():queue._project(item)
+        with cutting.lock_file(path.parent/'render-state.lock',blocking=True):
+            job=read_json(path)
+            if request_stop(job):
+                write_json_atomic(path,job);stopped.append(job['id'])
+    diag.event('mosaic.batch_cancelled',batch_id=bid,cancelled=stopped)
+    return stopped
 
 
 def prepare_track(bid,sid,session,target,cfg,directory,*,on_tracking=None,validate=lambda:None):

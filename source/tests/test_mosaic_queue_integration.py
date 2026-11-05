@@ -73,10 +73,8 @@ def test_compute_busy_open_another_submit_restore_and_freeze(ready,managed):
                     else:candidate['drama_title']='must be frozen'
                     with pytest.raises(cutting.CutError):
                         material_versions.save_draft(batch,{'draft':candidate,'revision':saved['revision'],'mutation_id':uuid.uuid4().hex})
-                with pytest.raises(cutting.CutError):material_versions.control(batch,'archive',{'revision':saved['revision'],'mutation_id':uuid.uuid4().hex})
-            else:
-                from exactcut import batch_control
-                with pytest.raises(cutting.CutError):batch_control.change(batch,'archive')
+                # Archive is no longer frozen; it cancels the task instead
+                # (tests/test_pause_archive_cancel_cutting.py).
             before=time.monotonic()
             code,b=call(app,'POST',root+'/open',{'request_id':rid2,'source_sha256':sha});assert code in {200,202},b
             b=prepared(app,root,b)
@@ -246,6 +244,7 @@ def test_two_authenticated_users_fifo_fairness_and_actual_ffmpeg(ready,monkeypat
 from interactive_test_support import interactive_dispatcher
 
 
+@pytest.mark.integration
 def test_managed_media_restored_under_another_data_root_still_opens_and_previews(ready):
     bid,rid,sha,source=ready;batch=workflow.folder(bid)
     material_versions.enroll(batch)
@@ -266,6 +265,7 @@ def test_managed_media_restored_under_another_data_root_still_opens_and_previews
         app.shutdown();app.server_close()
 
 
+@pytest.mark.integration
 def test_unavailable_media_logs_specific_reason_behind_generic_message(ready,monkeypatch):
     from exactcut import diagnostics
     bid,rid,sha,source=ready;batch=workflow.folder(bid)
