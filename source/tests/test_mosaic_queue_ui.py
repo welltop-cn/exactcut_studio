@@ -1,5 +1,5 @@
 """Browser lifecycle contracts; real Chromium, deterministic HTTP adapter fixture."""
-from test_mosaic_ui import editor, open_auto
+from test_mosaic_ui import editor, open_auto, render_with_pending_segments
 import pytest
 
 pytestmark = pytest.mark.ui
@@ -92,7 +92,7 @@ def test_rejected_submission_keeps_new_edits_and_displays_error(editor,previous,
     editor.locator('[data-event-delete]').first.click()
     assert '删除 1 段' in editor.locator('#mosaicBatchHint').inner_text()
     reads_before_submit=editor.evaluate('latestReads')
-    editor.locator('#mosaicBatchStart').click()
+    render_with_pending_segments(editor, 1)
     editor.wait_for_function("document.getElementById('mosaicStatus').textContent.includes('提交未受理')")
     editor.wait_for_timeout(1500)
     assert '删除 1 段' in editor.locator('#mosaicBatchHint').inner_text()
@@ -129,7 +129,7 @@ def test_lost_submit_response_waits_past_old_job_then_restores_accepted_attempt(
     }''',stale)
     open_auto(editor)
     editor.locator('[data-event-delete]').first.click()
-    editor.locator('#mosaicBatchStart').click()
+    render_with_pending_segments(editor, 1)
     editor.wait_for_function('!!window.acceptNew',timeout=6000)
     assert '删除 1 段' in editor.locator('#mosaicBatchHint').inner_text()
     assert editor.locator('#mosaicAddClip').is_disabled()
