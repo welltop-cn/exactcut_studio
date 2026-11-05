@@ -143,7 +143,7 @@ def _append(line):
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     if root.is_symlink():
         raise OSError('diagnostic directory must not be a symlink')
-    root.chmod(0o700)
+    # Set private modes only on creation; chmod would reset existing ACL masks.
     # Each write opens its file after acquiring the shared lock, so no process
     # keeps writing to a renamed/deleted inode during rotation.
     fd = os.open(root / '.writer.lock', os.O_CREAT | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
@@ -183,7 +183,6 @@ def _append(line):
             target = root / (prefix + str(time.time_ns()) + '.jsonl')
         out = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
         try:
-            os.fchmod(out, 0o600)
             with os.fdopen(out, 'ab', closefd=False) as stream:
                 stream.write(line)
         finally:

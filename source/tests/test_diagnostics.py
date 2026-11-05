@@ -1,5 +1,7 @@
 import json
 import os
+import shutil
+import stat
 import subprocess
 import sys
 import time
@@ -87,6 +89,59 @@ def test_cutting_render_job_scopes_diagnostics_and_releases_locks(diag, monkeypa
     assert closed == ['job-x', 'job-x']
     saved = read_json(root / 'session.json')['jobs'][0]
     assert saved['status'] == ('failed' if fails else 'ready')
+
+
+def test_new_logs_are_private(diag):
+    d, root = diag
+    d._append(b'{"event":"created"}\n')
+    logs = root / 'logs'
+    assert logs.stat().st_mode & 0o077 == 0
+    for path in [logs / '.writer.lock', *logs.glob('events-*.jsonl')]:
+        assert path.stat().st_mode & 0o077 == 0
+
+
+@pytest.mark.parametrize('writer', ['_append', 'event'])
+def test_append_preserves_existing_permissions(diag, writer):
+    d, root = diag
+    d._append(b'{"event":"created"}\n')
+    logs = root / 'logs'
+    target = next(logs.glob('events-*.jsonl'))
+    logs.chmod(0o750)
+    target.chmod(0o640)
+
+    if writer == '_append':
+        d._append(b'{"event":"appended"}\n')
+    else:
+        d.event('appended')
+
+    assert stat.S_IMODE(logs.stat().st_mode) == 0o750
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+    assert [row['event'] for row in records(root)] == ['created', 'appended']
+
+
+def test_append_preserves_existing_acl(diag):
+    setfacl, getfacl = shutil.which('setfacl'), shutil.which('getfacl')
+    if not setfacl or not getfacl:
+        pytest.skip('setfacl/getfacl unavailable')
+    d, root = diag
+    d._append(b'{"event":"created"}\n')
+    logs = root / 'logs'
+    target = next(logs.glob('events-*.jsonl'))
+    # A numeric named user need not exist in the local account database.
+    reader_uid = os.getuid() + 1
+    before = {}
+    for path, access in [(logs, 'r-x'), (target, 'r--')]:
+        subprocess.run([setfacl, '-m', f'u:{reader_uid}:{access}', str(path)], check=True)
+        acl = subprocess.check_output([getfacl, '-c', '-n', '-p', str(path)], text=True)
+        assert f'user:{reader_uid}:{access}' in acl
+        assert f'mask::{access}' in acl
+        before[path] = acl
+
+    d.event('appended')
+
+    for path, acl in before.items():
+        assert subprocess.check_output([getfacl, '-c', '-n', '-p', str(path)], text=True) == acl
+    assert [row['event'] for row in records(root)] == ['created', 'appended']
 
 
 def test_retention_size_limit_and_foreign_files(diag):
