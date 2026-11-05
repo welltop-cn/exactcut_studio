@@ -69,7 +69,7 @@ def _track(request):
     if len(files)!=count:raise ValueError('Decoded frame count differs from requested interval')
     with Image.open(files[0]) as frame:width,height=frame.size
     if cfg.get('checkpoint_sha256') and file_sha256(Path(cfg['checkpoint']))!=cfg['checkpoint_sha256']:raise ValueError('Checkpoint hash mismatch')
-    device=cfg.get('device','mps')
+    device='cpu'  # Enforce the CPU policy even for an old persisted request.
     torch.set_num_threads(CPU_THREADS)
     predictor=build_sam2_video_predictor(cfg.get('model_config','configs/sam2.1/sam2.1_hiera_t.yaml'),cfg['checkpoint'],device=device,apply_postprocessing=False,hydra_overrides_extra=model_overrides(cfg))
     box=np.array([target['x']*width/meta['width'],target['y']*height/meta['height'],(target['x']+target['w'])*width/meta['width'],(target['y']+target['h'])*height/meta['height']],dtype=np.float32)

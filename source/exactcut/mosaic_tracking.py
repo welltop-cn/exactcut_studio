@@ -20,7 +20,8 @@ def sam_timeout(frame_count):
 
 
 def settings():
-    return load_config().get('cutting', {}).get('tracking', {})
+    # Local config cannot opt SAM into a GPU backend.
+    return {**load_config().get('cutting', {}).get('tracking', {}), 'device': 'cpu'}
 
 
 def enabled():
@@ -143,6 +144,7 @@ def start(bid,sid,target,reset_at,effect=None,*,actor='admin'):
 
 @editor_resources.media_operation
 def run_tracker(source,directory,meta,target,cfg):
+    cfg={**cfg,'device':'cpu'}  # Also normalize configs persisted by older jobs.
     storage.require_space(source.parent,1024**3)
     directory.mkdir(exist_ok=True)
     (directory/'progress.json').unlink(missing_ok=True)
