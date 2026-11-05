@@ -8,6 +8,7 @@
 
 | 时间 | 类型 | 应用版本 | 内容 | 详细记录 |
 | --- | --- | --- | --- | --- |
+| 2026-11-05 12:10 | 监控（新增 deploy 用户 cron） | 保持 `8216c27`，未重启 | 新增线上监控脚本，每 5 分钟检查服务存活和资源并推送飞书告警群；报错事件扫描因无日志读权限暂未启用 | [11 月 5 日线上监控上线](verification/production-monitor-2026-11-05.md) |
 | 2026-11-02 17:38 | 凭据与连接配置 | 保持 `8216c27` | 同步 OpenAI key/base URL，重启原版本；限额保持 60/5 | [11 月 2 日配置变更](verification/production-config-change-2026-11-02.md) |
 | 2026-11-02 17:32 | 运行配置 | 保持 `8216c27` | AI 共享额度 6/1 → 60/5，即时生效 | [11 月 2 日配置变更](verification/production-config-change-2026-11-02.md) |
 | 2026-10-31 | 应用发布 | `8216c277f27fd88040944faae77a9e82a15be765` | 下方字幕识别及主动打开时间轴等；前驱 `us-east-20261030-reviewed-ea3db64` | [正式发布及验证](verification/bottom-subtitles-production-2026-10-31.md) |
