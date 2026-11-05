@@ -2084,11 +2084,6 @@ def timeline_point(page, frame):
     return rail['x']+rail['width']*frame/total, rail['y']+rail['height']-3
 
 
-def drag_blank_segment(page, start, end):
-    x,y=timeline_point(page,start);end_x,_=timeline_point(page,end)
-    page.mouse.move(x,y);page.mouse.down();page.mouse.move(end_x,y,steps=6);page.mouse.up()
-
-
 @pytest.mark.parametrize('edge,expected', [('start',60),('end',119)])
 def test_trim_edge_follows_frame_before_release_and_stops_at_neighbour(editor, edge, expected):
     scan_result(editor)
@@ -2119,24 +2114,35 @@ def test_trim_edge_follows_frame_before_release_and_stops_at_neighbour(editor, e
     assert editor.locator('#mosaicFrameNumber').input_value()==('00:02:00' if edge=='start' else '00:03:29')
 
 
-@pytest.mark.parametrize('reverse', [False, True])
-def test_blank_timeline_drag_creates_unprocessed_manual_segment_clamped_to_ai(editor, reverse):
+@pytest.mark.parametrize('start,end', [(100,180),(180,60),(180,300),(180,0)])
+def test_blank_timeline_drag_scrubs_frame_before_release_without_creating_clip(editor, start, end):
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
-    x,y=timeline_point(editor,180);editor.mouse.click(x,y)
+    editor.locator('[data-timeline-event="e1"]').wait_for()
+    before=workbench_draft(editor)
+    editor.clock.install();editor.clock.pause_at(editor.evaluate('Date.now()'))
+    frames=[]
+    editor.on('request',lambda request: frames.append(request.url) if '/frame/' in request.url else None)
+    x,y=timeline_point(editor,start);end_x,_=timeline_point(editor,end)
+    editor.mouse.move(x,y);editor.mouse.down()
+    def check(frame):
+        assert editor.locator('#mosaicFrameNumber').input_value()==f'00:{frame//30:02d}:{frame%30:02d}'
+        assert abs(editor.locator('#mosaicTimelineHead').evaluate('el=>parseFloat(el.style.left)')-100*frame/300)<.01
+        editor.clock.run_for(100)
+        editor.locator('#mosaicFrame').wait_for(state='visible')
+        assert frames[-1].endswith('/frame/'+str(frame))
+    check(start)  # Pointerdown jumps immediately and loads the accurate preview.
+    middle=(start+end)//2;mid_x,_=timeline_point(editor,middle)
+    editor.mouse.move(mid_x,y,steps=6);check(middle)
+    editor.mouse.move(end_x,y,steps=6);check(min(299,end))
+    # Preview and playhead follow while the pointer is still held, even across AI ranges.
+    assert editor.locator('[data-timeline-event]').count()==1
     assert editor.locator('[data-manual-card]').count()==0
-    assert editor.locator('#mosaicFrameNumber').input_value()=='00:06:00'
-    # Both directions stop at the AI segment ending at frame 90.
-    drag_blank_segment(editor,180,60) if reverse else drag_blank_segment(editor,100,180)
-    draft=workbench_draft(editor);clip=draft['manualClips'][0]
-    assert (clip['start'],clip['end'])==((90,180) if reverse else (100,180))
-    assert draft['deletions']==[] and draft['targets']==[]
-    card=editor.locator(f'[data-mosaic-card="{clip["id"]}"]')
-    assert card.locator('[data-scan-event]').get_attribute('aria-pressed')=='true'
-    assert card.get_by_role('checkbox').count()==3
-    assert '待处理 2 段' in editor.locator('#mosaicBatchHint').inner_text()
-    card.get_by_role('checkbox',name='删除',exact=True).click()
-    assert '删除' in card.inner_text() and '需框选' not in card.inner_text()
-    assert len(workbench_draft(editor)['deletions'])==1
+    assert workbench_draft(editor)==before
+    editor.mouse.up()
+    assert workbench_draft(editor)==before
+    assert editor.locator('[data-timeline-event]').count()==1
+    assert editor.locator('#mosaicTimelineSelection').count()==0
+    assert editor.locator('#helpNav').is_hidden()
 
 
 @pytest.mark.parametrize('width', [1440, 1600])
@@ -2272,8 +2278,11 @@ def test_short_timeline_suggestion_hides_entire_label_but_keeps_accessible_infor
 
 
 def test_manual_ignore_and_drafts_without_optional_decision_fields(editor):
-    open_auto(editor);drag_blank_segment(editor,90,150)
+    open_auto(editor);editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicStart').fill('00:03:00');editor.locator('#mosaicEnd').fill('00:04:29')
+    editor.locator('#mosaicAddSubmit').click()
     clip=workbench_draft(editor)['manualClips'][0]['id']
+    editor.locator(f'[data-event-delete="{clip}"]').click()
     editor.locator(f'[data-event-ignore="{clip}"]').click()
     editor.reload();install_editor(editor);scan_result(editor);open_auto(editor)
     assert editor.locator(f'[data-event-ignore="{clip}"]').is_checked()

@@ -1137,7 +1137,6 @@
   const liveCanvas=$('mosaicLiveCanvas'),liveContext=liveCanvas.getContext('2d');
   const liveEffect=document.createElement('canvas'),liveMask=document.createElement('canvas'),liveSmall=document.createElement('canvas');
   const timeline=$('mosaicTimelineTracks'),thumbReader=document.createElement('video');
-  const timelineSelection=document.createElement('div');timelineSelection.id='mosaicTimelineSelection';timelineSelection.hidden=true;timeline.append(timelineSelection);
   thumbReader.muted=true;thumbReader.preload='metadata';
   let timelineDrag=null,timelineSignature='',thumbnailSource='',thumbnailEpoch=0,liveAnimation=0,compareOriginal=false;
   function timelineItems(){
@@ -1185,13 +1184,6 @@
     const others=timelineItems().filter(i=>i.id!==item?.id);
     return {left:Math.max(0,...others.filter(i=>i.end<=item.start).map(i=>i.end)),right:Math.min(meta().frame_count,...others.filter(i=>i.start>=item.end).map(i=>i.start))};
   }
-  function blankRange(anchor,frame){
-    const items=timelineItems();
-    if(items.some(i=>anchor>=i.start&&anchor<i.end))return null;
-    const left=Math.max(0,...items.filter(i=>i.end<=anchor).map(i=>i.end)),right=Math.min(meta().frame_count,...items.filter(i=>i.start>anchor).map(i=>i.start));
-    const endpoint=Math.max(left,Math.min(right,frame));
-    return endpoint===anchor?null:{start:Math.min(anchor,endpoint),end:Math.max(anchor,endpoint)};
-  }
   timeline.onpointerdown=event=>{
     if(!context||event.button!==0)return;
     let button=event.target.closest('[data-timeline-event]');const item=button&&timelineItems().find(i=>i.id===button.dataset.timelineEvent);
@@ -1199,19 +1191,14 @@
     event.preventDefault();
     if(item&&event.target.dataset.edge){if(item.event)viewScanEvent(item.id);else viewTarget(item.index);button=[...timeline.querySelectorAll('[data-timeline-event]')].find(b=>b.dataset.timelineEvent===item.id);}
     timeline.setPointerCapture(event.pointerId);
-    timelineDrag={pointer:event.pointerId,item,button,start:timelineFrame(event),x:event.clientX,edge:event.target.dataset.edge,moved:false,version:epoch,seekSequence};
+    timelineDrag={pointer:event.pointerId,item,button,start:timelineFrame(event),edge:event.target.dataset.edge,moved:false,version:epoch,seekSequence};
     if(!item)seek(Math.min(meta().frame_count-1,timelineFrame(event)));
   };
   timeline.onpointermove=event=>{
     const drag=timelineDrag;if(!drag||drag.pointer!==event.pointerId||drag.version!==epoch||editLocked())return;
     const frame=timelineFrame(event);
     if(!drag.item){
-      drag.moved=drag.moved||Math.abs(event.clientX-drag.x)>6;
-      if(drag.moved){
-        drag.range=blankRange(drag.start,frame);
-        const preview=$('mosaicTimelineSelection');preview.hidden=!drag.range;
-        if(drag.range){preview.style.left=100*drag.range.start/meta().frame_count+'%';preview.style.width=100*(drag.range.end-drag.range.start)/meta().frame_count+'%';seek(frame<drag.start?drag.range.start:drag.range.end-1);}
-      }
+      seek(Math.min(meta().frame_count-1,frame));
       return;
     }
     if(['suggestion','ignored'].includes(drag.item.kind))return;
@@ -1231,7 +1218,7 @@
   };
   timeline.onpointerup=guard(event=>{
     const drag=timelineDrag;if(!drag||drag.pointer!==event.pointerId)return;
-    timelineDrag=null;$('mosaicTimelineSelection').hidden=true;
+    timelineDrag=null;
     if(timeline.hasPointerCapture(event.pointerId))timeline.releasePointerCapture(event.pointerId);
     if(!context||drag.version!==epoch)return;
     const item=drag.item;
@@ -1247,15 +1234,10 @@
         if(drag.moved&&drag.range&&drag.edge)seek(drag.edge==='start'?drag.range.start:drag.range.end-1,true,drag.seekSequence);
       }
       if(drag.moved&&drag.range){status(drag.warned?'时间已更新，已停在相邻片段边界。':'时间已更新。');}
-    }else if(!item&&drag.moved&&drag.range&&!editLocked()){
-      if(manualClips.length>=40)throw Error('最多添加 40 个手动片段。');
-      const clip={id:'manual-'+regionId(),...drag.range,label:'手动片段',reason:'',status:'needs_review',candidates:[]};
-      manualClips.push(clip);
-      if(save()){viewScanEvent(clip.id);status('已添加片段，请选择删除、打码或忽略。');}
     }
     timelineSignature='';paint();
   });
-  timeline.onpointercancel=()=>{const item=timelineDrag?.item,sequence=timelineDrag?.seekSequence;timelineDrag=null;$('mosaicTimelineSelection').hidden=true;timelineSignature='';if(context){if(item?.event&&sequence===seekSequence)viewScanEvent(item.id);else if(item&&sequence===seekSequence)viewTarget(item.index);paint();}};
+  timeline.onpointercancel=()=>{const item=timelineDrag?.item,sequence=timelineDrag?.seekSequence;timelineDrag=null;timelineSignature='';if(context){if(item?.event&&sequence===seekSequence)viewScanEvent(item.id);else if(item&&sequence===seekSequence)viewTarget(item.index);paint();}};
   let thumbnailCancel=null,thumbnailCacheKey='';
   const thumbnailCache=new Map();
   new ResizeObserver(()=>{if(context&&dialog.open)scheduleThumbnails();}).observe(timeline);
@@ -1376,7 +1358,7 @@
   video.addEventListener('playing',animateLivePreview);video.addEventListener('seeked',drawLivePreview);
   document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelAnimationFrame(liveAnimation);else if(context&&dialog.open){if(video.paused)drawLivePreview();else animateLivePreview();}});
   function stopWorkspacePreview(){
-    cancelAnimationFrame(liveAnimation);thumbnailEpoch++;thumbnailCancel?.();thumbnailCancel=null;thumbnailSource='';timelineSignature='';timelineDrag=null;timelineSelection.hidden=true;thumbReader.pause();thumbReader.removeAttribute('src');thumbReader.load();liveCanvas.hidden=true;compareOriginal=false;$('mosaicCompare').setAttribute('aria-pressed','false');$('mosaicCompare').textContent='对比原画';
+    cancelAnimationFrame(liveAnimation);thumbnailEpoch++;thumbnailCancel?.();thumbnailCancel=null;thumbnailSource='';timelineSignature='';timelineDrag=null;thumbReader.pause();thumbReader.removeAttribute('src');thumbReader.load();liveCanvas.hidden=true;compareOriginal=false;$('mosaicCompare').setAttribute('aria-pressed','false');$('mosaicCompare').textContent='对比原画';
   }
   window.Mosaic={mount};mount();
 })();
