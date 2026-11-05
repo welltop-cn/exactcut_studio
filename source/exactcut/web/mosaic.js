@@ -25,7 +25,7 @@
   let ignoredEvents=[],savedIgnoredEvents=[],drawingEvents=[],savedDrawingEvents=[];
   const allEvents=()=>[...(aiEvents.length?aiEvents:scanReport?.status==='running'?(scanReport.events||[]):[]),...manualClips].sort((a,b)=>eventRange(a).start-eventRange(b).start);
   let scanController=null, releasePreparation=null, pendingFrame=-1;
-  let scanToken=0, scanLoading=false, scanReport=null, scanError='', scanEvent=null;
+  let scanToken=0, scanLoading=false, scanReport=null, scanSessionId=null, scanError='', scanEvent=null;
   const base=()=>`/api/batches/${context.batch}/mosaics/${context.session.id}`;
   const meta=()=>context.session.metadata;
   const rate=()=>meta().fps_num/meta().fps_den;
@@ -234,14 +234,14 @@
     const events=allEvents(),aiResults=aiEvents,enabled=context.session.capabilities?.region_recognition;
     $('mosaicScan').disabled=scanLoading||loading||!enabled;
     $('mosaicScan').textContent=pendingJob(scanReport)?(scanReport.status==='queued'?'识别已排队…':'识别中…'):scanSubmitting?'正在提交…':scanLoading?'读取记录…':scanError?'重试读取':scanReport?.status==='failed'?'重试识别':scanReport?.status==='completed'?'重新识别整段':'识别整段视频';
-    let message='未识别。可点「识别整段视频」获取 AI 建议（需 1–3 分钟），也可直接添加片段手动处理。';
+    let message=`可手动添加片段，或点「${$('mosaicScan').textContent}」。`;
     if(!enabled)message='本机未启用 Gemini 识别，可用下方手工补充。';
     else if(scanLoading)message=pendingJob(scanReport)?(scanReport.progress||'识别已接收，等待后台处理…'):scanSubmitting?'正在提交整段识别…':'正在读取已有识别记录…';
     else if(scanError)message=scanError;
     else if(scanReport?.status==='failed')message=scanReport.error||'整段识别失败，请重试。';
     else if(scanReport?.status==='completed'){
       const located=aiResults.filter(e=>e.status==='localized').length;
-      message=aiResults.length?`发现 ${aiResults.length} 个片段${aiResults.length-located?` · ${aiResults.length-located} 段打码需补充区域`:''}`:'本次整段抽样未发现疑似时间段，仍请检查短闪帧。可用下方手工补充。';
+      message=aiResults.length?`发现 ${aiResults.length} 个片段${aiResults.length-located?` · ${aiResults.length-located} 段打码需补充区域`:''}`:scanSessionId&&scanReport.id===scanSessionId?'本次整段抽样未发现疑似时间段，仍请检查短闪帧。可用下方手工补充。':'上次识别未发现片段，可手动添加片段，或重新识别。';
 
     }
     if(scanLoading&&events.length)message='识别在后台继续，已有片段可编辑，结果完成后可人工复核。';
@@ -310,7 +310,7 @@
       let state;
       if(start){
         scanSubmitting=true;paint();
-        try{state={enabled:true,report:await submit(!!scanReport)};}finally{scanSubmitting=false;}
+        try{state={enabled:true,report:await submit(!!scanReport)};if(valid())scanSessionId=state.report?.id;}finally{scanSubmitting=false;}
       }else state=await api(endpoint+'/scan'); // Opening only reads; Gemini runs after the user clicks.
       while(valid()){
         if(typeof state.enabled!=='boolean')throw Error('整段识别响应无效，请重试读取。');
@@ -457,7 +457,7 @@
     sourceManager?.dispose();sourceManager=sourceBinding=beforeBinding=null;
     detachClipPreview();stopWorkspacePreview();previewOperation=null;const version=++epoch;token++;controller?.abort();clearTimeout(timer);context=null;playbackError=false;pausePlayback();motion='fixed';wanted=0;ready=-1;candidates=[];selected=null;targets=[];editing=null;loading=false;frameLoading=false;drawing=false;
     batchToken++;batchJob=null;batchLoading=false;stopPending=false;batchError='';deletions=[];mutationBusy=false;resultBefore=false;resultMode=false;$('mosaicBatchDialog').hidden=true;
-    scanReadPending=false;scanSubmitting=false;clearRemovedClip();scanToken++;scanLoading=false;scanReport=null;scanError='';scanEvent=null;addingClip=false;manualClips=[];aiEvents=[];clipEdits={};$('mosaicAdjust').open=false;$('mosaicEffects').close();
+    scanReadPending=false;scanSubmitting=false;clearRemovedClip();scanToken++;scanLoading=false;scanReport=null;scanSessionId=null;scanError='';scanEvent=null;addingClip=false;manualClips=[];aiEvents=[];clipEdits={};$('mosaicAdjust').open=false;$('mosaicEffects').close();
     image.hidden=true;overlay.hidden=true;$('mosaicWorkspace').hidden=true;$('mosaicTitle').textContent='剪切打码 · '+asset.title;
     for(const v of $('assets').querySelectorAll('video'))v.pause();
     $('mosaicPreparing').hidden=false;dialog.setAttribute('aria-busy','true');dialog.querySelector('.mosaic-batch-footer').hidden=true;
@@ -724,7 +724,7 @@
   const adoptedTargets=()=>targets.filter(t=>t.adopted!==false).map(t=>({...renderTarget(t),effect:effectFor(t)}));
   const targetSignature=(list,fallback=effect)=>JSON.stringify([...new Set(list.map(t=>JSON.stringify([...targetFields.map(k=>t[k]),t.motion||'tracked',{...defaultEffect,...fallback,...t.effect}])))] .sort());
   function pendingCount(){return timelineItems().filter(i=>i.kind==='suggestion').length;}
-  function processingSummary(segments,pending){return `删除 ${deletions.length} 段 · 打码 ${segments} 段 · ${pending?`待处理 ${pending} 段`:'全部已处理'}`;}
+  function processingSummary(segments,pending){return `删除 ${deletions.length} 段 · 打码 ${segments} 段 · ${pending?`待处理 ${pending} 段`:timelineItems().length||deletions.length?'全部已处理':'还没有片段'}`;}
   function paintBatch(){
     if(!context)return;
     for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}

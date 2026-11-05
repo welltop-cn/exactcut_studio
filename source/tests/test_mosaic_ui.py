@@ -1558,6 +1558,60 @@ def test_save_time_preserves_cancelled_mask_and_delete_choice(editor,delete_sele
     assert draft['targets'][0]['start']==40
 
 
+def test_old_empty_scan_on_open_is_muted_and_header_has_no_segments(editor):
+    open_auto(editor)
+    editor.wait_for_function("document.getElementById('mosaicScan').textContent==='重新识别整段'")
+    assert editor.locator('#mosaicScanStatus').inner_text()=='上次识别未发现片段，可手动添加片段，或重新识别。'
+    assert 'error' not in (editor.locator('#mosaicScanStatus').get_attribute('class') or '').split()
+    assert editor.locator('#mosaicSummary').inner_text()=='删除 0 段 · 打码 0 段 · 还没有片段'
+    assert editor.locator('#mosaicBatchStart').is_disabled()
+    assert editor.locator('#helpNav').is_hidden()
+    assert not editor.evaluate("calls.some(c=>c.url.endsWith('/scan')&&c.body)")
+
+
+def test_empty_scan_session_messages_in_node():
+    import subprocess
+    script=(Path(__file__).parents[1]/'exactcut/web/mosaic.js').read_text()
+    # Exercise the real status renderer and scan lifecycle without Chromium.
+    paint=script[script.index('  function paintScan(){'):script.index('    const targetRow=')]+ '\n}'
+    scan=script[script.index('  async function scanVideo('):script.index('  function reviewHint(')]
+    summary=script[script.index('  function processingSummary('):script.index('  function paintBatch(')]
+    harness="""
+const assert=require('node:assert/strict');
+const elements={},$=id=>elements[id]??=( {classList:{toggle(){}},textContent:''} );
+const EditorBusy={message:x=>x,run:fn=>fn()},context={session:{source_sha256:'source',capabilities:{region_recognition:true}}};
+let scanToken=0,scanLoading=false,scanReport=null,scanSessionId=null,scanError='',scanSubmitting=false;
+let scanReadPending=false,scanController=null,loading=false,epoch=1,batchLoading=false;
+let aiEvents=[],deletions=[],items=[],writes=0;
+const allEvents=()=>aiEvents,timelineItems=()=>items,pendingJob=r=>['queued','running'].includes(r?.status);
+const active=v=>v===epoch,base=()=>'/fixture',checkedReport=r=>r,awaitingDecision=()=>false;
+const mergeDiscovery=events=>{aiEvents=events},status=()=>{},paint=()=>paintScan();
+let report={id:'old',status:'completed',events:[]};
+const api=async(url,body)=>body?(writes++,report={id:'fresh',status:'completed',events:[]}):{enabled:true,report};
+"""+paint+scan+summary+"""
+(async()=>{
+  await scanVideo(false);
+  assert.equal(writes,0);
+  assert.equal($('mosaicScanStatus').textContent,'上次识别未发现片段，可手动添加片段，或重新识别。');
+  assert.equal(processingSummary(0,0),'删除 0 段 · 打码 0 段 · 还没有片段');
+  await scanVideo(true);
+  assert.equal(writes,1);
+  assert.ok($('mosaicScanStatus').textContent.startsWith('本次整段抽样未发现疑似时间段'));
+  // A new editor session resets the in-memory scan identity.
+  scanSessionId=null;scanReport=null;
+  await scanVideo(false);
+  assert.equal($('mosaicScanStatus').textContent,'上次识别未发现片段，可手动添加片段，或重新识别。');
+  report=null;
+  await scanVideo(false);
+  assert.equal($('mosaicScanStatus').textContent,`可手动添加片段，或点「${$('mosaicScan').textContent}」。`);
+  items=[{kind:'ignored'}];
+  assert.ok(processingSummary(0,0).endsWith('全部已处理'));
+  assert.ok(processingSummary(0,1).endsWith('待处理 1 段'));
+})().catch(e=>{console.error(e);process.exitCode=1});
+"""
+    subprocess.run(['node','-e',harness],check=True,capture_output=True,text=True)
+
+
 def test_open_never_submits_scan_and_button_submits_once_then_record_is_reused(editor):
     editor.evaluate('''() => {const old=api;let report=null;window.scanStarts=0;window.scanReads=0;
       window.api=async(url,body)=>{if(!url.endsWith('/scan'))return old(url,body);
@@ -1569,14 +1623,21 @@ def test_open_never_submits_scan_and_button_submits_once_then_record_is_reused(e
     assert editor.evaluate('scanStarts')==0
     assert editor.locator('#mosaicScan').inner_text()=='识别整段视频'
     assert '识别整段视频' in editor.locator('#mosaicScanStatus').inner_text()
+    assert editor.locator('#mosaicScanStatus').inner_text()=='可手动添加片段，或点「识别整段视频」。'
+    assert '还没有片段' in editor.locator('#mosaicSummary').inner_text()
+    assert editor.locator('#mosaicBatchStart').is_disabled()
     assert '识别中' not in editor.locator('#mosaicScan').inner_text()
     editor.locator('#mosaicScan').click()
     editor.wait_for_function('scanStarts===1')
     editor.wait_for_function("document.getElementById('mosaicScan').textContent==='重新识别整段'")
+    assert '本次整段抽样未发现疑似时间段' in editor.locator('#mosaicScanStatus').inner_text()
+    assert '还没有片段' in editor.locator('#mosaicSummary').inner_text()
+    assert editor.locator('#mosaicBatchStart').is_disabled()
     editor.locator('#mosaicClose').click()
     open_auto(editor)
     editor.wait_for_function("document.getElementById('mosaicScan').textContent==='重新识别整段'")
     assert editor.evaluate('scanStarts')==1
+    assert editor.locator('#mosaicScanStatus').inner_text()=='上次识别未发现片段，可手动添加片段，或重新识别。'
 
 
 def test_mosaic_open_uses_long_preparation_timeout():
