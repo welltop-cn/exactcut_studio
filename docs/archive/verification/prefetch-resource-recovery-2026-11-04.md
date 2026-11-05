@@ -14,7 +14,7 @@ Project `0d5153efa85e4a1cbce617f4309c55b2` (101693) was a different case: EP7 wa
 
 - Branch: `fix/prefetch-deferred-plan-recovery`.
 - Base: `main` at `9002646`.
-- Worktree: `/Users/matao/code/exact-cut-prefetch-recovery`.
+- Worktree: `<prefetch-recovery-worktree>`.
 - Other workspace changes are left untouched; this branch is not merged or deployed.
 
 ## Minimal fix

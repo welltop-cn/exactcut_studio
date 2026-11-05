@@ -146,7 +146,7 @@ worktree 根为 `~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/`。主�
 
 用户要求启动本地dev，并明确授权复用线上真实 `.env` 的AI配置。确认主dev进程cwd、无活动制作/FFmpeg后，重启8793加载提交 `a7d4ce0` 及主工作区已有其他修改。最终PID 67415为历史快照，操作前重新核对。入口 `http://localhost:8793/home/` 已打开，healthz返回development/ok、worker_alive=true。
 
-启动器：`source/.dev-state/clip-text-model-only-20261014/start.sh`，日志同目录 `server.log`；指定Python3.12，沿用主dev数据及preview-concurrency runtime.json。用户授权后，只从 `8.221.122.75:/srv/exactcut/config/production.env` 只读提取OPENAI_API_KEY、OPENAI_BASE_URL及可用模型名到本地私有development.env（0600）；AI=1，素材获取/发布/外部写入仍为0。未修改线上服务。
+启动器：`source/.dev-state/clip-text-model-only-20261014/start.sh`，日志同目录 `server.log`；指定Python3.12，沿用主dev数据及preview-concurrency runtime.json。用户授权后，只从 `test-server.example.invalid:/srv/exactcut/config/production.env` 只读提取OPENAI_API_KEY、OPENAI_BASE_URL及可用模型名到本地私有development.env（0600）；AI=1，素材获取/发布/外部写入仍为0。未修改线上服务。
 
 真实模型通过应用read_clip_text对 `EP4: 00:49:00-02:16:18,, EP5: 00:00:01-01:08:13` 返回正确两段、errors=[]，所有分秒帧逐字段断言通过。此验收为真实模型+应用函数，非鉴权HTTP接口验收。最初验证进程因继承OPENAI环境变量发生401；load_env_file使用setdefault，清除继承变量后通过。不能由该401推断配置文件密钥无效；dev启动器已清除父进程OPENAI变量。
 
@@ -221,7 +221,7 @@ worktree 根为 `~/.config/superpowers/worktrees/exact-cut-fbbm-handoff/`。主�
 
 ### 2026-10-26 封面查询 TLS 连接修复
 
-8793 在确认无活动任务后重启为 PID 23280，继续使用 title-images + fetch-env 配置。本机 fake-IP 路径出现 KES TLS EOF；独立复现后，局部 `title_extraction.kes_connect_ip=47.117.169.192` 保留原域名 Host/TLS SNI，真实 101606 封面查询成功。项目 cbe91a69163a4ffab66691016b2604b5 已重新提交，生成透明图缓存并进入 FFmpeg 渲染。相关16项测试通过。封面网络错误最多尝试3次，不自动重试已发送的图像编辑请求。
+8793 在确认无活动任务后重启为 PID 23280，继续使用 title-images + fetch-env 配置。本机 fake-IP 路径出现 KES TLS EOF；独立复现后，局部 `title_extraction.kes_connect_ip=<封面服务地址>` 保留原域名 Host/TLS SNI，真实 101606 封面查询成功。项目 cbe91a69163a4ffab66691016b2604b5 已重新提交，生成透明图缓存并进入 FFmpeg 渲染。相关16项测试通过。封面网络错误最多尝试3次，不自动重试已发送的图像编辑请求。
 
 2026-10-26 字幕图层调整：按用户要求，字幕位置不动，叠在剧名上层。预览、普通 FFmpeg 和片段特效路径一致；新增真实像素测试通过。确认无活动任务后重启8793至PID 70278，health正常，未重跑用户成片。带水印输出与预览缓存版本更新为2。
 

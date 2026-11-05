@@ -22,7 +22,7 @@
 ## 安装
 
 ```bash
-cd /Users/admin/Desktop/codex/exact-cut-fbbm
+cd <项目仓库>
 ./bin/setup
 cp .env.example .env
 ```
@@ -184,7 +184,7 @@ Hook 文案仍从 Excel 的「标题EN/Hook」列读取，不自动生成或改�
 
 ## Linux 容器部署
 
-Linux 的环境隔离、生产候选配置、字体与文档转换边界见 [Linux 运行说明](../linux-portability.md)。镜像包含素材下载脚本，不需要 macOS、系统字体、textutil 或 Cloudflare Tunnel。首期 nginx 沿用80端口，提供 IP 的 `/home/` 入口，后端仅监听本地 :18792；开发 :8793。首期仅维护开发、生产两份配置，配置与数据独立，生产启用下载、AI、飞书/FBBM 发布。Linux正式版本已上线，公网地址为 http://124.156.228.202/home/ 。登录与工作台、真实多集下载/制作、AI Hook、QC和缓存复用验收通过；真实业务上传与飞书/FBBM最终发布仍需预览确认。版本与证据见[上线记录](../server-deployment-2026-10-09.md)。
+Linux 的环境隔离、生产候选配置、字体与文档转换边界见 [Linux 运行说明](../linux-portability.md)。镜像包含素材下载脚本，不需要 macOS、系统字体、textutil 或 Cloudflare Tunnel。首期 nginx 沿用80端口，提供 IP 的 `/home/` 入口，后端仅监听本地 :18792；开发 :8793。首期仅维护开发、生产两份配置，配置与数据独立，生产启用下载、AI、飞书/FBBM 发布。Linux正式版本已上线，公网地址为 http://server.example.invalid/home/ 。登录与工作台、真实多集下载/制作、AI Hook、QC和缓存复用验收通过；真实业务上传与飞书/FBBM最终发布仍需预览确认。版本与证据见[上线记录](../server-deployment-2026-10-09.md)。
 
 启动或复用本地服务前，先读 [本地 dev 服务与专项测试交接](../../local-dev-services.md)：日常入口为8793，8795/8796包含模拟交付，不能当成真实上传结果；其他临时服务的清理状态以清单为准。
 
@@ -215,9 +215,9 @@ EXACTCUT_PYTHON=~/miniconda3/envs/py3.12/bin/python3.12 ./bin/dev-web
 发布与回滚使用独立运维入口：
 
 ```bash
-/Users/admin/Desktop/codex/exact-cut-fbbm-ops/bin/ops status
-/Users/admin/Desktop/codex/exact-cut-fbbm-ops/bin/ops publish <已构建版本>
-/Users/admin/Desktop/codex/exact-cut-fbbm-ops/bin/ops rollback
+<运维仓库>/bin/ops status
+<运维仓库>/bin/ops publish <已构建版本>
+<运维仓库>/bin/ops rollback
 ```
 
 直接运行 `deploy/install.py` 和手工重启服务的旧部署方式已关闭。先在隔离环境开发、测试并构建版本，再通过运维入口切换。

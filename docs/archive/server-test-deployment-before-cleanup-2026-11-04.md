@@ -8,7 +8,7 @@
 
 | 项目 | 测试实例 | 正式实例（本流程禁止修改） |
 |---|---|---|
-| 公网入口 | `http://8.221.122.75/test/` | `https://autocut.creativefitting.ai/home/` |
+| 公网入口 | `http://test-server.example.invalid/test/` | `https://autocut.creativefitting.ai/home/` |
 | 容器 | `exactcut-test` | `exactcut-production-web-1` |
 | 宿主机监听 | `127.0.0.1:18899` | `127.0.0.1:18792` |
 | 容器端口 | 8792 | 8792 |
@@ -21,7 +21,7 @@
 
 测试实例独立账号库，用户名admin。密码位于服务器 `/srv/exactcut-test/data/.web-state/password`，不要写入Git、报告或公开日志，不复用生产密码。
 
-**不要使用旧的 `/home/` IP入口或 `https://8.221.122.75/`。** 浏览器曾缓存/升级旧路径到HTTPS，而IP没有对应TLS入口。新 `/test/` 已完成真实Chrome登录验收。无需开放公网18899，也不要改正式HTTPS兜底规则。
+**不要使用旧的 `/home/` IP入口或 `https://test-server.example.invalid/`。** 浏览器曾缓存/升级旧路径到HTTPS，而IP没有对应TLS入口。新 `/test/` 已完成真实Chrome登录验收。无需开放公网18899，也不要改正式HTTPS兜底规则。
 
 ## 当前能力与限制
 
@@ -36,7 +36,7 @@
 本地已配置SSH密钥，不在命令中放密码：
 
 ```sh
-ssh -o BatchMode=yes -i ~/.ssh/exactcut_8_221_122_75 root@8.221.122.75
+ssh -o BatchMode=yes -i <测试服务器身份文件> root@test-server.example.invalid
 ```
 
 以下在服务器执行，只操作测试实例：
@@ -93,7 +93,7 @@ with tarfile.open(archive, 'x:gz') as bundle:
 print(archive)
 PY
 shasum -a 256 /tmp/exactcut-test-code-UNIQUE.tar.gz
-scp -i ~/.ssh/exactcut_8_221_122_75 /tmp/exactcut-test-code-UNIQUE.tar.gz root@8.221.122.75:/srv/exactcut-test/
+scp -i <测试服务器身份文件> /tmp/exactcut-test-code-UNIQUE.tar.gz root@test-server.example.invalid:/srv/exactcut-test/
 ```
 
 依赖有变化时不能直接沿用旧镜像。先构建专用测试镜像并验证依赖，再更新测试专用 `base-image.txt`；不要从正式容器提取环境凭据，也不要改正式镜像/tag。集成脚本变化不在上述白名单内，须另行核对测试镜像内 `/app/integrations` 是否匹配。
@@ -149,13 +149,13 @@ sh /srv/exactcut-test/recreate.sh
 ```sh
 # 服务器本机
 curl -fsS http://127.0.0.1:18899/test/healthz
-curl -fsS -H 'Host: 8.221.122.75' http://127.0.0.1/test/healthz
+curl -fsS -H 'Host: test-server.example.invalid' http://127.0.0.1/test/healthz
 curl -fsS http://127.0.0.1:18792/home/healthz
 docker inspect -f '{{.State.StartedAt}}' exactcut-production-web-1
 docker stats --no-stream
 ```
 
-另外从用户网络验证 `http://8.221.122.75/test/` **登录→跳转→项目加载→目标操作**，不能只检查登录页出现。确认协议仍HTTP、路径仍/test/；浏览器不应进入生产域名。更新静态资源后刷新页面。
+另外从用户网络验证 `http://test-server.example.invalid/test/` **登录→跳转→项目加载→目标操作**，不能只检查登录页出现。确认协议仍HTTP、路径仍/test/；浏览器不应进入生产域名。更新静态资源后刷新页面。
 
 - 正式版本与StartedAt应与更新前一致，worker健康；出现异常先停测试实例并排查，不能靠重启正式服务修复测试环境。
 - 记录公网响应时间。此前图片1–1.5MB，服务器抽帧0.2～0.4秒，公网却需2.8～4.3秒，不能以本机速度替代真实体验。
