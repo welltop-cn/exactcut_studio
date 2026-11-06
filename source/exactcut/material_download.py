@@ -1,6 +1,7 @@
 """Validate local episode files and copy them without hard links or macOS clone."""
 import fcntl
 import json
+import math
 import os
 import re
 import shutil
@@ -9,6 +10,7 @@ import sys
 import signal
 import time
 import uuid
+from fractions import Fraction
 from pathlib import Path
 from .runtime import data_root
 from .media import ffprobe, run_checked
@@ -19,13 +21,36 @@ def validate_downloaded_video(video):
     """A fast-start MP4 may advertise its full duration before download finishes."""
     try:
         payload = ffprobe(video)
-        length = float(payload.get('format', {}).get('duration') or 0)
-        if length <= 0 or not any(s.get('codec_type') == 'video' for s in payload.get('streams', [])):
-            raise ValueError('缺少视频轨道或有效时长')
-        frame = run_checked(['ffmpeg', '-v', 'error', '-ss', f'{max(0, length - .2):.3f}',
-                             '-i', str(video), '-map', '0:v:0', '-frames:v', '1', '-f', 'framemd5', '-'], timeout=30, light=True)
-        if not any(line.strip() and not line.startswith('#') for line in frame.stdout.splitlines()):
-            raise ValueError('片尾尚未下载完整')
+        stream = next((s for s in payload.get('streams', []) if s.get('codec_type') == 'video'), None)
+        if stream is None:
+            raise ValueError('缺少视频轨道')
+        # Container duration may include an audio-only tail. Preserve source PTS
+        # and decode a window, rather than seeking past the last video frame.
+        start = float(stream.get('start_time') or 0)
+        length = float(stream['duration']) if stream.get('duration') not in (None, 'N/A') else None
+        if not math.isfinite(start) or length is not None and (not math.isfinite(length) or length <= 0):
+            raise ValueError('无效视频时长')
+        container_start = float(payload.get('format', {}).get('start_time') or 0)
+        seek = (['-ss', f'{max(0, start - container_start + length - 2):.6f}']
+                if length is not None else [])
+        frames = run_checked(['ffmpeg', '-v', 'error', '-copyts', *seek,
+                              '-i', str(video), '-map', '0:v:0', '-fps_mode', 'passthrough',
+                              '-enc_time_base', '-1', '-f', 'framemd5', '-'], timeout=30,
+                             light=length is not None)
+        timebase = None
+        end = None
+        for line in frames.stdout.splitlines():
+            if line.startswith('#tb 0:'):
+                timebase = float(Fraction(line.split(':', 1)[1].strip()))
+            elif line.strip() and not line.startswith('#'):
+                fields = line.split(',')
+                if timebase is None:
+                    raise ValueError('缺少解码时间基准')
+                end = (int(fields[2]) + int(fields[3])) * timebase
+        if end is None:
+            raise ValueError('视频尾部无法完整解码')
+        if length is not None and end < start + length - max(timebase, .001):
+            raise ValueError('视频尾部短于声明时长')
     except (ValueError, RuntimeError) as exc:
         raise RuntimeError(f'{video.name} 正片尚不完整或无法读取，未复制；请重试下载') from exc
 
