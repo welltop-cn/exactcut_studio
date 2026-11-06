@@ -434,6 +434,23 @@ def test_legacy_render_masks_require_matching_source_reset_and_config(ready,monk
     assert len(calls)==2
 
 
+@pytest.mark.parametrize('shape,width,height', [('rectangle',40,20),('circle',30,30),('ellipse',40,20)])
+def test_fixed_region_shape_contract_and_mask(shape,width,height,tmp_path):
+    meta={'width':100,'height':80,'frame_count':30,'fps_num':30,'fps_den':1}
+    target={'start':3,'end':10,'seed_frame':3,'x':10,'y':10,'w':width,'h':height,'motion':'fixed','shape':shape}
+    checked=render.validate_targets(meta,[target])[0]
+    assert checked['shape']==shape
+    track=render.prepare_track('unused','unused',{'metadata':meta},checked,{},tmp_path)
+    mask=render.union_mask(3,[track],(100,80))
+    assert mask.getpixel((10+width//2,10+height//2))==255
+    assert mask.getpixel((10,10))==(255 if shape=='rectangle' else 0)
+    assert mask.getpixel((9,10+height//2))==0
+    assert mask.getpixel((10+width,10+height//2))==0
+    assert render.union_mask(10,[track],(100,80)).getbbox() is None
+    for invalid in ({'shape':'triangle'},{'shape':'circle','w':40,'h':20}):
+        with pytest.raises(cutting.CutError):render.validate_targets(meta,[{**target,**invalid}])
+
+
 def test_fixed_region_validation_and_mask_without_tracker(tmp_path,monkeypatch):
     meta={'width':160,'height':96,'frame_count':900,'fps_num':30,'fps_den':1}
     target={'start':10,'end':800,'seed_frame':10,'x':20,'y':30,'w':40,'h':10,'motion':'fixed'}
@@ -460,6 +477,26 @@ def test_fixed_render_and_preview_without_sam(ready,monkeypatch):
         assert finished['result']['skipped_frames']==0
         if not preview:render.discard_result(bid,sid,job['id'],'')
     assert file_sha256(source)==sha
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('shape', ['rectangle','circle','ellipse'])
+def test_region_shape_pixels_in_generated_video(tmp_path,shape):
+    source=tmp_path/'source.mp4'
+    cutting.run(['ffmpeg','-y','-v','error','-f','lavfi','-i','color=white:s=96x80:r=30','-frames:v','8','-c:v','libx264',str(source)])
+    meta=cutting.probe_source(source)
+    target={'motion':'fixed','shape':shape,'start':2,'end':5,'seed_frame':2,'x':20,'y':20,'w':40,'h':40 if shape=='circle' else 20}
+    checked=render.validate_targets(meta,[target])[0]
+    track=render.prepare_track('unused','unused',{'metadata':meta},checked,{},tmp_path)
+    output=tmp_path/'out.mp4'
+    render.compose(source,output,meta,[track],effect={'style':'solid','expansion':'none'})
+    raw=cutting.run(['ffmpeg','-v','error','-i',str(output),'-f','rawvideo','-pix_fmt','gray','-'])
+    stride=96*80
+    pixel=lambda frame,x,y:raw[frame*stride+y*96+x]
+    assert pixel(2,40,20+target['h']//2)<10
+    assert pixel(2,21,21)<10 if shape=='rectangle' else pixel(2,21,21)>240
+    assert pixel(1,40,30)>240 and pixel(5,40,30)>240
+    assert pixel(2,10,10)>240
 
 
 @pytest.mark.integration

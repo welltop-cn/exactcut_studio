@@ -73,6 +73,8 @@ def active_count(page):
 def open_editor(page):
     page.locator('[data-open-mosaic]').evaluate('(el)=>el.click()')
     page.locator('#mosaicAdjust').evaluate('(el)=>el.open=true')
+    # Legacy recognition coverage still exercises its retained handler; the UI entry is hidden.
+    page.locator('#mosaicRecognize').evaluate('(el)=>el.hidden=false')
     page.locator('#mosaicRecognize').wait_for(state='visible')
     page.wait_for_function("!document.getElementById('mosaicRecognize').disabled")
 
@@ -193,11 +195,10 @@ def open_auto(page):
 
 
 def render_with_pending_segments(page, pending):
-    with page.expect_event('dialog') as confirmation:
-        page.once('dialog', lambda dialog: dialog.accept())
-        page.locator('#mosaicBatchStart').click()
-    assert confirmation.value.type == 'confirm'
-    assert confirmation.value.message == f'还有 {pending} 段待处理，这些段会保持原样。继续生成？'
+    dialogs=[]
+    page.on('dialog', lambda dialog: (dialogs.append(dialog.message), dialog.dismiss()))
+    page.locator('#mosaicBatchStart').click()
+    assert dialogs==[]
 
 
 @pytest.mark.parametrize('credential_state', ['missing', 'empty', 'unset'])
@@ -604,10 +605,8 @@ def test_fixed_region_live_preview_changes_pixels_without_render(editor):
         editor.wait_for_function(f"!document.querySelector('#mosaicLiveCanvas').hidden && Math.abs(({pixel})(80,48)-128)<70 && Math.abs(({pixel})(81,48)-128)<70")
         outside=[editor.evaluate(f"({pixel})({x},2)") for x in (2,3,4,5)]
         assert max(outside)>190 and min(outside)<65,'outside the region the original stripes stay visible'
-    editor.locator('#mosaicCompare').click()
-    assert editor.locator('#mosaicLiveCanvas').is_hidden()
-    editor.locator('#mosaicCompare').click()
-    editor.locator('#mosaicLiveCanvas').wait_for(state='visible')
+    assert editor.locator('#mosaicCompare').is_hidden()
+    assert editor.locator('#mosaicLiveCanvas').is_visible()
     assert not editor.evaluate("calls.some(c=>c.url.endsWith('/render')&&c.body)")
 
     editor.locator('[data-target-remove]').click()
@@ -896,7 +895,7 @@ def test_complete_video_submits_all_adopted_regions_and_restores_download(editor
     assert 'suggestion' in pending_block.get_attribute('class').split()
     assert pending_block.get_attribute('data-start')=='50'
     assert editor.locator('[data-target-remove][aria-checked="false"]').count()==1
-    assert editor.locator('#mosaicBatchHint').inner_text().split('\n')==['删除 0 段 · 打码 2 段 · 待处理 1 段','旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。']
+    assert editor.locator('#mosaicBatchHint').inner_text().split('\n')==['删除 0 段 · 打码 2 段 · 不处理 1 段','旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。']
     render_with_pending_segments(editor, 1)
     assert editor.locator('#mosaicBatchDialog').is_visible()
     assert editor.evaluate('batchBody.targets.length')==2
@@ -1219,6 +1218,101 @@ def test_adjust_sidebar_does_not_shrink_preview(editor):
     assert editor.locator('.mosaic-scan-section').is_visible()
 
 
+@pytest.mark.parametrize('shape', ['rectangle','circle','ellipse'])
+def test_manual_region_shapes_preview_persist_and_submit(editor, shape):
+    jpeg=io.BytesIO()
+    Image.frombytes('L',(160,96),bytes((0 if (x//2)%2 else 255) for y in range(96) for x in range(160))).convert('RGB').save(jpeg,'JPEG',quality=95)
+    editor.route('**/frame/*',lambda r:r.fulfill(body=jpeg.getvalue(),content_type='image/jpeg'))
+    open_auto(editor);editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicManualAction').select_option('mosaic')
+    assert editor.locator('#mosaicRecognize').is_hidden()
+    choice=editor.get_by_label('区域形状', exact=True)
+    assert choice.locator('option').all_text_contents()==['矩形','圆形','椭圆形']
+    choice.select_option(shape)
+    editor.locator('#mosaicAddRegion').click()
+    b=editor.locator('#mosaicOverlay').bounding_box()
+    editor.mouse.move(b['x']+20*b['width']/160,b['y']+20*b['height']/96);editor.mouse.down()
+    editor.mouse.move(b['x']+100*b['width']/160,b['y']+60*b['height']/96);editor.mouse.up()
+    editor.locator('#mosaicAddSubmit').click()
+    editor.locator('#mosaicFrame').wait_for(state='visible')
+    assert editor.locator('#mosaicCompare').is_hidden()
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    editor.locator('[data-target-view]').click()
+    editor.locator('#mosaicFrame').wait_for(state='visible')
+    assert choice.input_value()==shape
+    assert editor.locator('.mosaic-box').evaluate('el=>getComputedStyle(el).borderTopLeftRadius')==('0px' if shape=='rectangle' else '50%')
+    if shape!='rectangle':
+        assert editor.evaluate("""() => {const canvas=$('mosaicLiveCanvas'),original=document.createElement('canvas');original.width=160;original.height=96;original.getContext('2d').drawImage($('mosaicFrame'),0,0);return canvas.getContext('2d').getImageData(21,21,1,1).data.every((v,i)=>v===original.getContext('2d').getImageData(21,21,1,1).data[i]);}""")
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.shapeBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+    editor.locator('#mosaicBatchStart').click()
+    target=editor.evaluate('shapeBody.targets[0]')
+    assert target['shape']==shape
+    assert target['w']==(40 if shape=='circle' else 80)
+    assert target['h']==40
+
+
+def test_region_shape_edit_and_circle_resize_stay_local(editor):
+    open_auto(editor);editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicManualAction').select_option('mosaic')
+    editor.locator('#mosaicAddRegion').click()
+    b=editor.locator('#mosaicOverlay').bounding_box()
+    editor.mouse.move(b['x']+20*b['width']/160,b['y']+20*b['height']/96);editor.mouse.down()
+    editor.mouse.move(b['x']+100*b['width']/160,b['y']+60*b['height']/96);editor.mouse.up()
+    editor.locator('#mosaicAddSubmit').click()
+    editor.locator('#mosaicFrame').wait_for(state='visible')
+    editor.get_by_label('区域形状',exact=True).select_option('circle')
+    assert editor.locator('#mosaicBoxW').input_value()==editor.locator('#mosaicBoxH').input_value()=='40'
+    handle=editor.locator('.mosaic-handle.e').bounding_box()
+    editor.mouse.move(handle['x']+handle['width']/2,handle['y']+handle['height']/2);editor.mouse.down()
+    editor.mouse.move(handle['x']+handle['width']/2+10*b['width']/160,handle['y']+handle['height']/2);editor.mouse.up()
+    assert editor.locator('#mosaicBoxW').input_value()==editor.locator('#mosaicBoxH').input_value()=='50'
+    editor.locator('#mosaicBoxH').fill('30');editor.locator('#mosaicBoxH').dispatch_event('change')
+    assert editor.locator('#mosaicBoxW').input_value()==editor.locator('#mosaicBoxH').input_value()=='30'
+    editor.locator('#mosaicAddRegion').click()
+    editor.get_by_label('区域形状',exact=True).select_option('ellipse')
+    editor.mouse.move(b['x']+90*b['width']/160,b['y']+20*b['height']/96);editor.mouse.down()
+    editor.mouse.move(b['x']+150*b['width']/160,b['y']+60*b['height']/96);editor.mouse.up()
+    editor.locator('[data-candidate]').first.click()
+    assert editor.get_by_label('区域形状',exact=True).input_value()=='circle'
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    editor.locator('[data-target-view]').click()
+    editor.locator('#mosaicFrame').wait_for(state='visible')
+    assert editor.get_by_label('区域形状',exact=True).input_value()=='circle'
+    editor.locator('[data-candidate]').last.click()
+    assert editor.get_by_label('区域形状',exact=True).input_value()=='ellipse'
+
+
+@pytest.mark.parametrize('style', ['pixel', 'blur'])
+def test_manual_effect_follows_action_and_persists_to_render(editor, style):
+    open_auto(editor)
+    editor.locator('#mosaicAddClip').click()
+    choice=editor.get_by_label('打码效果', exact=True)
+    assert choice.is_hidden()
+    editor.locator('#mosaicManualAction').select_option('mosaic')
+    assert choice.is_visible() and choice.is_enabled()
+    assert choice.locator('option').all_text_contents()==['马赛克', '模糊']
+    assert choice.input_value()=='pixel'
+    action_box=editor.locator('#mosaicManualAction').bounding_box()
+    assert choice.bounding_box()['y']>=action_box['y']+action_box['height']
+    choice.select_option(style)
+    editor.locator('#mosaicManualAction').select_option('delete')
+    assert choice.is_hidden()
+    editor.locator('#mosaicManualAction').select_option('mosaic')
+    assert choice.input_value()==style
+    editor.locator('#mosaicAddRegion').click()
+    b=editor.locator('#mosaicOverlay').bounding_box()
+    editor.mouse.move(b['x']+20,b['y']+20);editor.mouse.down()
+    editor.mouse.move(b['x']+80,b['y']+60);editor.mouse.up()
+    editor.locator('#mosaicAddSubmit').click()
+    assert editor.locator('#mosaicLiveStyle').input_value()==style
+    editor.locator('#mosaicClose').click();open_auto(editor)
+    editor.locator('[data-target-view]').click()
+    assert editor.locator('#mosaicLiveStyle').input_value()==style
+    editor.evaluate("""() => {const old=api;window.api=async(url,body)=>{if(url.endsWith('/render')&&body){window.manualEffectBody=body;return {id:'b'.repeat(32),status:'completed',...body,result:{}};}return old(url,body);};}""")
+    editor.locator('#mosaicBatchStart').click()
+    assert editor.evaluate('manualEffectBody.targets[0].effect')=={'style':style,'strength':'medium','expansion':'none'}
+
+
 def test_manual_delete_and_mosaic_without_ai_persist(editor):
     open_auto(editor)
     editor.locator('#mosaicAddClip').click()
@@ -1467,14 +1561,14 @@ def test_compact_adjustment_hides_precision_tools(editor):
     open_auto(editor)
     editor.locator('#mosaicAddClip').click()
     editor.locator('#mosaicManualAction').select_option('mosaic')
-    assert editor.locator('#mosaicRegionTools #mosaicRecognize').is_visible()
+    assert editor.locator('#mosaicRegionTools #mosaicRecognize').is_hidden()
     assert editor.locator('.adjust-time #mosaicMarkStart').is_visible()
     assert editor.locator('.adjust-time #mosaicMarkEnd').is_visible()
     assert editor.locator('#mosaicDraw').is_hidden()
     assert editor.locator('#mosaicSaveTime').is_hidden()
     assert editor.locator('#mosaicSaveDelete').is_hidden()
     assert editor.locator('#mosaicAddRegion').is_visible()
-    assert editor.locator('#mosaicRecognize').is_visible()
+    assert editor.locator('#mosaicRecognize').is_hidden()
     assert editor.locator('#mosaicMarkStart').is_visible()
 
 
@@ -1513,7 +1607,7 @@ def test_clip_checkboxes_toggle_cancel_and_are_mutually_exclusive(editor):
     delete.press('Space')
     assert not delete.is_checked() and not mask.is_checked()
     assert workbench_draft(editor)['deletions']==[]
-    assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    assert '不处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
     delete.click();delete.click()
     assert not delete.is_checked() and not mask.is_checked()
     mask.click();mask.click()
@@ -1606,8 +1700,8 @@ const api=async(url,body)=>body?(writes++,report={id:'fresh',status:'completed',
   await scanVideo(false);
   assert.equal($('mosaicScanStatus').textContent,`可手动添加片段，或点「${$('mosaicScan').textContent}」。`);
   items=[{kind:'ignored'}];
-  assert.ok(processingSummary(0,0).endsWith('全部已处理'));
-  assert.ok(processingSummary(0,1).endsWith('待处理 1 段'));
+  assert.ok(processingSummary(0,0).endsWith('已选择处理'));
+  assert.ok(processingSummary(0,1).endsWith('不处理 1 段'));
 })().catch(e=>{console.error(e);process.exitCode=1});
 """
     subprocess.run(['node','-e',harness],check=True,capture_output=True,text=True)
@@ -1804,7 +1898,7 @@ def test_pointerup_adopts_mask_steps_move_resize_and_reopens_without_confirmatio
 
 
 @pytest.mark.parametrize('navigation',['previous','next','jump','slider','timeline'])
-def test_navigation_clears_selection_only_outside_half_open_clip_range(editor,navigation):
+def test_navigation_preserves_selection_outside_half_open_clip_range(editor,navigation):
     draw_unlocalized_segment(editor)
     editor.locator('[data-scan-event="e1"]').click()
     assert editor.locator('#mosaicStatus').inner_text()=='拖动框可调整位置，整段使用同一位置。'
@@ -1821,19 +1915,14 @@ def test_navigation_clears_selection_only_outside_half_open_clip_range(editor,na
     else:
         timeline=editor.locator('#mosaicTimeline').bounding_box()
         editor.mouse.click(timeline['x']+timeline['width']*.8,timeline['y']+timeline['height']-2)
-    assert editor.locator('[data-scan-event="e1"]').get_attribute('aria-pressed')=='false'
-    assert editor.locator('#mosaicOverlay').is_hidden()
-    assert editor.locator('#mosaicConfirm').is_hidden()
-    assert not editor.locator('#mosaicAdjust').evaluate('el=>el.open')
-    assert editor.locator('#mosaicStart').is_hidden()
-    assert editor.locator('#mosaicEnd').is_hidden()
-    assert editor.locator('#mosaicRegionTools').is_hidden()
-    assert editor.locator('#mosaicCandidates button').count()==0
-    assert editor.locator('#mosaicBoxX').input_value()==''
-    assert editor.locator('#mosaicStart').input_value()=='00:00:00'
-    assert editor.locator('#mosaicEnd').input_value()=='00:09:29'
+    assert editor.locator('[data-scan-event="e1"]').get_attribute('aria-pressed')=='true'
+    assert editor.locator('#mosaicStart').input_value()=='00:01:00'
+    assert editor.locator('#mosaicEnd').input_value()=='00:02:29'
+    assert editor.locator('#mosaicRegionTools').is_visible()
+    assert editor.locator('#mosaicReturnToClip').is_visible()
     assert active_count(editor)==1
-    assert editor.locator('#mosaicStatus').inner_text()=='点击片段查看画面，选择删除、打码或忽略。'
+    editor.locator('#mosaicReturnToClip').click()
+    assert editor.locator('#mosaicFrameNumber').input_value()=='00:01:00'
 
 
 def test_time_and_every_coordinate_change_persist_without_confirmation(editor):
@@ -1894,9 +1983,9 @@ def test_play_pause_restores_handles_in_range_and_clears_selection_after_end(edi
     assert editor.locator('.mosaic-box.selected .mosaic-handle:visible').count()==8
     editor.locator('#mosaicPlay').click()
     editor.wait_for_function("document.querySelector('#mosaicSource').ended")
-    assert editor.locator('[data-scan-event]').get_attribute('aria-pressed')=='false'
-    assert editor.locator('#mosaicOverlay').is_hidden()
-    assert editor.locator('#mosaicStatus').inner_text()=='点击片段查看画面，选择删除、打码或忽略。'
+    assert editor.locator('[data-scan-event]').get_attribute('aria-pressed')=='true'
+    assert editor.locator('#mosaicReturnToClip').is_visible()
+    assert '不在所选片段内' in editor.locator('#mosaicRegionHint').inner_text()
 
 
 def test_adjusting_cancelled_mask_adopts_it_again_but_time_edit_does_not(editor):
@@ -2047,7 +2136,8 @@ def test_time_formats_commit_immediately_for_both_segment_types(editor, kind, co
     scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
     if kind=='manual':
         editor.locator('#mosaicAddClip').click()
-        editor.locator('#mosaicStart').fill('1:00');editor.locator('#mosaicEnd').fill('1:10')
+        editor.locator('#mosaicEnd').fill('1:10');editor.locator('#mosaicEnd').press('Enter')
+        editor.locator('#mosaicStart').fill('1:00');editor.locator('#mosaicStart').press('Enter')
         editor.locator('#mosaicAddSubmit').click()
         segment=workbench_draft(editor)['manualClips'][0]['id']
         editor.locator(f'[data-scan-event="{segment}"]').click()
@@ -2073,25 +2163,42 @@ def test_time_formats_commit_immediately_for_both_segment_types(editor, kind, co
     start.fill('0:99');start.press('Enter')
     assert '请输入' in editor.locator('#mosaicStatus').inner_text()
     assert start.input_value()=='00:09:00'
+    editor.evaluate('Math.random=()=>0')
     end.fill('0:8');end.press('Enter')
-    assert '开始帧不能晚于结束帧' in editor.locator('#mosaicStatus').inner_text()
-    assert end.input_value()=='01:05:00'
-    assert workbench_draft(editor)['clipEdits'][segment]=={'start':270,'end':1951}
+    assert '开始帧不能晚于结束帧' not in editor.locator('#mosaicStatus').inner_text()
+    assert end.input_value()=='00:12:00'
+    assert workbench_draft(editor)['clipEdits'][segment]=={'start':270,'end':361}
 
 
-def test_manual_range_error_clears_after_valid_time_correction(editor):
+@pytest.mark.parametrize('random_value,expected_end', [(0,'00:57:06'),(.5,'00:58:06'),(.99,'00:59:06')])
+def test_manual_range_extends_end_after_start_without_error(editor, random_value, expected_end):
     editor.evaluate('session.metadata.frame_count=3600')
     open_auto(editor)
     editor.locator('#mosaicAddClip').click()
     end = editor.locator('#mosaicEnd')
     start = editor.locator('#mosaicStart')
     end.fill('00:53:06'); end.press('Enter')
+    editor.evaluate('(value)=>Math.random=()=>value', random_value)
     start.fill('00:54:06'); start.press('Enter')
-    assert '开始帧不能晚于结束帧' in editor.locator('#mosaicStatus').inner_text()
+    assert end.input_value() == expected_end
+    assert '开始帧不能晚于结束帧' not in editor.locator('#mosaicStatus').inner_text()
     start.fill('00:33:06'); start.press('Enter')
     assert start.input_value() == '00:33:06'
-    assert end.input_value() == '00:53:06'
+    assert end.input_value() == expected_end
     assert '开始帧不能晚于结束帧' not in editor.locator('#mosaicStatus').inner_text()
+
+
+@pytest.mark.parametrize('frame,expected', [(270,'00:09:29'),(299,'00:09:29')])
+def test_mark_start_extends_end_clamped_to_last_frame(editor, frame, expected):
+    open_auto(editor);editor.locator('#mosaicAddClip').click()
+    jump=editor.locator('#mosaicFrameNumber')
+    jump.fill('00:09:00' if frame==270 else '00:09:29');jump.press('Enter')
+    editor.locator('#mosaicMarkStart').click()
+    assert editor.locator('#mosaicEnd').input_value()==expected
+    assert '开始帧不能晚于结束帧' not in editor.locator('#mosaicStatus').inner_text()
+    editor.locator('#mosaicAddSubmit').click()
+    clip=workbench_draft(editor)['manualClips'][0]
+    assert clip['start']==frame and clip['end']==300
 
 
 def timeline_point(page, frame):
@@ -2187,47 +2294,31 @@ def test_header_summary_is_visible_and_updates_without_wrapping_buttons(editor, 
               r.right<=h.right && r.width>=b.scrollWidth && Math.abs((r.top+r.bottom-discard.top-discard.bottom)/2)<2;});
         }''')
 
-    check('删除 0 段 · 打码 0 段 · 待处理 2 段', True)
+    check('删除 0 段 · 打码 0 段 · 不处理 2 段', False)
     pending_color=summary.evaluate('el=>getComputedStyle(el).color')
     card=editor.locator('[data-mosaic-card="e1"]')
     card.get_by_role('checkbox',name='删除',exact=True).click()
-    check('删除 1 段 · 打码 0 段 · 待处理 1 段', True)
+    check('删除 1 段 · 打码 0 段 · 不处理 1 段', False)
     card.get_by_role('checkbox',name='打码',exact=True).click()
-    check('删除 0 段 · 打码 1 段 · 待处理 1 段', True)
-    editor.locator('[data-event-ignore="e2"]').click()
-    check('删除 0 段 · 打码 1 段 · 全部已处理', False)
-    assert summary.evaluate('el=>getComputedStyle(el).color')!=pending_color
-    editor.locator('[data-event-ignore="e2"]').click()
-    check('删除 0 段 · 打码 1 段 · 待处理 1 段', True)
+    check('删除 0 段 · 打码 1 段 · 不处理 1 段', False)
+    editor.locator('[data-event-delete="e2"]').click()
+    check('删除 1 段 · 打码 1 段 · 已选择处理', False)
+    editor.locator('[data-event-delete="e2"]').click()
+    check('删除 0 段 · 打码 1 段 · 不处理 1 段', False)
 
 
-def test_three_choices_ignore_excludes_masks_deletions_and_persists_in_time_order(editor):
+def test_unselected_ai_clips_persist_without_processing(editor):
     scan_result(editor)
-    editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:210,end:270,seed_frame:240})")
     open_auto(editor);editor.locator('#mosaicScan').click()
     card=editor.locator('[data-mosaic-card="e1"]')
-    assert '待处理 2 段' in editor.locator('#mosaicBatchHint').inner_text()
-    for choice in ['打码','删除','忽略']:
-        card.get_by_role('checkbox',name=choice,exact=True).click()
-        assert card.locator('[aria-checked="true"]').count()==1
-        assert card.get_by_role('checkbox',name=choice,exact=True).is_checked()
-    draft=workbench_draft(editor)
-    assert draft['ignoredEvents']==['e1'] and draft['deletions']==[]
-    assert all(t['adopted'] is False for t in draft['targets'])
-    assert 'ignored' in card.get_attribute('class')
-    assert 'ignored' in editor.locator('[data-timeline-event="e1"]').get_attribute('class')
-    assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    for choice in ['打码','删除']:
+        button=card.get_by_role('checkbox',name=choice,exact=True)
+        button.click();assert button.is_checked()
+        button.click();assert card.locator('[aria-checked="true"]').count()==0
     editor.reload();install_editor(editor);scan_result(editor);open_auto(editor)
-    assert card.get_by_role('checkbox',name='忽略',exact=True).is_checked()
-    assert editor.locator('[data-mosaic-card]').evaluate_all('els=>els.map(e=>e.dataset.mosaicCard)')==['e1','e2']
-    editor.locator('[data-event-ignore="e2"]').click()
-    assert '全部已处理' in editor.locator('#mosaicBatchHint').inner_text()
-    card.get_by_role('checkbox',name='忽略',exact=True).click()
     assert card.locator('[aria-checked="true"]').count()==0
-    assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
-    card.get_by_role('checkbox',name='打码',exact=True).click()
-    assert workbench_draft(editor)['ignoredEvents']==['e2']
-    assert active_count(editor)==1
+    assert workbench_draft(editor)['deletions']==[]
+    assert active_count(editor)==0
 
 
 def test_mask_choice_without_box_is_pending_and_can_be_toggled_off(editor):
@@ -2238,7 +2329,7 @@ def test_mask_choice_without_box_is_pending_and_can_be_toggled_off(editor):
         card.get_by_role('checkbox',name='打码',exact=True).click()
         assert card.get_by_role('checkbox',name='打码',exact=True).is_checked()==enabled
         assert ('需框选' in card.inner_text())==enabled
-        assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+        assert '不处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
         assert '打码 0 段' in editor.locator('#mosaicBatchHint').inner_text()
 
 
@@ -2293,24 +2384,82 @@ def test_short_timeline_suggestion_hides_entire_label_but_keeps_accessible_infor
     assert '疑似敏感画面' in block.get_attribute('aria-label')
 
 
-def test_manual_ignore_and_drafts_without_optional_decision_fields(editor):
+def test_legacy_manual_ignore_restores_as_unselected(editor):
     open_auto(editor);editor.locator('#mosaicAddClip').click()
     editor.locator('#mosaicStart').fill('00:03:00');editor.locator('#mosaicEnd').fill('00:04:29')
     editor.locator('#mosaicAddSubmit').click()
     clip=workbench_draft(editor)['manualClips'][0]['id']
     editor.locator(f'[data-event-delete="{clip}"]').click()
-    editor.locator(f'[data-event-ignore="{clip}"]').click()
-    editor.reload();install_editor(editor);scan_result(editor);open_auto(editor)
-    assert editor.locator(f'[data-event-ignore="{clip}"]').is_checked()
-    assert workbench_draft(editor)['deletions']==[] and workbench_draft(editor)['targets']==[]
     editor.locator('#mosaicClose').click()
-    editor.evaluate('''() => {
+    editor.evaluate('''clip => {
       const key=Object.keys(localStorage).find(k=>k.includes('workbench.v3')),draft=JSON.parse(localStorage.getItem(key));
-      delete draft.ignoredEvents;delete draft.drawingEvents;localStorage.setItem(key,JSON.stringify(draft));
-    }''')
+      draft.ignoredEvents=[clip];localStorage.setItem(key,JSON.stringify(draft));
+    }''',clip)
     open_auto(editor)
-    assert not editor.locator(f'[data-event-ignore="{clip}"]').is_checked()
-    assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+    card=editor.locator(f'[data-mosaic-card="{clip}"]')
+    assert card.locator('[aria-checked="true"]').count()==0
+    assert card.locator('[data-event-ignore]').count()==0
+    card.get_by_role('checkbox',name='删除',exact=True).click()
+    assert len(workbench_draft(editor)['deletions'])==1
+    assert workbench_draft(editor)['ignoredEvents']==[]
+
+
+def test_only_delete_and_mosaic_choices_and_no_pending_confirmation(editor):
+    scan_result(editor)
+    editor.evaluate("scanJob.events.push({...scanJob.events[0],id:'e2',start:210,end:270,seed_frame:240})")
+    open_auto(editor); editor.locator('#mosaicScan').click()
+    assert editor.locator('[data-event-ignore]').count() == 0
+    card = editor.locator('[data-mosaic-card="e1"]')
+    delete = card.get_by_role('checkbox', name='删除', exact=True)
+    mosaic = card.get_by_role('checkbox', name='打码', exact=True)
+    assert delete.evaluate("el=>getComputedStyle(el,'::before').display") != 'none'
+    delete.click(); assert delete.is_checked() and not mosaic.is_checked()
+    mosaic.click(); assert mosaic.is_checked() and not delete.is_checked()
+    mosaic.click(); assert not mosaic.is_checked() and not delete.is_checked()
+    delete.click()
+    dialogs=[]
+    editor.on('dialog', lambda d: (dialogs.append(d.message), d.dismiss()))
+    editor.locator('#mosaicBatchStart').click()
+    assert dialogs == []
+
+
+def test_browsing_outside_clip_keeps_selection_and_add_returns_to_clip(editor):
+    from playwright.sync_api import expect
+    scan_result(editor);open_auto(editor);editor.locator('#mosaicScan').click()
+    editor.locator('[data-proposal="e1:0"]').click()
+    editor.locator('#mosaicFrameNumber').fill('00:08:00')
+    editor.locator('#mosaicFrameNumber').press('Enter')
+    expect(editor.locator('[data-scan-event="e1"]')).to_have_attribute('aria-pressed','true')
+    expect(editor.locator('#mosaicRegionHint')).to_contain_text('不在所选片段内')
+    expect(editor.locator('#mosaicReturnToClip')).to_be_visible()
+    editor.locator('#mosaicAddRegion').click()
+    expect(editor.locator('#mosaicFrameNumber')).to_have_value('00:01:00')
+    expect(editor.locator('#mosaicFrame')).to_be_visible()
+    expect(editor.locator('#mosaicStatus')).to_contain_text('拖出')
+    assert workbench_draft(editor)['targets'][0]['start']==30
+    before=active_count(editor)
+    box=editor.locator('#mosaicOverlay').bounding_box()
+    editor.mouse.move(box['x']+20,box['y']+20);editor.mouse.down()
+    editor.mouse.move(box['x']+90,box['y']+65);editor.mouse.up()
+    assert active_count(editor)==before+1
+
+
+def test_new_manual_clip_can_add_region_after_browsing_outside(editor):
+    from playwright.sync_api import expect
+    open_auto(editor);editor.locator('#mosaicAddClip').click()
+    editor.locator('#mosaicManualAction').select_option('mosaic')
+    editor.locator('#mosaicFrameNumber').fill('00:08:00')
+    editor.locator('#mosaicFrameNumber').press('Enter')
+    expect(editor.locator('#mosaicReturnToClip')).to_be_visible()
+    editor.locator('#mosaicAddRegion').click()
+    expect(editor.locator('#mosaicFrameNumber')).to_have_value('00:00:00')
+    expect(editor.locator('#mosaicFrame')).to_be_visible()
+    box=editor.locator('#mosaicOverlay').bounding_box()
+    editor.mouse.move(box['x']+20,box['y']+20);editor.mouse.down()
+    editor.mouse.move(box['x']+90,box['y']+65);editor.mouse.up()
+    expect(editor.locator('#mosaicAddSubmit')).to_be_enabled()
+    editor.locator('#mosaicAddSubmit').click()
+    assert active_count(editor)==1
 
 
 def hold_main_video(page):

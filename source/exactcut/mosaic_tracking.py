@@ -37,6 +37,11 @@ def validate_target(meta,target):
     if motion not in ('fixed','tracked'):raise cutting.CutError('打码位置模式无效')
     t={k:target[k] for k in keys}
     if motion=='fixed':t['motion']='fixed'
+    shape=target.get('shape','rectangle')
+    if shape not in ('rectangle','circle','ellipse'):raise cutting.CutError('打码区域形状无效')
+    if shape!='rectangle' and motion!='fixed':raise cutting.CutError('非矩形区域仅支持固定位置')
+    if shape=='circle' and t['w']!=t['h']:raise cutting.CutError('圆形区域的宽高必须相同')
+    if 'shape' in target:t['shape']=shape
     if not 0<=t['start']<=t['seed_frame']<t['end']<=meta['frame_count']:
         raise cutting.CutError('跟踪参考帧必须在所选片段内')
     if not (0<=t['x']<t['x']+t['w']<=meta['width'] and 0<=t['y']<t['y']+t['h']<=meta['height']):

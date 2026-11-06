@@ -4,7 +4,7 @@ import re
 import subprocess
 import threading
 from pathlib import Path
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 from . import cutting, mosaic_session as sessions, mosaic_locate, mosaic_tracking as tracking
 from . import cutting_access, workflow, storage, diagnostics
 from .media import bounded_ffmpeg
@@ -36,7 +36,8 @@ def union_mask(frame,tracks,size):
         if target.get('motion')=='fixed':
             sx=size[0]/track['result']['width'];sy=size[1]/track['result']['height']
             box=(math.floor(target['x']*sx),math.floor(target['y']*sy),math.ceil((target['x']+target['w'])*sx),math.ceil((target['y']+target['h'])*sy))
-            mask.paste(255,box)
+            if target.get('shape','rectangle')=='rectangle':mask.paste(255,box)
+            else:ImageDraw.Draw(mask).ellipse((box[0],box[1],box[2]-1,box[3]-1),fill=255)
             continue
         index=frame-target['start'];record=track['result']['frames'][index]
         if record['box'] is None:continue

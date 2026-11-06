@@ -2,7 +2,7 @@
 (() => {
   const dialog=$('mosaicDialog'), video=$('mosaicSource'), image=$('mosaicFrame'), overlay=$('mosaicOverlay');
   let context=null, epoch=0, token=0, wanted=0, ready=-1, candidates=[], selected=null, targets=[], editing=null;
-  let motion='fixed',regionDrafts=[],scanReadPending=false,scanSubmitting=false,legacyDraft=false;
+  let motion='fixed',regionShape='rectangle',regionDrafts=[],scanReadPending=false,scanSubmitting=false,legacyDraft=false;
   const legacyDraftHint='旧草稿已按当前规则改为固定位置、标准强度、不扩大范围；请播放检查后再生成。';
   const trackingUnavailableHint='跟随目标当前不可用；请启用目标跟踪，或在编辑中明确改为固定位置使其生效。';
   let loading=false, frameLoading=false, drawing=false, pointer=null, frameUrl=null, controller=null, timer;
@@ -20,7 +20,7 @@
   let effect={...defaultEffect},savedEffect={...defaultEffect},clipEffects={},savedClipEffects={};
   let removedClip=null,removeTimer;
   function clearRemovedClip(){removedClip=null;clearTimeout(removeTimer);$('mosaicRemoved').hidden=true;}
-  let manualClips=[],savedManualClips=[],addingClip=false,manualAction='delete';
+  let manualClips=[],savedManualClips=[],addingClip=false,manualAction='delete',manualStyle='pixel';
   let aiEvents=[],clipEdits={},savedAiEvents=[],savedClipEdits={};
   let ignoredEvents=[],savedIgnoredEvents=[],drawingEvents=[],savedDrawingEvents=[];
   const allEvents=()=>[...(aiEvents.length?aiEvents:scanReport?.status==='running'?(scanReport.events||[]):[]),...manualClips].sort((a,b)=>eventRange(a).start-eventRange(b).start);
@@ -37,7 +37,8 @@
   const draftKey=()=>key().replace('targets.v1.','workbench.v3.');
   const activeCount=()=>targets.filter(t=>t.adopted!==false).length;
   const belongs=(t,e)=>t.eventId||e.id.startsWith('manual-')?t.eventId===e.id:(t.originStart??t.start)===e.start&&(t.originEnd??t.end)===e.end;
-  const validTarget=t=>validBox(t)&&(t.motion===undefined||['fixed','tracked'].includes(t.motion))&&[t.start,t.end,t.seed_frame].every(Number.isInteger)&&t.start>=0&&t.start<=t.seed_frame&&t.seed_frame<t.end&&t.end<=meta().frame_count&&typeof t.label==='string'&&typeof t.reason==='string'&&(t.adopted===undefined||typeof t.adopted==='boolean');
+  const validShape=c=>c&&['rectangle','circle','ellipse'].includes(c.shape??'rectangle')&&(c.shape!=='circle'||c.w===c.h);
+  const validTarget=t=>validBox(t)&&validShape(t)&&(t.motion===undefined||['fixed','tracked'].includes(t.motion))&&[t.start,t.end,t.seed_frame].every(Number.isInteger)&&t.start>=0&&t.start<=t.seed_frame&&t.seed_frame<t.end&&t.end<=meta().frame_count&&typeof t.label==='string'&&typeof t.reason==='string'&&(t.adopted===undefined||typeof t.adopted==='boolean');
   function loadDraft(serverDraft=null){
     savedRaw=localStorage.getItem(draftKey());legacyRaw=localStorage.getItem(key());oldDraftRaw=localStorage.getItem(oldDraftKey());
     const draft=serverDraft??(savedRaw===null?null:JSON.parse(savedRaw));
@@ -65,6 +66,7 @@
     targets=data.map(t=>({...t,motion:'fixed',uid:t.uid||regionId(),adopted:t.adopted!==false}));
     for(const t of targets.filter(t=>ignoredEvents.includes('target:'+t.uid))){t.adopted=false;deletions=deletions.filter(d=>d.eventId!=='target:'+t.uid);}
     for(const e of allEvents().filter(e=>ignoredEvents.includes(e.id))){deletions=deletions.filter(t=>!belongs(t,e));targets.filter(t=>belongs(t,e)).forEach(t=>t.adopted=false);}
+    ignoredEvents=[];savedIgnoredEvents=[]; // Legacy ignored clips remain unselected.
     savedDeletions=structuredClone(deletions);savedTargets=structuredClone(targets);
   }
   function pausePlayback(){sourceBinding?.pause();playAttempt++;video.pause();$('mosaicPlay').textContent='播放';}
@@ -108,7 +110,7 @@
     }catch(e){ignoredEvents=[...savedIgnoredEvents];drawingEvents=[...savedDrawingEvents];aiEvents=structuredClone(savedAiEvents);clipEdits=structuredClone(savedClipEdits);manualClips=structuredClone(savedManualClips);clipEffects=structuredClone(savedClipEffects);effect={...savedEffect};targets=structuredClone(savedTargets);deletions=structuredClone(savedDeletions);editing=null;paint();status(e.message||'无法保存草稿，请保持窗口打开。',true);return false;}
   }
   function validBox(c){return c&&[c.x,c.y,c.w,c.h].every(Number.isInteger)&&c.x>=0&&c.y>=0&&c.w>0&&c.h>0&&c.x+c.w<=meta().width&&c.y+c.h<=meta().height;}
-  function selectRegion(id){selected=id;const c=selectedBox();editing=c?.uid?targets.findIndex(t=>t.uid===c.uid):null;if(editing===-1)editing=null;motion='fixed';}
+  function selectRegion(id){selected=id;const c=selectedBox();editing=c?.uid?targets.findIndex(t=>t.uid===c.uid):null;if(editing===-1)editing=null;motion='fixed';if(c)regionShape=c.shape??'rectangle';}
   function selectedBox(){return candidates.find(c=>c.id===selected);}
   let choosingMosaic=false;
   function resetCandidate(){
@@ -126,19 +128,25 @@
     $('mosaicRecognize').disabled=loading||scanLoading||frameLoading||!accurate||!inRange()||!context.session.capabilities?.region_recognition;
     $('mosaicRecognize').textContent=loading?'识别中…':'识别当前帧';
     $('mosaicDraw').disabled=!accurate||loading||!inRange();$('mosaicDraw').textContent=drawing?'在画面拖出矩形':'手动框选';
-    $('mosaicAddRegion').disabled=!accurate||loading||!inRange()||activeCount()+(addingClip?candidates.length:0)>=8;
+    const outside=!inRange(),regionLimit=activeCount()+(addingClip?candidates.length:0)>=8;
+    $('mosaicAddRegion').disabled=loading||regionLimit||(!outside&&!accurate);
+    $('mosaicRegionHint').textContent=regionLimit?'最多添加 8 个打码区域，请先取消一个。':loading?'正在处理，请稍候。':outside?'当前画面不在所选片段内，点击添加将返回片段开始。':!video.paused?'请先暂停播放，再添加打码区域。':!accurate?'正在读取画面；读取失败时请点击重试画面。':'';
+    $('mosaicReturnToClip').hidden=!outside;
     $('mosaicRemoveRegion').hidden=!c;
     $('mosaicRemoveRegion').disabled=loading||!accurate;
     $('mosaicConfirm').disabled=loading||(!scanEvent&&(!accurate||!validBox(c)||!inRange()));
     $('mosaicConfirm').textContent='采用区域';
     $('mosaicTrack').hidden=motion==='fixed'||!context.session.capabilities?.tracking||editing===null||targets[editing]?.adopted===false;
     $('mosaicBoxFields').hidden=!c;
+    $('mosaicRegionShape').value=c?.shape??regionShape;
     $('mosaicReview').hidden=false;
     $('mosaicConfirmNext').disabled=$('mosaicConfirm').disabled||!scanEvent;
     const eventIndex=allEvents().findIndex(e=>e.id===scanEvent);
     $('mosaicSaveDelete').hidden=addingClip||eventIndex<0;
     $('mosaicSaveTime').hidden=addingClip||eventIndex<0;
     $('mosaicManualOptions').hidden=!addingClip;
+    $('mosaicManualEffectRow').hidden=!addingClip||manualAction!=='mosaic';
+    $('mosaicManualStyle').value=manualStyle;
     $('mosaicAddSubmit').hidden=!addingClip;$('mosaicConfirm').hidden=addingClip||!!scanEvent||editing!==null||!candidates.length;
     $('mosaicAddSubmit').disabled=editLocked()||(manualAction==='mosaic'&&$('mosaicConfirm').disabled);
     $('mosaicManualAction').value=manualAction;$('mosaicMotion').value=motion;
@@ -248,7 +256,7 @@
     $('mosaicScanStatus').textContent=EditorBusy.message(message);$('mosaicScanStatus').title=EditorBusy.message(message);$('mosaicScanStatus').classList.toggle('error',!!scanError||scanReport?.status==='failed');
     const targetRow=(t,i)=>{
       const id='target:'+t.uid,ignored=ignoredEvents.includes(id),removed=deletions.some(d=>d.eventId===id);
-      return `<div class="mosaic-event-card ${ignored?'ignored':''}"><button data-target-view="${i}"><strong>${clock(t.start)}–${clock(t.end-1)} · ${esc(t.label)}</strong></button><div class="mosaic-card-actions"><div class="mosaic-card-checks" role="group" aria-label="片段处理方式"><button data-event-delete="${esc(id)}" role="checkbox" aria-label="删除" aria-checked="${removed}" aria-pressed="${removed}">删除</button><button data-target-remove="${i}" aria-label="打码" role="checkbox" aria-checked="${t.adopted!==false}" aria-pressed="${t.adopted!==false}" ${t.adopted===false&&activeCount()>=8?'disabled':''}>打码</button><button data-event-ignore="${esc(id)}" role="checkbox" aria-label="忽略" aria-checked="${ignored}" aria-pressed="${ignored}">忽略</button></div></div></div>`;
+      return `<div class="mosaic-event-card ${ignored?'ignored':''}"><button data-target-view="${i}"><strong>${clock(t.start)}–${clock(t.end-1)} · ${esc(t.label)}</strong></button><div class="mosaic-card-actions"><div class="mosaic-card-checks" role="group" aria-label="片段处理方式"><button data-event-delete="${esc(id)}" role="checkbox" aria-label="删除" aria-checked="${removed}" aria-pressed="${removed}">删除</button><button data-target-remove="${i}" aria-label="打码" role="checkbox" aria-checked="${t.adopted!==false}" aria-pressed="${t.adopted!==false}" ${t.adopted===false&&activeCount()>=8?'disabled':''}>打码</button></div></div></div>`;
     };
     const grouped=new Set();
     const html=events.map(e=>{
@@ -263,7 +271,7 @@
         :records.length?`<button data-target-remove="${records[0].i}" aria-label="打码" role="checkbox" aria-checked="${adopted>0}" aria-pressed="${adopted>0}" ${!adopted&&activeCount()>=8?'disabled':''}>打码</button>`
         :suggestions.length?`<button data-proposal="${esc(e.id)}:${suggestions[0].i}" aria-label="打码" role="checkbox" aria-checked="false" aria-pressed="false" ${activeCount()>=8?'disabled':''}>打码</button>`
         :`<button data-event-draw="${esc(e.id)}" aria-label="打码" role="checkbox" aria-checked="${needsBox}" aria-pressed="${needsBox}" title="先框选需要遮挡的区域">打码</button>`;
-      return `<div class="mosaic-event-card ${ignored?'ignored':''} ${scanEvent===e.id?'selected':''}" data-mosaic-card="${esc(e.id)}" ${e.id.startsWith('manual-')?'data-manual-card':''}>${e.id.startsWith('manual-')?`<button data-remove-clip="${esc(e.id)}" class="mosaic-remove-clip" aria-label="移除手动片段" title="移除片段">×</button>`:''}<button data-scan-event="${esc(e.id)}" ${records.length?`data-target-view="${records[0].i}"`:''} aria-pressed="${scanEvent===e.id}"><strong>${clock(displayRange.start)}–${clock(displayRange.end-1)}</strong><small>${esc(e.label)}${removed?' · 删除':ignored?' · 忽略':adopted?' · 打码':needsBox?' · 打码需框选':' · 未处理'}</small><small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-actions"><div class="mosaic-card-checks" role="group" aria-label="片段处理方式"><button data-event-delete="${esc(e.id)}" aria-label="删除" role="checkbox" aria-checked="${removed}" aria-pressed="${removed}">删除</button>${toggle}<button data-event-ignore="${esc(e.id)}" aria-label="忽略" role="checkbox" aria-checked="${ignored}" aria-pressed="${ignored}">忽略</button></div>${!e.id.startsWith('manual-')?`<details class="mosaic-clip-menu"><summary aria-label="更多片段操作">⋯</summary><button data-restore-clip="${esc(e.id)}">恢复识别结果</button></details>`:''}</div></div>`;
+      return `<div class="mosaic-event-card ${ignored?'ignored':''} ${scanEvent===e.id?'selected':''}" data-mosaic-card="${esc(e.id)}" ${e.id.startsWith('manual-')?'data-manual-card':''}>${e.id.startsWith('manual-')?`<button data-remove-clip="${esc(e.id)}" class="mosaic-remove-clip" aria-label="移除手动片段" title="移除片段">×</button>`:''}<button data-scan-event="${esc(e.id)}" ${records.length?`data-target-view="${records[0].i}"`:''} aria-pressed="${scanEvent===e.id}"><strong>${clock(displayRange.start)}–${clock(displayRange.end-1)}</strong><small>${esc(e.label)}${removed?' · 删除':ignored?' · 不处理':adopted?' · 打码':needsBox?' · 打码需框选':' · 未处理'}</small><small title="${esc(e.reason)}">${esc(e.reason)}</small></button><div class="mosaic-card-actions"><div class="mosaic-card-checks" role="group" aria-label="片段处理方式"><button data-event-delete="${esc(e.id)}" aria-label="删除" role="checkbox" aria-checked="${removed}" aria-pressed="${removed}">删除</button>${toggle}</div>${!e.id.startsWith('manual-')?`<details class="mosaic-clip-menu"><summary aria-label="更多片段操作">⋯</summary><button data-restore-clip="${esc(e.id)}">恢复识别结果</button></details>`:''}</div></div>`;
 
     }).join('')+targets.map((t,i)=>t.removed||grouped.has(i)||(scanReport?.status==='completed'&&t.adopted===false&&Number.isInteger(t.originStart)&&!t.eventId)?'':targetRow(t,i,true)).join('');
     if($('mosaicScanEvents').innerHTML!==html)$('mosaicScanEvents').innerHTML=html;
@@ -315,7 +323,7 @@
       while(valid()){
         if(typeof state.enabled!=='boolean')throw Error('整段识别响应无效，请重试读取。');
         context.session.capabilities.region_recognition=state.enabled;
-        const firstReport=!scanReport;scanReport=checkedReport(state.report);if(scanReport?.status==='completed'&&!pendingJob()&&!awaitingDecision()&&!batchLoading)mergeDiscovery(scanReport.events);paint();if(firstReport&&scanReport)status('点击片段查看画面，选择删除、打码或忽略。');
+        const firstReport=!scanReport;scanReport=checkedReport(state.report);if(scanReport?.status==='completed'&&!pendingJob()&&!awaitingDecision()&&!batchLoading)mergeDiscovery(scanReport.events);paint();if(firstReport&&scanReport)status('点击片段查看画面，勾选删除或打码；不勾选则保持原画面。');
         if(!pendingJob(scanReport))break;
         await new Promise(r=>setTimeout(r,1000));if(!valid())return;
         state=await api(endpoint+'/scan');
@@ -362,7 +370,7 @@
     if(overlay.hidden)return;
     const g=geometry();Object.assign(overlay.style,{left:g.left+'px',top:g.top+'px',width:g.width+'px',height:g.height+'px'});
     overlay.classList.toggle('drawing',drawing);
-    overlay.innerHTML=candidates.map(c=>`<button class="mosaic-box ${targets.some(t=>t.uid===c.uid&&t.adopted!==false&&!t.removed)?'':'suggestion'} ${c.id===selected?'selected':''}" data-box="${esc(c.id)}" aria-label="选择 ${esc(c.label)}" style="left:${c.x/meta().width*100}%;top:${c.y/meta().height*100}%;width:${c.w/meta().width*100}%;height:${c.h/meta().height*100}%"><span>${esc(c.label)}</span>${c.id===selected&&!editLocked()?['n','s','e','w','ne','nw','se','sw'].map(edge=>`<i data-resize="${edge}" class="mosaic-handle ${edge}"></i>`).join(''):''}</button>`).join('');
+    overlay.innerHTML=candidates.map(c=>`<button class="mosaic-box ${targets.some(t=>t.uid===c.uid&&t.adopted!==false&&!t.removed)?'':'suggestion'} ${c.id===selected?'selected':''}" data-box="${esc(c.id)}" aria-label="选择 ${esc(c.label)}" style="left:${c.x/meta().width*100}%;top:${c.y/meta().height*100}%;width:${c.w/meta().width*100}%;height:${c.h/meta().height*100}%;border-radius:${['circle','ellipse'].includes(c.shape)?'50%':'0'}"><span>${esc(c.label)}</span>${c.id===selected&&!editLocked()?['n','s','e','w','ne','nw','se','sw'].map(edge=>`<i data-resize="${edge}" class="mosaic-handle ${edge}"></i>`).join(''):''}</button>`).join('');
   }
   async function loadFrame(){
     if(document.hidden||!context||!dialog.open||!video.paused||resultMode)return;
@@ -384,9 +392,9 @@
   // Navigation retains only an existing clip/region selection, never an in-flight recognition.
   function retainSelection(){
     const hadSelection=!!scanEvent||editing!==null;
-    if(!hadSelection||!inRange()){
+    if(!hadSelection&&!addingClip){
       resetCandidate();
-      if(hadSelection)status('点击片段查看画面，选择删除、打码或忽略。');
+      if(hadSelection)status('点击片段查看画面，勾选删除或打码；不勾选则保持原画面。');
     }
   }
   // Trim work keeps its gesture token; explicit navigation invalidates it.
@@ -516,12 +524,13 @@
   $('mosaicConfirmNext').onclick=()=>{if($('mosaicConfirmNext').disabled)return;if($('mosaicConfirm').onclick())nextEvent(1);};
   $('mosaicAddClip').onclick=()=>{
     if(editLocked())return;
-    resetCandidate();addingClip=true;manualAction='delete';motion='fixed';
+    resetCandidate();addingClip=true;manualAction='delete';manualStyle='pixel';regionShape='rectangle';motion='fixed';
     $('mosaicStart').value=clock(wanted);$('mosaicEnd').value=clock(Math.min(meta().frame_count-1,wanted+Math.round(rate()*5)-1));
     $('mosaicAdjust').open=true;paint();status('设置时间，选择删除或打码后添加。');
   };
   $('mosaicMotion').onchange=()=>{$('mosaicMotion').value=motion='fixed';};
   $('mosaicManualAction').onchange=e=>{manualAction=e.target.value;paint();};
+  $('mosaicManualStyle').onchange=e=>{if(editLocked())return;manualStyle=e.target.value;paint();};
   $('mosaicAddSubmit').onclick=guard(()=>{
     if(editLocked())return;
     const r=range();
@@ -536,7 +545,8 @@
       deletions.push({...r,eventId:event.id,originStart:r.start,originEnd:r.end,label:event.label});
       if(save()){addingClip=false;$('mosaicAdjust').open=false;paint();status('已添加删除片段。');}
     }else{
-      for(const c of candidates.filter(validBox))targets.push({uid:regionId(),eventId:event.id,originStart:r.start,originEnd:r.end,proposal:c.id,adopted:true,motion:'fixed',label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,...r,seed_frame:Math.max(r.start,Math.min(r.end-1,c.seed_frame??wanted))});
+      for(const c of candidates.filter(validBox))targets.push({uid:regionId(),eventId:event.id,originStart:r.start,originEnd:r.end,proposal:c.id,adopted:true,motion:'fixed',label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,shape:c.shape??'rectangle',...r,seed_frame:Math.max(r.start,Math.min(r.end-1,c.seed_frame??wanted))});
+      clipEffects[event.id]={...defaultEffect,style:manualStyle};
       setEventRange(event,r);
       if(save()){addingClip=false;$('mosaicAdjust').open=false;viewScanEvent(event.id);paint();status('已添加打码片段。');}
     }
@@ -554,12 +564,14 @@
   $('mosaicFrameNumber').oninput=()=>{timeJumpEditing=true;seekSequence++;clearTimeout(timer);};
   $('mosaicFrameNumber').onchange=timeGuard(e=>{timeJumpEditing=false;seek(parse(e.target.value));});
   for(const id of ['mosaicStart','mosaicEnd'])$(id).onchange=timeGuard(()=>{
+    const start=parse($('mosaicStart').value),end=parse($('mosaicEnd').value);
+    if(start>end)$('mosaicEnd').value=clock(Math.min(meta().frame_count-1,start+Math.round(rate()*(3+Math.floor(Math.random()*3)))));
     const r=range(),event=allEvents().find(e=>e.id===scanEvent);
     // Native blur can repeat an already committed change; preserve the pending click.
     const previous=event?eventRange(event):null;
     if(!addingClip&&previous&&previous.start===r.start&&previous.end===r.end)return;
     if(!inRange()){
-      seek(Math.max(r.start,Math.min(r.end-1,wanted)),true);
+      seek(r.start,true);
     }
     paint();
     if(!addingClip)persistAdjustment(false,true);
@@ -590,7 +602,21 @@
   $('mosaicMarkStart').onclick=()=>{$('mosaicStart').value=clock(wanted);$('mosaicStart').dispatchEvent(new Event('change'));};
   $('mosaicMarkEnd').onclick=()=>{$('mosaicEnd').value=clock(wanted);$('mosaicEnd').dispatchEvent(new Event('change'));};
   $('mosaicCandidates').onclick=e=>{const saved=e.target.closest('[data-saved-adjust]');if(saved){const drafts=[...regionDrafts.filter(d=>!candidates.some(c=>c.id===d.id)),...candidates.map(c=>({...c}))],start=$('mosaicStart').value,end=$('mosaicEnd').value;viewTarget(Number(saved.dataset.savedAdjust));regionDrafts=drafts;candidates=candidates.map(c=>drafts.find(d=>d.id===c.id)||c);$('mosaicStart').value=start;$('mosaicEnd').value=end;$('mosaicAdjust').open=true;paint();return;}const b=e.target.closest('[data-candidate]');if(b){selectRegion(b.dataset.candidate);paint();}};
-  for(const axis of ['X','Y','W','H'])$('mosaicBox'+axis).onchange=guard(e=>{const c=selectedBox();if(!c)return;const next={...c,[axis.toLowerCase()]:Number(e.target.value)};if(!validBox(next)){paint();throw Error('矩形必须位于画面内，宽高至少 1 像素');}if(next[axis.toLowerCase()]===c[axis.toLowerCase()])return;Object.assign(c,next);drawOverlay();if(!addingClip)persistAdjustment(true);});
+  function fitCircle(c,edge=''){
+    if(c.shape!=='circle')return;
+    const side=Math.min(c.w,c.h);
+    if(edge.includes('w'))c.x+=c.w-side;
+    if(edge.includes('n'))c.y+=c.h-side;
+    c.w=c.h=side;
+  }
+  $('mosaicRegionShape').onchange=guard(e=>{
+    if(editLocked())return;
+    regionShape=e.target.value;
+    const c=selectedBox();if(!c){paint();return;}
+    c.shape=regionShape;fitCircle(c);
+    if(addingClip)paint();else persistAdjustment(true);
+  });
+  for(const axis of ['X','Y','W','H'])$('mosaicBox'+axis).onchange=guard(e=>{const c=selectedBox();if(!c)return;const next={...c,[axis.toLowerCase()]:Number(e.target.value)};if(next.shape==='circle'&&['W','H'].includes(axis))next.w=next.h=Number(e.target.value);if(!validBox(next)){paint();throw Error('区域必须位于画面内，宽高至少 1 像素');}if(next[axis.toLowerCase()]===c[axis.toLowerCase()])return;Object.assign(c,next);if(addingClip)paint();else persistAdjustment(true);});
   function persistAdjustment(regionChanged=false,timeOnly=false){
     if(editLocked()||addingClip||loading)return;
     if(!scanEvent&&(!validBox(selectedBox())||!inRange()))return;
@@ -611,7 +637,7 @@
     setEventRange(event,r);
     if(event&&changes.some(({adopted})=>adopted)){clearDecision(event.id);deletions=deletions.filter(t=>!belongs(t,event));}
     for(const {c,index,adopted} of changes){
-      const target={...(index<0?{uid:regionId(),eventId:event?.id,originStart:event?.start,originEnd:event?.end,proposal:c.id}:targets[index]),adopted,removed:false,motion:'fixed',label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,...r,seed_frame:Math.max(r.start,Math.min(r.end-1,c.seed_frame??wanted))};
+      const target={...(index<0?{uid:regionId(),eventId:event?.id,originStart:event?.start,originEnd:event?.end,proposal:c.id}:targets[index]),adopted,removed:false,motion:'fixed',label:c.label,reason:c.reason,x:c.x,y:c.y,w:c.w,h:c.h,shape:c.shape??'rectangle',...r,seed_frame:Math.max(r.start,Math.min(r.end-1,c.seed_frame??wanted))};
       if(!event&&adopted){const id='target:'+target.uid;clearDecision(id);deletions=deletions.filter(d=>d.eventId!==id);}
       if(index<0)targets.push(target);else targets[index]=target;
       c.uid=target.uid;
@@ -626,7 +652,7 @@
     resetCandidate();editing=i;motion='fixed';scanEvent=eventId??allEvents().find(e=>belongs(t,e))?.id??null;
     const event=allEvents().find(e=>e.id===scanEvent);
     candidates=targets.filter(v=>!v.removed&&(v.uid===t.uid||(event&&belongs(v,event)&&(v.motion==='fixed'||v.seed_frame===t.seed_frame)))).map(v=>({...v,motion:'fixed',id:'saved-'+v.uid}));
-    selected='saved-'+t.uid;$('mosaicAdjust').open=true;
+    selected='saved-'+t.uid;regionShape=t.shape??'rectangle';$('mosaicAdjust').open=true;
     $('mosaicStart').value=clock(t.start);$('mosaicEnd').value=clock(t.end-1);seek(t.seed_frame,true);
     status('拖动框可调整位置，整段使用同一位置。');
   }
@@ -676,14 +702,6 @@
       if(save()){viewDecision(event);paint();status('处理选择已更新。');}return;
     }
 
-    const ignore=e.target.closest('[data-event-ignore]');
-    if(ignore){
-      const event=decisionEvent(ignore.dataset.eventIgnore),wasIgnored=ignoredEvents.includes(event.id);
-      clearDecision(event.id);
-      if(!wasIgnored)ignoredEvents.push(event.id);
-      deletions=deletions.filter(t=>!belongs(t,event));targets.filter(t=>belongs(t,event)).forEach(t=>t.adopted=false);
-      if(save()){viewDecision(event);paint();status(wasIgnored?'已恢复为待处理。':'已忽略该片段。');}return;
-    }
     const draw=e.target.closest('[data-event-draw]');
     if(draw){
       const id=draw.dataset.eventDraw,event=allEvents().find(v=>v.id===id),wasDrawing=drawingEvents.includes(id);
@@ -721,11 +739,11 @@
   const sameBatch=()=>samePlan(batchJob,{effect,targets:adoptedTargets(),ranges:deleteRanges()});
   function mergedRanges(input){const out=[];for(const [a,b] of input){if(out.length&&a<=out.at(-1)[1])out.at(-1)[1]=Math.max(b,out.at(-1)[1]);else out.push([a,b]);}return out;}
   const targetFields=['start','end','seed_frame','x','y','w','h'];
-  const renderTarget=t=>({...Object.fromEntries(targetFields.map(k=>[k,t[k]])),motion:'fixed'});
+  const renderTarget=t=>({...Object.fromEntries(targetFields.map(k=>[k,t[k]])),motion:'fixed',...(t.shape?{shape:t.shape}:{})});
   const adoptedTargets=()=>targets.filter(t=>t.adopted!==false).map(t=>({...renderTarget(t),effect:effectFor(t)}));
-  const targetSignature=(list,fallback=effect)=>JSON.stringify([...new Set(list.map(t=>JSON.stringify([...targetFields.map(k=>t[k]),t.motion||'tracked',{...defaultEffect,...fallback,...t.effect}])))] .sort());
+  const targetSignature=(list,fallback=effect)=>JSON.stringify([...new Set(list.map(t=>JSON.stringify([...targetFields.map(k=>t[k]),t.shape??'rectangle',t.motion||'tracked',{...defaultEffect,...fallback,...t.effect}])))] .sort());
   function pendingCount(){return timelineItems().filter(i=>i.kind==='suggestion').length;}
-  function processingSummary(segments,pending){return `删除 ${deletions.length} 段 · 打码 ${segments} 段 · ${pending?`待处理 ${pending} 段`:timelineItems().length||deletions.length?'全部已处理':'还没有片段'}`;}
+  function processingSummary(segments,pending){return `删除 ${deletions.length} 段 · 打码 ${segments} 段 · ${pending?`不处理 ${pending} 段`:timelineItems().length||deletions.length?'已选择处理':'还没有片段'}`;}
   function paintBatch(){
     if(!context)return;
     for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
@@ -758,7 +776,7 @@
     $('mosaicBatchStart').textContent=running?'正在生成视频…':'生成处理后视频';
     const pending=pendingCount(),summary=processingSummary(segments,pending);
     $('mosaicSummary').textContent=summary;
-    $('mosaicSummary').classList.toggle('pending',pending>0);
+    $('mosaicSummary').classList.remove('pending');
     $('mosaicBatchHint').textContent=[summary,trackingUnavailable&&!running&&!awaitingDecision()?trackingUnavailableHint:'',legacyDraft&&!running&&!awaitingDecision()?legacyDraftHint:'',batchError].filter(Boolean).join('\n');
     $('mosaicBatchView').hidden=!batchJob&&!batchError;
     $('mosaicBatchView').textContent=batchJob?.status==='running'?'查看生成进度':batchJob?.status==='failed'?'查看失败原因':'查看生成结果';
@@ -886,8 +904,7 @@
     if($('mosaicBatchStart').disabled)return;
     const saved=targets[editing],c=selectedBox();
     if(saved&&saved.adopted!==false){try{const r=range();if(!c||['x','y','w','h'].some(k=>c[k]!==saved[k])||r.start!==saved.start||r.end!==saved.end)throw Error('当前区域调整未生效，请重新调整后再生成完整视频。');}catch(e){status(e.message,true);return;}}
-    const pending=pendingCount();
-    if(pending&&!window.confirm(`还有 ${pending} 段待处理，这些段会保持原样。继续生成？`))return;
+
     const previousJob=batchJob;
     batchJob=null;resultBefore=false;$('mosaicBatchVideo').pause();$('mosaicBatchVideo').removeAttribute('src');$('mosaicBatchVideo').load();
     showResult(true);batchRequest(true,previousJob);
@@ -1041,11 +1058,12 @@
     return runPreview('track',{target,effect:effectFor(saved),reset_at:context.session.reset_at||''});
   };
   $('mosaicClear').onclick=()=>{if(window.confirm('取消全部处理选择？区域调整会保留。')){deletions=[];ignoredEvents=[];drawingEvents=[];targets.forEach(t=>t.adopted=false);if(save())paint();}};
-  $('mosaicAddRegion').onclick=()=>{
+  $('mosaicReturnToClip').onclick=guard(()=>{if(!editLocked())seek(range().start,true);});
+  $('mosaicAddRegion').onclick=guard(()=>{
     if(editLocked()||$('mosaicAddRegion').disabled)return;
-
-    selected=null;editing=null;drawing=true;$('mosaicAdjust').open=true;paint();status('在画面拖出新区域，原有区域会保留。');
-  };
+    if(!inRange())seek(range().start,true);
+    selected=null;editing=null;drawing=true;$('mosaicAdjust').open=true;paint();status('请在画面上拖出打码区域，原有区域会保留。');
+  });
   $('mosaicRemoveRegion').onclick=()=>{
     if(editLocked())return;
     const c=selectedBox();if(!c)return;
@@ -1075,7 +1093,7 @@
     }else{
       if(!drawing)return;
       pointer={...p,id:e.pointerId,mode:'draw'};
-      selected=selected??'manual-'+regionId();const next={id:selected,motion,seed_frame:wanted,label:'手动区域',reason:'人工框选',x:p.x,y:p.y,w:1,h:1};
+      selected=selected??'manual-'+regionId();const next={id:selected,motion,shape:regionShape,seed_frame:wanted,label:'手动区域',reason:'人工框选',x:p.x,y:p.y,w:1,h:1};
       candidates=candidates.filter(c=>c.id!==selected);candidates.push(next);
     }
     e.preventDefault();overlay.setPointerCapture(e.pointerId);drawOverlay();
@@ -1084,7 +1102,10 @@
     if(!pointer||e.pointerId!==pointer.id||editLocked())return;
     const p=point(e),c=selectedBox(),o=pointer.original,dx=p.x-pointer.x,dy=p.y-pointer.y;
     if(!c)return;
-    if(pointer.mode==='draw')Object.assign(c,{x:Math.min(p.x,pointer.x),y:Math.min(p.y,pointer.y),w:Math.abs(dx),h:Math.abs(dy)});
+    if(pointer.mode==='draw'){
+      Object.assign(c,{x:Math.min(p.x,pointer.x),y:Math.min(p.y,pointer.y),w:Math.abs(dx),h:Math.abs(dy)});
+      fitCircle(c,(dx<0?'w':'')+(dy<0?'n':''));
+    }
     else if(pointer.mode==='move')Object.assign(c,{x:Math.max(0,Math.min(meta().width-o.w,o.x+dx)),y:Math.max(0,Math.min(meta().height-o.h,o.y+dy))});
     else{
       let left=o.x,right=o.x+o.w,top=o.y,bottom=o.y+o.h;
@@ -1093,6 +1114,15 @@
       if(pointer.mode.includes('n'))top=Math.max(0,Math.min(bottom-1,o.y+dy));
       if(pointer.mode.includes('s'))bottom=Math.min(meta().height,Math.max(top+1,o.y+o.h+dy));
       Object.assign(c,{x:left,y:top,w:right-left,h:bottom-top});
+      if(c.shape==='circle'){
+        const horizontal=/[ew]/.test(pointer.mode),vertical=/[ns]/.test(pointer.mode);
+        const limitX=pointer.mode.includes('w')?o.x+o.w:meta().width-o.x;
+        const limitY=pointer.mode.includes('n')?o.y+o.h:meta().height-o.y;
+        const side=Math.min(horizontal&&!vertical?c.w:vertical&&!horizontal?c.h:Math.min(c.w,c.h),limitX,limitY);
+        if(pointer.mode.includes('w'))c.x=o.x+o.w-side;
+        if(pointer.mode.includes('n'))c.y=o.y+o.h-side;
+        c.w=c.h=side;
+      }
     }
     drawOverlay();
   };
@@ -1382,12 +1412,19 @@
         const expansion=Math.round(Math.min(w,h)*{none:0,small:.008,medium:.016,large:.03}[appearance.expansion]);
         const x=target.x*scale-expansion,y=target.y*scale-expansion,rw=target.w*scale+2*expansion,rh=target.h*scale+2*expansion;
         mc.clearRect(0,0,w,h);mc.fillStyle='#fff';mc.filter='none';
-        if(appearance.style==='soft_blur'){const radius=Math.max(1,Math.round(Math.min(w,h)*.015));mc.filter=`blur(${radius}px)`;mc.fillRect(x-radius,y-radius,rw+radius*2,rh+radius*2);mc.filter='none';}
-        mc.fillRect(x,y,rw,rh);ec.globalCompositeOperation='destination-in';ec.drawImage(liveMask,0,0);ec.globalCompositeOperation='source-over';liveContext.drawImage(liveEffect,0,0);
+        const fillMask=()=>{
+          if(['circle','ellipse'].includes(target.shape)){mc.beginPath();mc.ellipse(x+rw/2,y+rh/2,rw/2,rh/2,0,0,Math.PI*2);mc.fill();}
+          else mc.fillRect(x,y,rw,rh);
+        };
+        if(appearance.style==='soft_blur'){const radius=Math.max(1,Math.round(Math.min(w,h)*.015));mc.filter=`blur(${radius}px)`;if(['circle','ellipse'].includes(target.shape))fillMask();else mc.fillRect(x-radius,y-radius,rw+radius*2,rh+radius*2);mc.filter='none';}
+        fillMask();ec.globalCompositeOperation='destination-in';ec.drawImage(liveMask,0,0);ec.globalCompositeOperation='source-over';liveContext.drawImage(liveEffect,0,0);
       }
       liveContext.save();liveContext.strokeStyle='#ffc400';liveContext.lineWidth=3;liveContext.shadowColor='#3b2900';liveContext.shadowBlur=2;
       liveContext.setLineDash([6,4]);
-      for(const box of outlines)liveContext.strokeRect(box.x*scale,box.y*scale,box.w*scale,box.h*scale);
+      for(const box of outlines){
+        if(['circle','ellipse'].includes(box.shape)){liveContext.beginPath();liveContext.ellipse((box.x+box.w/2)*scale,(box.y+box.h/2)*scale,box.w*scale/2,box.h*scale/2,0,0,Math.PI*2);liveContext.stroke();}
+        else liveContext.strokeRect(box.x*scale,box.y*scale,box.w*scale,box.h*scale);
+      }
       liveContext.restore();
       liveCanvas.hidden=false;
     }catch{liveCanvas.hidden=true;$('mosaicLiveHint').textContent='实时预览暂不可用，可使用动态预览检查效果。';}
