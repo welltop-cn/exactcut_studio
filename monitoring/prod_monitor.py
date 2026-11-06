@@ -12,6 +12,7 @@ import tempfile
 import time
 from datetime import datetime, timedelta, timezone
 from urllib import error, request
+from urllib.parse import urlsplit, urlunsplit
 
 SHANGHAI = timezone(timedelta(hours=8))
 DEFAULTS = {
@@ -42,13 +43,125 @@ def log_error(area, exc):
     print(f'检查异常：{area}（{type(exc).__name__}）', file=sys.stderr)
 
 
-def stamp(value=None):
+def stamp(value=None, seconds=False):
     if isinstance(value, str):
         try:
             value = datetime.fromisoformat(value.replace('Z', '+00:00')).timestamp()
         except (ValueError, OverflowError):
             value = None
-    return datetime.fromtimestamp(time.time() if value is None else value, SHANGHAI).strftime('%m-%d %H:%M')
+    return datetime.fromtimestamp(time.time() if value is None else value, SHANGHAI).strftime('%m-%d %H:%M:%S' if seconds else '%m-%d %H:%M')
+
+
+def valid_batch(value):
+    return isinstance(value, str) and re.fullmatch(r'[0-9a-f]{32}', value) is not None
+
+
+def context_clean(value, limit=200, webhook=''):
+    """样例专用：保留 URL 的主机/路径、API 路径和关联 id，其余仍脱敏。"""
+    text = str(value)
+    if webhook:
+        text = text.replace(webhook, '[链接]')
+    kept = []
+
+    def keep(value):
+        kept.append(value)
+        return f'\x00{len(kept) - 1}\x00'
+
+    def url(match):
+        try:
+            parts = urlsplit(match.group())
+            if not parts.hostname or re.search(r'(?i)(webhook|/hooks?(?:/|$)|/bot/)', parts.path):
+                return '[链接]'
+            # 不保留 userinfo、query 或 fragment。
+            host = parts.hostname
+            if ':' in host:
+                host = f'[{host}]'
+            if parts.port:
+                host += f':{parts.port}'
+            return keep(urlunsplit((parts.scheme, host, parts.path, '', '')))
+        except ValueError:
+            return '[链接]'
+
+    text = re.sub(r'https?://[^\s<>"\']+', url, text, flags=re.I)
+    text = re.sub(r'''(?ix)(?:bearer\s+|["']?(?:token|secret|password|api[_-]?key|access[_-]?key(?:id)?|signature|expires|webhook)["']?\s*[=:]\s*)(?:"[^"]*"|'[^']*'|[^\s,;]+)''', '[已脱敏]', text)
+
+    def path(match):
+        value = match.group()
+        route = re.split(r'[?#]', value, maxsplit=1)[0]
+        if route.startswith('/api/') and not re.search(r'(?:^|/)\.\.(?:/|$)|%2e|%2f|%5c', route, re.I):
+            return keep(route)
+        return '[路径]'
+
+    text = re.sub(r'(?<![\w/])/(?:[^\s,;<>"\'()]+)', path, text)
+    text = re.sub(r'\x00(\d+)\x00', lambda match: kept[int(match[1])], text)
+    text = ' '.join(text.split())
+    if len(text) > limit:
+        # 尽量在词边界截断，并明确标出省略。
+        end = text.rfind(' ', max(0, limit - 80), limit)
+        text = text[:end if end > 0 else limit] + '…'
+    return text
+
+
+def event_context(event, config, webhook=''):
+    def safe(value, limit=200):
+        return context_clean(value, limit, webhook)
+
+    lines = []
+    batch = event.get('batch_id')
+    if valid_batch(batch):
+        base = safe(config['public_url'], 1000).rstrip('/')
+        if base.startswith(('https://', 'http://')):
+            lines.append(f'项目：{base}/#{batch}')
+        lines.append(f'项目 id：{batch}')
+    elif batch is not None:
+        lines.append('项目 id：[无效]')
+    for key in ('project_name', 'batch_name', 'title', 'name'):
+        if event.get(key):
+            lines.append(f'项目名：{safe(event[key])}')
+            break
+    fields = []
+    if event.get('actor'):
+        fields.append(f'账号：{safe(event["actor"])}')
+    route = safe(event.get('route') or '', 1000)
+    asset = next((event[k] for k in ('asset', 'asset_id', 'asset_name', 'material_id') if event.get(k)), None)
+    if asset is None:
+        match = re.search(r'/originals/([^/\s]+)', route)
+        asset = match[1] if match else None
+    if asset is not None:
+        fields.append(f'素材：{safe(asset)}')
+    id_keys = {'request_id', 'client_request_id', 'trace_id', 'job_id', 'render_id'}
+    id_keys.update(k for k in event if k.startswith('render_') and k.endswith('_id'))
+    for key in sorted(id_keys):
+        if event.get(key) is not None:
+            fields.append(f'{key}：{safe(event[key])}')
+    if fields:
+        lines.append('；'.join(fields))
+    http = []
+    for key in ('method', 'route', 'status', 'duration_ms'):
+        if event.get(key) is not None:
+            http.append(route if key == 'route' else f'{key}={safe(event[key])}')
+    if http:
+        lines.append('请求：' + ' '.join(http))
+    if event.get('at'):
+        lines.append(f'样例时间：{stamp(event["at"], seconds=True)}')
+    lines.append(f'主机：{safe(config["host_label"], 40)}')
+    if event.get('source_file'):
+        lines.append(f'日志：{safe(Path(str(event["source_file"])).name)}')
+    err = event.get('error') or {}
+    frames = err.get('frames') or []
+    if frames:
+        frame = frames[-1]
+        parts = [safe(Path(str(frame['file'])).name)] if frame.get('file') else []
+        if frame.get('line') is not None:
+            parts.append(safe(frame['line'], 20))
+        location = ':'.join(parts)
+        if frame.get('function'):
+            location += ' ' + safe(frame['function'])
+        if location:
+            lines.append('栈：' + location.strip())
+    message = err.get('message') or event.get('message') or event.get('reason') or '无摘要'
+    lines.append(f'错误：{safe(err.get("type") or "", 100)} {safe(message, 800)}')
+    return lines
 
 
 def save_state(directory, state):
@@ -215,6 +328,7 @@ def scan_events(config, state, bootstrap=False):
                         if any(event.get('event') == item['event'] and err.get('type') == item['type'] for item in config['ignore_errors']):
                             continue
                         key = signature(event)
+                        event['source_file'] = path.name
                         group = groups.setdefault(key, {'count': 0, 'first': event.get('at'), 'last': event.get('at'), 'batches': [], 'sample': event})
                         group['count'] += 1
                         group['last'] = event.get('at')
@@ -336,15 +450,16 @@ class Monitor:
             if not record['pending'] or self.now - record.get('sent_at', -1e20) < self.config['cooldown_seconds']:
                 continue
             event = record['sample']
-            err = event.get('error') or {}
             event_name = str(event.get('event', '未知事件'))
             route = str(event.get('route', ''))
             task = next((name for name in ('render', 'mosaic', 'scan', 'http') if name in event_name + route), event_name.split('.')[0])
             repeat = f'，期间又出现 {record["pending"]} 次' if 'sent_at' in record else ''
-            # 项目标识严格校验后仅显示前八位，避免十六进制标识被统一脱敏。
-            batches = '、'.join(x[:8] if isinstance(x, str) and re.fullmatch(r'[0-9A-Za-z_-]{1,64}', x)
-                               else '[无效]' for x in record.get('batches', [])) or '无'
-            lines.append(f'{clean(task, 20)} / {clean(event_name, 50)}：{record["pending"]} 次{repeat}；{stamp(record["first"])}—{stamp(record["last"])}；项目 {batches}；{clean(str(err.get("type", "")) + " " + str(err.get("message") or event.get("message") or event.get("reason") or "无摘要"))}')
+            details = [f'—— {clean(task, 20)} / {clean(event_name, 50)}：{record["pending"]} 次{repeat}；{stamp(record["first"], seconds=True)}—{stamp(record["last"], seconds=True)}']
+            details.extend(event_context(event, self.config, self.webhook))
+            batches = [x for x in record.get('batches', []) if valid_batch(x) and x != event.get('batch_id')]
+            if batches:
+                details.append('同组其他项目 id：' + '、'.join(batches))
+            lines.append('\n'.join(details))
             record.update(pending=0, sent_at=self.now, batches=[])
             record.pop('first', None)
             record.pop('sample', None)
