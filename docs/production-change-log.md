@@ -8,6 +8,7 @@
 
 | 时间 | 类型 | 应用版本 | 内容 | 详细记录 |
 | --- | --- | --- | --- | --- |
+| 2026-11-06 11:34 | 监控（告警上下文） | 保持 `8216c27`，未重启 | 更新 deploy 监控脚本：报错告警带完整项目 id、深链与请求路径等排障上下文；不改 crontab／webhook／应用；备份 `prod_monitor.py.20261106113344` | [11 月 6 日监控告警上下文](archive/verification/production-monitor-context-2026-11-06.md) |
 | 2026-11-05 12:33（马涛本人 root 执行） | 监控（root cron 日志复制） | 保持 `8216c27`，未重启 | root 每 5 分钟把新增 error/critical 日志行复制到 deploy 可读目录，监控脚本改读该目录；不动应用和源日志；12:33 扫描恢复正常 | [11 月 5 日线上监控上线](archive/verification/production-monitor-2026-11-05.md) |
 | 2026-11-05 12:10 | 监控（新增 deploy 用户 cron） | 保持 `8216c27`，未重启 | 新增线上监控脚本，每 5 分钟检查服务存活和资源并推送飞书告警群；报错事件扫描因无日志读权限暂未启用 | [11 月 5 日线上监控上线](archive/verification/production-monitor-2026-11-05.md) |
 | 2026-11-02 17:38 | 凭据与连接配置 | 保持 `8216c27` | 同步 OpenAI key/base URL，重启原版本；限额保持 60/5 | [11 月 2 日配置变更](archive/verification/production-config-change-2026-11-02.md) |
