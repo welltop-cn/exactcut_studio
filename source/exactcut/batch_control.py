@@ -258,11 +258,23 @@ PAUSE_CUTTING_ERROR = '剪切/打码进行中，完成后再暂停'
 ARCHIVE_MESSAGE = '已归档：制作任务暂停并保留进度；剪切/打码任务已取消，不保留进度'
 
 
+def cutting_message(bid, *, has_preview=False):
+    """Summarize active cut/mosaic work for display without changing project status."""
+    from . import mosaic_queue as queue
+    statuses = {queue.report(item)['status'] for item in queue.load()['tasks']
+                if item['batch_id'] == bid}
+    if statuses & {'running', 'cancelling'}:
+        message = '剪切/打码处理中'
+    elif 'queued' in statuses:
+        message = '剪切/打码排队中'
+    else:
+        return ''
+    return message + ('；已有成片仍可播放' if has_preview else '')
+
+
 def cutting_active(bid):
     """Queued/running cut or mosaic tasks; pause waits for them, archive cancels them."""
-    from . import mosaic_queue as queue
-    return any(item['batch_id'] == bid and queue.report(item)['status'] in {'queued', 'running', 'cancelling'}
-               for item in queue.load()['tasks'])
+    return bool(cutting_message(bid))
 
 
 def change(path, action):
