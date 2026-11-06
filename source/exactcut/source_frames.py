@@ -197,13 +197,14 @@ def resolve_frame_clips(row, drama, path):
             episode = 'EP' + str(int(episode))
             if episode not in indexes:
                 if path is None:
-                    raise ValueError('原片帧索引尚未就绪，请等待正片及帧索引准备完成后重试')
+                    raise ValueError(f'{episode} 原片帧索引尚未就绪，请稍后再试')
                 source = _video(drama, episode)
                 signature = _fingerprint(source)
                 key = json_sha256({'version': 1, 'drama': drama, 'episode': episode, 'signature': signature})
                 target = path / 'source-picker' / key / 'index.json'
                 if not target.is_file():
-                    raise ValueError('原片帧索引尚未就绪或正片已变化，请等待正片及帧索引准备完成后重试')
+                    from .source_prefetch import episode_readiness_message
+                    raise ValueError(episode_readiness_message(path, drama, episode))
                 indexes[episode] = _load(path, key)[0]
             doc = indexes[episode]
             chosen = []
