@@ -26,7 +26,7 @@ def env(tmp_path, monkeypatch):
 
 def event(**kwargs):
     return dict({'at': '2026-11-05T03:40:00Z', 'event': 'render.failed', 'level': 'error',
-                 'batch_id': 'batch_one', 'error': {'type': 'ValueError', 'message': '任务 123 失败'}}, **kwargs)
+                 'batch_id': 'abcdef1234567890abcdef1234567890', 'error': {'type': 'ValueError', 'message': '任务 123 失败'}}, **kwargs)
 
 
 def write(tmp_path, events, mode='w'):
@@ -35,6 +35,99 @@ def write(tmp_path, events, mode='w'):
         for item in events:
             handle.write(json.dumps(item) + '\n')
     return path
+
+
+@pytest.fixture
+def http_failure():
+    return event(
+        at='2026-11-06T03:13:34.940123+00:00', event='http.failed',
+        batch_id='dfdb472b0b354adb992d543196bb9e36', actor='producer06',
+        route='/api/batches/dfdb472b0b354adb992d543196bb9e36/originals/EP25/file',
+        trace_id='dda15e718d29478394f5937d402c0db7',
+        client_request_id='f48b1dcb9ff7141f136bfc85e429b461',
+        error={
+            'type': 'ChunkedEncodingError',
+            'message': "('Connection broken: IncompleteRead(33717782 bytes read, 79363511 more expected)', "
+                       'IncompleteRead(33717782 bytes read, 79363511 more expected))',
+            'frames': [{'file': 'webserver.py', 'line': 1001, 'function': 'handle_one_request'},
+                       {'file': 'models.py', 'line': 939, 'function': 'generate'}],
+        })
+
+
+def test_http_failure_context(tmp_path, env, http_failure):
+    config, state, sender = env
+    path = write(tmp_path, [http_failure, http_failure])
+    m.Monitor(config, state).run()
+    text = sender.call_args.args[1]
+    for expected in (
+        config['public_url'].rstrip('/') + '/#' + http_failure['batch_id'],
+        '项目 id：' + http_failure['batch_id'], '账号：producer06', '素材：EP25',
+        http_failure['route'], http_failure['trace_id'], http_failure['client_request_id'],
+        'ChunkedEncodingError', http_failure['error']['message'], '2 次',
+        '11-06 11:13:34—11-06 11:13:34', '样例时间：11-06 11:13:34',
+        '主机：线上', '日志：' + path.name, '栈：models.py:939 generate',
+    ):
+        assert expected in text
+    for absent in ('method=', 'status=', 'duration_ms=', '项目名：'):
+        assert absent not in text
+
+
+def test_context_optional_fields_and_redaction(tmp_path, env, http_failure):
+    config, state, sender = env
+    hook = 'https://notify.example/custom/private-hook'
+    http_failure.update(method='GET', status=0, duration_ms=123.5,
+                        title='测试项目', request_id='request-full-id', job_id='job-full-id',
+                        render_job_id='render-job-full-id', render_id='render-full-id')
+    http_failure['route'] += '?token=route-private-value&other=private-query'
+    http_failure['error']['frames'][-1]['file'] = '/private/runtime/models.py'
+    http_failure['error']['message'] += (
+        ' https://download.example/video/EP25.mp4?Signature=signed-private-value&AccessKeyId=access-private-value&Expires=expires-private-value'
+        ' https://user:pass-private-value@download.example/another.mp4?token=url-private-value#fragment-private-value'
+        ' token=plain-private-value AccessKeyId=key-private-value Signature=sig-private-value'
+        ' Bearer bearer-private-value password=password-private-value'
+        ' "token": "json-private-value" secret="quoted private-value"'
+        ' /private/runtime/credentials.txt /private-file.txt '
+        + hook + ' https://open.feishu.cn/open-apis/bot/v2/hook-private-value')
+    write(tmp_path, [http_failure])
+    m.Monitor(config, state, webhook=hook).run()
+    text = sender.call_args.args[1]
+    for value in ('GET', 'status=0', 'duration_ms=123.5', '测试项目',
+                  'request-full-id', 'job-full-id', 'render-job-full-id', 'render-full-id',
+                  'https://download.example/video/EP25.mp4', 'https://download.example/another.mp4',
+                  '栈：models.py:939 generate'):
+        assert value in text
+    for value in ('private-value', 'private-query', 'Signature=', 'AccessKeyId=', 'Expires=',
+                  '?token=', '/private/', '/private-file.txt', hook, 'open.feishu.cn', 'user:'):
+        assert value not in text
+
+
+def test_context_survives_cooldown(tmp_path, env, http_failure):
+    config, state, sender = env
+    path = write(tmp_path, [http_failure])
+    m.Monitor(config, state, now=10000).run()
+    write(tmp_path, [http_failure], 'a')
+    m.Monitor(config, state, now=10100).run()
+    # 模拟跨进程恢复状态，且到期时无新增事件。
+    state = json.loads(json.dumps(state))
+    sender.reset_mock()
+    m.Monitor(config, state, now=11800).run()
+    text = sender.call_args.args[1]
+    assert '期间又出现 1 次' in text
+    assert http_failure['route'] in text
+    assert '日志：' + path.name in text
+    assert http_failure['error']['message'] in text
+
+
+def test_error_message_truncation(tmp_path, env, http_failure):
+    config, state, sender = env
+    original = http_failure['error']['message']
+    http_failure['error']['message'] += ' extra-context' * 100
+    write(tmp_path, [http_failure])
+    m.Monitor(config, state).run()
+    error_line = sender.call_args.args[1].split('错误：', 1)[1]
+    assert original in error_line
+    assert error_line.endswith('…')
+    assert len(error_line) <= len('ChunkedEncodingError ') + 801
 
 
 def test_increment_and_partial(tmp_path, env):
@@ -68,11 +161,13 @@ def test_rotation_truncation_and_removal(tmp_path, env):
 
 def test_merge_cooldown_and_counts(tmp_path, env):
     config, state, sender = env
-    write(tmp_path, [event(), event(batch_id='batch_two')])
+    write(tmp_path, [event(), event(batch_id='0123456789abcdef0123456789abcdef')])
     m.Monitor(config, state, now=10000).run()
     assert sender.call_count == 1
     assert '2 次' in sender.call_args.args[1]
-    assert '项目 batch_on、batch_tw' in sender.call_args.args[1]
+    assert '项目 id：abcdef1234567890abcdef1234567890' in sender.call_args.args[1]
+    assert '同组其他项目 id：0123456789abcdef0123456789abcdef' in sender.call_args.args[1]
+    assert config['public_url'].rstrip('/') + '/#abcdef1234567890abcdef1234567890' in sender.call_args.args[1]
     write(tmp_path, [event(), event(), event()], 'a')
     m.Monitor(config, state, now=10100).run()
     assert sender.call_count == 1
@@ -81,18 +176,26 @@ def test_merge_cooldown_and_counts(tmp_path, env):
     assert '期间又出现 3 次' in sender.call_args.args[1]
 
 
-@pytest.mark.parametrize(('batch_id', 'display'), [
-    ('abcdef1234567890abcdef1234567890', 'abcdef12'),
-    ('a', 'a'), ('A0_-xyZ9', 'A0_-xyZ9'), ('z' * 64, 'z' * 8),
-    ('', '[无效]'), ('z' * 65, '[无效]'), ('项目一', '[无效]'),
-    ('abc\n', '[无效]'), ('abc/def', '[无效]'), ('abc def', '[无效]'),
-    ('https://secret.example/token', '[无效]'), (12345678, '[无效]'),
+@pytest.mark.parametrize('batch_id', [
+    'abcdef1234567890abcdef1234567890',
+    'a', 'A0_-xyZ9', 'z' * 64, '', 'z' * 65, '项目一',
+    'abc\n', 'abc/def', 'abc def', 'A' * 32,
+    'https://secret.example/token', 12345678,
 ])
-def test_batch_id_display(tmp_path, env, batch_id, display):
+def test_batch_id_display(tmp_path, env, batch_id):
     config, state, sender = env
+    config['public_url'] = 'https://public.example/custom/entry///'
     write(tmp_path, [event(batch_id=batch_id)])
     m.Monitor(config, state).run()
-    assert f'项目 {display}；' in sender.call_args.args[1]
+    text = sender.call_args.args[1]
+    if batch_id == 'abcdef1234567890abcdef1234567890':
+        assert f'项目 id：{batch_id}' in text
+        assert f'项目：https://public.example/custom/entry/#{batch_id}' in text
+    else:
+        assert '项目 id：[无效]' in text
+        assert '项目：https://' not in text
+        if batch_id and len(str(batch_id)) > 1:
+            assert str(batch_id) not in text
 
 
 def test_ignore_and_warning(tmp_path, env):
@@ -260,7 +363,11 @@ def test_limit_lines_and_release(tmp_path, env, monkeypatch):
     config, state, sender = env
     write(tmp_path, [event(event=f'类别{index}.failed') for index in range(12)])
     m.Monitor(config, state).run()
-    assert '另有 2 类' in sender.call_args.args[1]
+    text = sender.call_args.args[1]
+    assert '另有 2 类' in text
+    assert text.count('项目 id：') == 10
+    assert text.count('错误：') == 10
+    assert text.count('日志：') == 10
     sender.reset_mock()
     monkeypatch.setattr(m, 'health_check', lambda c: (True, '维护中', {'maintenance': True, 'release': '版本二'}))
     m.Monitor(config, state).run()
