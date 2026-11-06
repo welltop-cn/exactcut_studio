@@ -17,6 +17,7 @@ import re
 import threading
 import time
 import traceback
+from urllib.parse import urlsplit, urlunsplit
 
 from .error_guidance import redact
 
@@ -29,6 +30,22 @@ _throttled = {}
 _browser_budgets = {}
 _browser_lock = threading.Lock()
 _sensitive = re.compile(r'password|secret|token|cookie|authorization|api.?key|signature', re.I)
+
+
+def redact_url(value):
+    """Diagnostic upstream address only; never retain credentials or URL queries."""
+    try:
+        url = urlsplit(value)
+        if url.scheme not in ('http', 'https') or not url.hostname:
+            return ''
+        host = url.hostname
+        if ':' in host:
+            host = f'[{host}]'
+        if url.port:
+            host += f':{url.port}'
+        return urlunsplit((url.scheme, host, url.path, '', ''))
+    except (TypeError, ValueError):
+        return ''
 
 
 def safe(value, depth=0):
