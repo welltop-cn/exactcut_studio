@@ -545,10 +545,11 @@ def detail(batch_id):
     from .progress import observation
     from .error_guidance import guidance, redact
     r = data['runtime']
-    r['cutting_active'] = batch_control.cutting_active(batch_id)
+    r['cutting_message'] = batch_control.cutting_message(batch_id, has_preview=any(a.get('preview') for a in assets))
+    r['cutting_active'] = bool(r['cutting_message'])
     r['observation'] = observation(r, paused=r.get('paused', False))
     r['error_info'] = guidance(r.get('message'), r.get('stage')) if r['status'] in {'failed', 'interrupted'} else None
-    r['message'] = redact(r.get('message'))
+    r['message'] = r['cutting_message'] or redact(r.get('message'))
     r['events'] = [{**e, 'message': redact(e.get('message'))} for e in r.get('events', [])]
     for asset in assets:
         record = records.get(asset['request_id'], {})

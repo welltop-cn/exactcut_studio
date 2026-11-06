@@ -728,15 +728,16 @@ def detail(path):
         events.extend(runtime_events(history_path))
     events = [{**event, 'message': redact(event.get('message'))} for event in events]
     events.sort(key=lambda event: event['at'])
+    cutting_message = batch_control.cutting_message(path.name, has_preview=any(a.get('preview') for a in assets))
     runtime = {'status': 'paused' if control['paused'] and status in w.ACTIVE else status,
                'underlying_status': status, 'paused': control['paused'], 'archived': control['archived'] or bool(state['deleted_at']),
-               'message': runtime_message(status, has_preview=any(a.get('preview') for a in assets),
+               'message': cutting_message or runtime_message(status, has_preview=any(a.get('preview') for a in assets),
                                           pending_changes=pending_changes,
                                           paused=control['paused']), 'updated_at': state['updated_at'],
-               'events': events, 'cutting_active': batch_control.cutting_active(path.name), 'request_parallel': True, 'executor_running': 'processing' in candidates,
+               'events': events, 'cutting_active': bool(cutting_message), 'cutting_message': cutting_message, 'request_parallel': True, 'executor_running': 'processing' in candidates,
                'observation': {}, 'error_info': None,
                'download_complete': bool(downloads) and all(downloads)}
-    if runtime['status'] == 'publishing' and any((a.get('error_info') or {}).get('code') == 'delivery_read_retry' for a in assets):
+    if not cutting_message and runtime['status'] == 'publishing' and any((a.get('error_info') or {}).get('code') == 'delivery_read_retry' for a in assets):
         runtime['message'] = '交付状态查询暂时不可用，系统将自动重试；已有成片仍可播放'
     feedback = sorted([read_json(f) for f in w.FEEDBACK.glob(path.name + '-*.json')], key=lambda e: e['created_at'], reverse=True)
     document.update(revision=state['revision'], draft=copy.deepcopy(state['draft']), assets=assets,
