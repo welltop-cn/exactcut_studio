@@ -44,6 +44,7 @@ def install_editor(page):
       window.findings=[{id:'0',label:'候选区域',reason:'需要人工确认',box_2d:[250,250,750,750],x:40,y:24,w:80,h:48}];
       window.api=async (url,body)=>{
         calls.push({url,body});
+        if(url.endsWith('/filmstrip'))return {status:'failed'};
         if(url.endsWith('/scan'))return {enabled:true,report:{id:'existing',status:'completed',source_sha256:session.source_sha256,reset_at:'',events:[]}};
         if(url.endsWith('/locate'))return {id:'job',status:'completed',...body,candidates:findings};
         return session;
@@ -2295,3 +2296,87 @@ def test_manual_ignore_and_drafts_without_optional_decision_fields(editor):
     open_auto(editor)
     assert not editor.locator(f'[data-event-ignore="{clip}"]').is_checked()
     assert '待处理 1 段' in editor.locator('#mosaicBatchHint').inner_text()
+
+
+def hold_main_video(page):
+    # Keep main playback out of thumbnail requests; advertise an OSS currentSrc
+    # so a regression to extracting from the playing URL is observable.
+    page.evaluate('''() => {
+      const v=$('mosaicSource');let src='';
+      Object.defineProperty(v,'src',{get:()=>src,set:value=>{src=value;}});
+      Object.defineProperty(v,'currentSrc',{get:()=> 'https://media.test/main.mp4'});
+      v.load=()=>{};
+    }''')
+
+
+def mock_filmstrip(page, *, running=False):
+    jpeg=io.BytesIO();Image.new('RGB',(224,116),'#22cc44').save(jpeg,'JPEG')
+    page.route('**/filmstrip/image*',lambda r:r.fulfill(body=jpeg.getvalue(),content_type='image/jpeg'))
+    page.evaluate('''running => {
+      window.filmstripCalls=0;window.filmstripReady=!running;
+      const original=api;
+      window.api=async(url,...args)=>{
+        if(url.endsWith('/filmstrip')){
+          filmstripCalls++;
+          if(!filmstripReady)return {status:'running'};
+          return {status:'ready',source_sha256:session.source_sha256,count:2,columns:2,rows:1,tile_width:112,tile_height:116,frames:[75,225],url:'/api/batches/batch/mosaics/session/filmstrip/image?v=v1'};
+        }
+        return original(url,...args);
+      };
+    }''',running)
+
+
+def wait_green_thumbnails(page):
+    page.wait_for_function('''() => {
+      const cs=[...document.querySelectorAll('#mosaicTimelineThumbs canvas')];
+      return cs.length&&cs.every(c=>{const p=c.getContext('2d').getImageData(1,1,1,1).data;return p[1]>180&&p[0]<60&&p[3]===255;});
+    }''')
+
+
+def test_filmstrip_ready_draws_without_video_requests_and_reuses_on_resize(editor):
+    hold_main_video(editor);mock_filmstrip(editor)
+    requests=[];editor.on('request',lambda r:requests.append(r.url))
+    open_auto(editor);wait_green_thumbnails(editor)
+    first_count=editor.locator('#mosaicTimelineThumbs canvas').count()
+    editor.set_viewport_size({'width':1200,'height':900})
+    editor.wait_for_function('count=>document.querySelectorAll("#mosaicTimelineThumbs canvas").length!==count',arg=first_count)
+    wait_green_thumbnails(editor)
+    assert editor.evaluate('filmstripCalls')==1
+    assert len([u for u in requests if '/filmstrip/image' in u])==1
+    assert not any(u.endswith('/source') or 'media.test' in u for u in requests)
+
+
+def test_filmstrip_running_then_ready_refreshes_canvases(editor):
+    hold_main_video(editor);mock_filmstrip(editor,running=True)
+    open_auto(editor)
+    editor.wait_for_function('window.filmstripCalls>=1')
+    assert editor.locator('#mosaicTimelineThumbs canvas').first.evaluate("c=>c.getContext('2d').getImageData(1,1,1,1).data[3]")==0
+    editor.evaluate('filmstripReady=true')
+    wait_green_thumbnails(editor)
+    assert editor.evaluate('filmstripCalls')>=2
+
+
+@pytest.mark.parametrize('failure',['failed','request_error'])
+def test_filmstrip_failed_falls_back_to_local_source_with_oss_main(editor,portrait_source,failure):
+    hold_main_video(editor)
+    if failure=='request_error':
+        editor.evaluate("() => {const original=api;window.api=async(url,...args)=>{if(url.endsWith('/filmstrip'))throw Error('synthetic network failure');return original(url,...args);};}")
+    requests=[];editor.on('request',lambda r:requests.append(r.url))
+    open_auto(editor)
+    editor.locator('#mosaicTimelineThumbs canvas').first.wait_for()
+    editor.wait_for_function("[...document.querySelectorAll('#mosaicTimelineThumbs canvas')].every(c=>c.getContext('2d').getImageData(1,1,1,1).data[0]>200)")
+    assert any(u.endswith('/source') for u in requests)
+    assert not any('media.test' in u for u in requests)
+
+
+def test_filmstrip_polling_stops_on_close(editor):
+    hold_main_video(editor)
+    editor.evaluate('''() => {
+      window.filmstripCalls=0;const original=api;
+      window.api=async(url,...args)=>{if(url.endsWith('/filmstrip')){filmstripCalls++;return {status:'running'};}return original(url,...args);};
+    }''')
+    open_auto(editor);editor.wait_for_function('filmstripCalls>=1')
+    editor.locator('#mosaicClose').click()
+    calls=editor.evaluate('filmstripCalls')
+    editor.wait_for_timeout(1200)
+    assert editor.evaluate('filmstripCalls')==calls
