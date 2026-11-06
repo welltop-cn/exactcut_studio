@@ -12,6 +12,14 @@
 以下保留两台 Mac 并发补验与暂停/退避修复时的盘点信息。
 
 
+## 2026-11-06：18794 人工验收实例
+
+- 地址 `http://127.0.0.1:18794/home/`；启动器 `/Users/matao/exactcut-test/start.sh`，repo 链接到本仓库，当前代码 `489c5dd`。
+- 用户要求除 FBBM 上车、飞书写入外对齐线上功能。已按生产有效配置同步业务参数；真实 OSS（仅 `exactcut-previews/test/`）、Gemini、OpenAI 兼容 AI、封面剧名提取开启。独立本地数据根与凭据文件保留。
+- `delivery_enabled=false`、publish/external-write 开关为 0；本地 guard 继续禁止 FBBM、飞书交付、生产 OSS 前缀及对象删除。SAM 为 CPU，同线上模型文件，仅路径不同。
+- 空闲屏障下正常重启，健康正常；目标项目详情 errors=[]。Gemini/OpenAI 小请求成功；图片提取仅完成配置，未重新生成图片验收。完整记录 `/Users/matao/exactcut-test/config/alignment-report-20261106.md`。
+- 本地仍是 macOS，不能把工具链和性能等同线上 Linux；当前版本新增的调度及分段重编码配置保留供验收。
+
 ## 最近状态
 
 | 机器 / 入口 | 用途与最后依据 | 本次整理时的核对 |
