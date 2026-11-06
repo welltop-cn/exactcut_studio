@@ -2079,6 +2079,21 @@ def test_time_formats_commit_immediately_for_both_segment_types(editor, kind, co
     assert workbench_draft(editor)['clipEdits'][segment]=={'start':270,'end':1951}
 
 
+def test_manual_range_error_clears_after_valid_time_correction(editor):
+    editor.evaluate('session.metadata.frame_count=3600')
+    open_auto(editor)
+    editor.locator('#mosaicAddClip').click()
+    end = editor.locator('#mosaicEnd')
+    start = editor.locator('#mosaicStart')
+    end.fill('00:53:06'); end.press('Enter')
+    start.fill('00:54:06'); start.press('Enter')
+    assert '开始帧不能晚于结束帧' in editor.locator('#mosaicStatus').inner_text()
+    start.fill('00:33:06'); start.press('Enter')
+    assert start.input_value() == '00:33:06'
+    assert end.input_value() == '00:53:06'
+    assert '开始帧不能晚于结束帧' not in editor.locator('#mosaicStatus').inner_text()
+
+
 def timeline_point(page, frame):
     rail=page.locator('#mosaicTimelineTracks').bounding_box()
     total=page.evaluate('session.metadata.frame_count')

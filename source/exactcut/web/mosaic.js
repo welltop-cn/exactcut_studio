@@ -10,7 +10,7 @@
   let trackToken=0,clipBounds=null;
   let deletions=[],savedDeletions=[],oldDraftRaw=null,mutationBusy=false,resultBefore=false,resultMode=false;
   let stopPending=false,previewOperation=null;
-  let playAttempt=0,playbackError=false,statusMessage='',statusError=false;
+  let playAttempt=0,playbackError=false,statusMessage='',statusError=false,timeValidationError=false;
   let sourceManager=null,sourceBinding=null,beforeBinding=null;
   let validTimeRange=null,seekSequence=0,timeJumpEditing=false;
   const pendingJob=(job=batchJob)=>['queued','running','cancelling'].includes(job?.status);
@@ -86,7 +86,7 @@
     $('mosaicStatus').textContent=[statusMessage,playbackError==='NotAllowedError'?'点击播放以继续':playbackError?'暂时无法播放，请重试':''].filter(Boolean).join('\n');
     $('mosaicStatus').classList.toggle('error',statusError||playbackError);
   }
-  function status(message,error=false){statusMessage=error?EditorBusy.message(message,'视频处理未完成，请重试；原成片保留'):message;statusError=error;paintStatus();}
+  function status(message,error=false){timeValidationError=false;statusMessage=error?EditorBusy.message(message,'视频处理未完成，请重试；原成片保留'):message;statusError=error;paintStatus();}
   const guard=fn=>(...args)=>{try{return fn(...args);}catch(e){status(e.message,true);}};
   function clock(frame){const {fps_num:n,fps_den:d}=meta(),s=Math.floor(frame*d/n);return [Math.floor(s/60),s%60,frame-Math.ceil(s*n/d)].map(v=>String(v).padStart(2,'0')).join(':');}
   function parse(value){
@@ -547,9 +547,9 @@
   $('mosaicFrameRetry').onclick=loadFrame;
   $('mosaicPrevious').onclick=()=>seek(wanted-1);$('mosaicNext').onclick=()=>seek(wanted+1);
   $('mosaicSeek').oninput=e=>seek(Number(e.target.value));
-  const timeGuard=fn=>(...args)=>{try{return fn(...args);}catch(e){
+  const timeGuard=fn=>(...args)=>{try{const result=fn(...args);if(timeValidationError)status('');return result;}catch(e){
     if(validTimeRange){$('mosaicStart').value=clock(validTimeRange.start);$('mosaicEnd').value=clock(validTimeRange.end-1);}
-    paint();status(e.message,true);
+    paint();status(e.message,true);timeValidationError=true;
   }};
   $('mosaicFrameNumber').oninput=()=>{timeJumpEditing=true;seekSequence++;clearTimeout(timer);};
   $('mosaicFrameNumber').onchange=timeGuard(e=>{timeJumpEditing=false;seek(parse(e.target.value));});
