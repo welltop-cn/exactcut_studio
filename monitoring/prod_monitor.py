@@ -142,6 +142,8 @@ def event_context(event, config, webhook=''):
             http.append(route if key == 'route' else f'{key}={safe(event[key])}')
     if http:
         lines.append('请求：' + ' '.join(http))
+    if event.get('upstream_url'):
+        lines.append('上游：' + safe(event['upstream_url'], 1000))
     if event.get('at'):
         lines.append(f'样例时间：{stamp(event["at"], seconds=True)}')
     lines.append(f'主机：{safe(config["host_label"], 40)}')

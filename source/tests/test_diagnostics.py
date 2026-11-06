@@ -44,6 +44,114 @@ def test_context_and_redaction(diag, monkeypatch):
     assert (root / 'logs').stat().st_mode & 0o077 == 0
 
 
+@pytest.mark.parametrize('url, expected', [
+    ('https://user:password@media.example/EP25.mp4?Signature=secret&AccessKeyId=key&Expires=123&token=token#private',
+     'https://media.example/EP25.mp4'),
+    ('http://user:password@[2001:db8::1]:8080/EP25.mp4?x=secret', 'http://[2001:db8::1]:8080/EP25.mp4'),
+    ('https://media.example/EP25.mp4', 'https://media.example/EP25.mp4'),
+    ('https://[invalid', ''), ('https://media.example:bad/file', ''),
+    ('file:///private/file', ''), ('relative?token=secret', ''), (None, ''),
+])
+def test_redact_upstream_url(url, expected):
+    assert module().redact_url(url) == expected
+
+
+@pytest.mark.parametrize('status', [None, 200])
+def test_http_failed_original_context_and_signed_url_redaction(diag, monkeypatch, status):
+    from http.server import BaseHTTPRequestHandler
+    from io import BytesIO
+    from types import SimpleNamespace
+    from exactcut import originals, webserver
+
+    d, root = diag
+    batch = 'a' * 32
+    (root / 'draft.json').write_text(json.dumps({'display_name': '测试项目', 'draft': {'drama_title': '剧名'}}))
+    monkeypatch.setattr(webserver.workflow, 'folder', lambda _: root)
+    monkeypatch.setattr(BaseHTTPRequestHandler, 'parse_request', lambda _: True)
+    signed = 'https://user:private-password@media.example/EP25.mp4?Signature=private-signature&AccessKeyId=private-key&Expires=private-expiry&token=private-token#private-fragment'
+    monkeypatch.setattr(originals, 'sign_original', lambda *a, **k: {'url': signed})
+
+    def fail():
+        raise ValueError('IncompleteRead ' + signed)
+
+    class Remote:
+        status = 200
+        headers = {'Content-Length': '100'}
+        closed = False
+
+        def iter_bytes(self):
+            yield b'partial'
+            fail()
+
+        def close(self):
+            self.closed = True
+
+    remote = Remote()
+    handler = webserver.Handler.__new__(webserver.Handler)
+    handler.command = 'GET'
+    handler.path = f'/api/batches/{batch}/originals/EP25/file'
+    handler.headers = {'X-Client-Request-ID': 'b' * 32}
+    handler.server = SimpleNamespace(base_path='')
+    handler.wfile = BytesIO()
+    handler.send_response = lambda code: setattr(handler, 'diagnostic_status', code)
+    handler.send_header = lambda *args: None
+    handler.end_headers = lambda: None
+
+    def request(self):
+        assert self.parse_request()
+        d.bind(actor='fixture-user')
+        def getter(url):
+            assert url == signed  # The actual fetch still uses the signed address.
+            if status is None:
+                fail()
+            return remote
+        self._send_original(originals.open_original('101606', 'EP25', getter=getter))
+
+    monkeypatch.setattr(BaseHTTPRequestHandler, 'handle_one_request', request)
+    with d.context():
+        previous = d.current()
+        with pytest.raises(ValueError, match='IncompleteRead'):
+            handler.handle_one_request()
+        assert d.current() == previous
+    failed, completed = records(root)
+    assert failed['event'] == 'http.failed'
+    for row in (failed, completed):
+        assert row['method'] == 'GET' and row['status'] == status
+        assert isinstance(row['duration_ms'], int) and row['duration_ms'] >= 0
+        assert row['project_name'] == '测试项目' and row['batch_id'] == batch
+        assert row['upstream_url'] == 'https://media.example/EP25.mp4'
+        assert row['client_request_id'] == 'b' * 32
+    assert completed['event'] == 'http.completed'
+    assert remote.closed is (status == 200)
+    text = json.dumps(records(root))
+    for secret in ('private-', 'Signature=', 'AccessKeyId=', 'Expires=', 'token=', 'user:'):
+        assert secret not in text
+
+
+@pytest.mark.parametrize('document, expected', [
+    ({'draft': {'drama_title': '剧名'}}, '剧名'),
+    ({'draft': None}, None), ({'display_name': 123}, None),
+    ([], None), ('invalid-json', None), (None, None),
+])
+def test_request_project_context_is_optional(tmp_path, monkeypatch, document, expected):
+    from http.server import BaseHTTPRequestHandler
+    from types import SimpleNamespace
+    from exactcut import webserver
+    d = module()
+    if document is not None:
+        (tmp_path / 'draft.json').write_text(document if isinstance(document, str) else json.dumps(document))
+    monkeypatch.setattr(webserver.workflow, 'folder', lambda _: tmp_path)
+    monkeypatch.setattr(BaseHTTPRequestHandler, 'parse_request', lambda _: True)
+    handler = webserver.Handler.__new__(webserver.Handler)
+    handler.path = '/api/batches/' + 'a' * 32 + '/originals'
+    handler.command = 'GET'
+    handler.headers = {}
+    handler.server = SimpleNamespace(base_path='')
+    with d.context():
+        assert handler.parse_request()
+        assert d.current().get('project_name') == expected
+
+
 @pytest.mark.parametrize('succeeds', [True, False])
 def test_segment_attempt_event_keeps_job_context(diag, succeeds):
     from exactcut import segment_reencode

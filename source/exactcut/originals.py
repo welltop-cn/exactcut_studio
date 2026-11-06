@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from urllib.parse import urlparse
 
+from . import diagnostics as diag
 from .runtime import CODE_ROOT, data_root, environment, protect_path, require_material_fetch, source_root
 from .source_cache import check_drama, check_episode
 
@@ -277,6 +278,7 @@ def _get_stream(url):
 
 def open_original(drama_id, episode, *, store=None, getter=None):
     signed = sign_original(drama_id, episode, store=store)
+    diag.bind(upstream_url=diag.redact_url(signed['url']))
     remote = (getter or _get_stream)(signed['url'])
     if remote.status != 200:
         remote.close()

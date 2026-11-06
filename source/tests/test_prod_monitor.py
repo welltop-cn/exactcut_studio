@@ -68,7 +68,7 @@ def test_http_failure_context(tmp_path, env, http_failure):
         '主机：线上', '日志：' + path.name, '栈：models.py:939 generate',
     ):
         assert expected in text
-    for absent in ('method=', 'status=', 'duration_ms=', '项目名：'):
+    for absent in ('method=', 'status=', 'duration_ms=', '项目名：', '上游：'):
         assert absent not in text
 
 
@@ -76,7 +76,8 @@ def test_context_optional_fields_and_redaction(tmp_path, env, http_failure):
     config, state, sender = env
     hook = 'https://notify.example/custom/private-hook'
     http_failure.update(method='GET', status=0, duration_ms=123.5,
-                        title='测试项目', request_id='request-full-id', job_id='job-full-id',
+                        project_name='测试项目', request_id='request-full-id', job_id='job-full-id',
+                        upstream_url='https://user:pass-private-value@upstream.example/EP25.mp4?Signature=signed-private-value&AccessKeyId=access-private-value&Expires=expires-private-value#fragment-private-value',
                         render_job_id='render-job-full-id', render_id='render-full-id')
     http_failure['route'] += '?token=route-private-value&other=private-query'
     http_failure['error']['frames'][-1]['file'] = '/private/runtime/models.py'
@@ -94,11 +95,17 @@ def test_context_optional_fields_and_redaction(tmp_path, env, http_failure):
     for value in ('GET', 'status=0', 'duration_ms=123.5', '测试项目',
                   'request-full-id', 'job-full-id', 'render-job-full-id', 'render-full-id',
                   'https://download.example/video/EP25.mp4', 'https://download.example/another.mp4',
+                  '上游：https://upstream.example/EP25.mp4',
                   '栈：models.py:939 generate'):
         assert value in text
     for value in ('private-value', 'private-query', 'Signature=', 'AccessKeyId=', 'Expires=',
                   '?token=', '/private/', '/private-file.txt', hook, 'open.feishu.cn', 'user:'):
         assert value not in text
+
+
+@pytest.mark.parametrize('key', ['project_name', 'title', 'name', 'batch_name'])
+def test_project_name_aliases(key):
+    assert '项目名：测试项目' in m.event_context({key: '测试项目'}, m.DEFAULTS)
 
 
 def test_context_survives_cooldown(tmp_path, env, http_failure):

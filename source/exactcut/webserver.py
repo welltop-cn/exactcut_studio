@@ -994,7 +994,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 return super().handle_one_request()
             except Exception as exc:
-                diag.event('http.failed', level='error', route=self.diagnostic_route, error=exc)
+                diag.event('http.failed', level='error', route=self.diagnostic_route,
+                           method=getattr(self, 'command', None), status=self.diagnostic_status,
+                           duration_ms=round((time.monotonic()-started)*1000), error=exc)
                 raise
             finally:
                 if (self.diagnostic_route and self.diagnostic_route != '/healthz'
@@ -1021,6 +1023,14 @@ class Handler(BaseHTTPRequestHandler):
             batch = re.match(r'/api/batches/([0-9a-f]{32})(?:/|$)', route)
             if batch:
                 diag.bind(batch_id=batch[1])
+                try:
+                    document = read_json(workflow.folder(batch[1]) / 'draft.json') or {}
+                    inner = document.get('draft') if isinstance(document.get('draft'), dict) else {}
+                    name = document.get('display_name') or inner.get('drama_title')
+                    if isinstance(name, str) and name.strip():
+                        diag.bind(project_name=name)
+                except Exception:
+                    pass  # Optional diagnostics must never affect request handling.
             if self.command != 'GET' and self.diagnostic_route != '/api/client-events':
                 diag.event('http.started', route=self.diagnostic_route, method=self.command)
         return valid
