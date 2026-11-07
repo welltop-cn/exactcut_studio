@@ -111,7 +111,7 @@ const elements={},callbacks=[],frames=[],media=[];
 const $=id=>elements[id]??=( {style:{setProperty(){}},value:'',hidden:false} );
 const timeline={querySelectorAll:()=>[],hasPointerCapture:()=>false};
 const video={duration:120};
-let context={},seekSequence=0,timeJumpEditing=false,timer,controller=null,wanted=0,ready=0;
+let context={},seekSequence=0,timeJumpEditing=false,timer,seekFrameTimer=null,controller=null,wanted=0,ready=0;
 let timelineDrag=null,timelineSignature='',scanEvent=null,editing=null,epoch=1;
 const image={},rate=()=>30,meta=()=>({frame_count:3600}),editLocked=()=>false;
 const items=['suggestion','mosaic','deletion','ignored'].map((kind,i)=>({
