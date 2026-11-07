@@ -95,8 +95,12 @@ def tracks(*spans):
 
 
 @pytest.mark.integration
-@pytest.mark.parametrize('ranges', [[], [[10, 20]], [[100, 130]]])
-def test_mosaic_encodes_only_masked_gops_and_matches_full_path(tmp_path, events, monkeypatch, ranges):
+@pytest.mark.parametrize('ranges,encoded_spans', [
+    ([], [(30, 90), (150, 180)]),
+    ([[10, 20]], [(0, 10), (20, 90), (150, 180)]),
+    ([[100, 130]], [(30, 100), (130, 180)]),
+])
+def test_mosaic_encodes_only_masked_gops_and_matches_full_path(tmp_path, events, monkeypatch, ranges, encoded_spans):
     source = make_source(tmp_path/'source.mp4');meta = cutting.probe_source(source)
     regions = tracks((45, 70), (150, 160))
     smart = mosaic_render.process_video(source, tmp_path/'smart.mp4', meta, regions, ranges)
@@ -106,12 +110,19 @@ def test_mosaic_encodes_only_masked_gops_and_matches_full_path(tmp_path, events,
     full = mosaic_render.process_video(source, tmp_path/'full.mp4', meta, regions, ranges)
     assert smart['metadata'] == full['metadata']
     quality = psnr(tmp_path/'smart.mp4', tmp_path/'full.mp4')
-    assert len(quality) == full['metadata']['frame_count'] and min(quality) >= 35
+    assert len(quality) == full['metadata']['frame_count']
     kept = [n for a, b in cutting.keep_ranges(ranges, 180) for n in range(a, b)] if ranges else list(range(180))
     original, actual = frame_hashes(source), frame_hashes(tmp_path/'smart.mp4')
+    encoded = {n for a, b in encoded_spans for n in range(a, b)}
+    assert event['encoded_frames'] == len(encoded)
+    assert event['copied_frames'] == len(kept)-len(encoded)
     for i, n in enumerate(kept):
-        if not (30 <= n < 90 or 150 <= n < 180 or any(abs(n-a) < 30 for r in ranges for a in r)):
-            assert actual[i] == original[n], f'frame {n} outside effects and cut GOPs must be the source frame'
+        if n in encoded:
+            assert quality[i] >= 35, f're-encoded source frame {n} differs from the full effect path'
+        else:
+            # Full encoding adds a lossy RGB/YUV round trip even without a mask.
+            # Copies must match the original exactly, not that degraded reference.
+            assert actual[i] == original[n], f'copied source frame {n} must be bit-identical'
     if not ranges:
         audio = lambda p: [x['data_hash'] for x in segments.packets(p, cutting.run, 'a:0')]
         assert audio(tmp_path/'smart.mp4') == audio(source)
@@ -135,6 +146,30 @@ def test_failed_validation_falls_back_to_full_encode(tmp_path, events, monkeypat
     event = used(events)
     assert not event['used'] and 'PSNR below' in event['reason']
     assert cutting.probe_source(tmp_path/'out.mp4')['frame_count'] == 150
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize('frame,reason', [(0, 'copied frame differs'), (89, 'mosaic piece PSNR below floor')])
+def test_corrupted_candidate_is_rejected_including_last_encoded_frame(tmp_path, events, monkeypatch, frame, reason):
+    source = make_source(tmp_path/'source.mp4');meta = cutting.probe_source(source)
+    validate = segments.validate
+    def corrupt_candidate(final, source, kept, meta, work, state, run):
+        damaged = work/'damaged.mp4'
+        # Lossless re-encode preserves every other pixel; frame 89 is the last
+        # frame of the first encoded piece and must still be checked after trim.
+        run(['ffmpeg', '-y', '-v', 'error', '-i', str(final), '-map', '0:v:0', '-an',
+             '-vf', f"drawbox=x=0:y=0:w=iw:h=ih:color=white:t=fill:enable='eq(n,{frame})'",
+             '-c:v', 'libx264', '-crf', '0', '-pix_fmt', 'yuv420p', str(damaged)])
+        return validate(damaged, source, kept, meta, work, state, run)
+    monkeypatch.setattr(segments, 'validate', corrupt_candidate)
+    output = tmp_path/'out.mp4'
+    result = mosaic_render.process_video(source, output, meta, tracks((45, 70), (150, 160)), [])
+    event = used(events)
+    assert event['used'] is False and reason in event['reason'], event
+    assert result['metadata']['frame_count'] == 180
+    disabled(monkeypatch)
+    mosaic_render.process_video(source, tmp_path/'full.mp4', meta, tracks((45, 70), (150, 160)), [])
+    assert frame_hashes(output) == frame_hashes(tmp_path/'full.mp4')
 
 
 @pytest.mark.integration

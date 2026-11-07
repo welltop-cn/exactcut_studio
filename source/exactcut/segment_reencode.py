@@ -252,7 +252,10 @@ def validate(final, source, kept, meta, work, state, run):
     for number, piece in enumerate(p for p in state['encoded'] if p['graph']):
         stats = work/f'segments-effect-{number}.psnr'
         reference = re.sub(r'\[(\d+):v\]', lambda m: f'[{int(m[1])+1}:v]', piece['graph']).replace('[out]', '[reference]')
-        reference += (f';[0:v]setpts=PTS-STARTPTS,setpts=N/({fps}*TB)[o];[reference]setpts=N/({fps}*TB)[r];'
+        # -frames:v limits the output sink, not filter evaluation: FFmpeg 5.1
+        # can write one extra PSNR sample. Bound both comparison inputs instead.
+        reference += (f';[0:v]trim=end_frame={piece["frames"]},setpts=N/({fps}*TB)[o];'
+                      f'[reference]trim=end_frame={piece["frames"]},setpts=N/({fps}*TB)[r];'
                       f"[o][r]psnr=stats_file='{_escape(stats)}'[quality]")
         inputs = [*_seek(piece['output'], rate), '-i', str(final), *_seek(piece['source'], rate), '-i', str(source),
                   *[arg for mask in piece['masks'] for arg in ('-i', str(mask))]]
