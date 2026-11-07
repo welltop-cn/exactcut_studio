@@ -252,6 +252,11 @@ def _execution(path, request_id=None, interval=3, *, phase=None):
 
 
 def end_execution(path, request_id=None, **fields):
+    # Managed batches record execution state on version shards, and both the legacy
+    # runtime and result writers refuse them by design. Raising here aborts the whole
+    # worker tick, so finishing such a job is a no-op for the legacy records.
+    if material_versions.managed(path):
+        return
     if request_id is None:
         update(path, executor_running=False, execution_ended_at=now_iso(), **fields)
     else:

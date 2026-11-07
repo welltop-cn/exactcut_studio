@@ -265,22 +265,26 @@ class _Remote:
         self._response.close()
 
 
-def _get_stream(url):
+def _get_stream(url, start=0):
     import requests
     session = requests.Session()
     session.trust_env = False
     try:
-        response = session.get(url, stream=True, timeout=(20, 300))
+        response = session.get(url, stream=True, timeout=(20, 300),
+                               headers={'Range': f'bytes={start}-'} if start else None)
     except requests.RequestException as exc:
         raise OriginalsUnavailable(502, '原片暂时下不了') from exc
     return _Remote(response)
 
 
-def open_original(drama_id, episode, *, store=None, getter=None):
+def open_original(drama_id, episode, *, store=None, getter=None, start=0):
+    """Open the object, optionally continuing from ``start`` bytes already delivered."""
     signed = sign_original(drama_id, episode, store=store)
     diag.bind(upstream_url=diag.redact_url(signed['url']))
-    remote = (getter or _get_stream)(signed['url'])
-    if remote.status != 200:
+    get = getter or _get_stream
+    remote = get(signed['url'], {'Range': f'bytes={start}-'}) if start else get(signed['url'])
+    expected = 206 if start else 200
+    if remote.status != expected:
         remote.close()
         raise OriginalsUnavailable(502, '原片暂时下不了')
     return remote

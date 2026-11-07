@@ -1482,7 +1482,7 @@ class Handler(BaseHTTPRequestHandler):
         except RuntimeError as exc:
             return self.respond(400, {'error': str(exc)})
         if extra == 'file':
-            return self._send_original(remote)
+            return self._send_original(remote, resume=lambda sent: originals.open_original(drama_id, episode, start=sent))
         self.send_response(302)
         self.send_header('Location', signed['url'])
         self.send_header('Cache-Control', 'no-store')
@@ -1490,7 +1490,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header('Content-Length', '0')
         self.end_headers()
 
-    def _send_original(self, remote):
+    def _send_original(self, remote, resume=None):
         length = remote.headers.get('Content-Length')
         self.send_response(200)
         self.send_header('Content-Type', remote.headers.get('Content-Type') or 'video/mp4')
@@ -1499,14 +1499,32 @@ class Handler(BaseHTTPRequestHandler):
         if length and str(length).isdigit():
             self.send_header('Content-Length', str(length))
         self.end_headers()
-        try:
-            for chunk in remote.iter_bytes():
-                if chunk:
-                    self.wfile.write(chunk)
-        except (BrokenPipeError, ConnectionResetError):
-            return
-        finally:
-            remote.close()
+        sent, attempts = 0, 0
+        while True:
+            try:
+                for chunk in remote.iter_bytes():
+                    if chunk:
+                        self.wfile.write(chunk)
+                        sent += len(chunk)
+                return
+            except (BrokenPipeError, ConnectionResetError):
+                return
+            except Exception as exc:
+                # The response head is already sent, so the only way to finish it is
+                # to continue the same body from the byte offset the client already has.
+                from requests.exceptions import RequestException
+                if not isinstance(exc, RequestException) or resume is None or attempts >= 3:
+                    raise
+                attempts += 1
+                remote.close()
+                try:
+                    remote = resume(sent)
+                except Exception:
+                    raise exc from None
+                if not remote:
+                    raise exc from None
+            finally:
+                remote.close()
 
     def stream_video(self, path, *, download_name=None):
         started = time.monotonic()
