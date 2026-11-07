@@ -1501,30 +1501,31 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         sent, attempts = 0, 0
         while True:
+            stream = remote
             try:
-                for chunk in remote.iter_bytes():
+                for chunk in stream.iter_bytes():
                     if chunk:
                         self.wfile.write(chunk)
                         sent += len(chunk)
+                stream.close()
                 return
             except (BrokenPipeError, ConnectionResetError):
+                stream.close()
                 return
             except Exception as exc:
                 # The response head is already sent, so the only way to finish it is
                 # to continue the same body from the byte offset the client already has.
+                stream.close()
                 from requests.exceptions import RequestException
                 if not isinstance(exc, RequestException) or resume is None or attempts >= 3:
                     raise
                 attempts += 1
-                remote.close()
                 try:
                     remote = resume(sent)
                 except Exception:
                     raise exc from None
                 if not remote:
                     raise exc from None
-            finally:
-                remote.close()
 
     def stream_video(self, path, *, download_name=None):
         started = time.monotonic()

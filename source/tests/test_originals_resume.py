@@ -11,6 +11,7 @@ class Remote:
         self.chunks, self.headers, self.closed = chunks, {'Content-Length': str(length), **(headers or {})}, False
 
     def iter_bytes(self):
+        assert not self.closed, 'stream used after close()'
         for chunk in self.chunks:
             if isinstance(chunk, Exception):
                 raise chunk
