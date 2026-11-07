@@ -14,6 +14,7 @@
 
 | 时间 | 类型 | 应用版本 | 内容 | 详细记录 |
 | --- | --- | --- | --- | --- |
+| 2026-11-07 15:49 | 应用发布 | `f40e59f`（含优化 `a58a672`） | 首屏详情与侧栏并行，已初始化工作台恢复避开全局锁；三份配置哈希不变；完整回归及真实 Chrome 验收通过，近期样本中位 7.59→4.98 秒，仍有后端等待 | [首屏优化上线与实测](verification/first-load-production-2026-11-07.md) |
 | 2026-11-07 14:05–15:09 | 发布后业务验收与测试 OSS 清理 | 保持 `824cfb5`，未重启 | 真实 Chrome 复制 4 个剧，11 条成片及编辑/恢复/故障重试验证；4 个来源未变；本批 28 个 OSS 对象已删除，5 个测试项目与本地/服务器文件待用户通知删除；未覆盖项明示 | [Chrome 验收与数据清单](verification/production-chrome-acceptance-2026-11-07.md) |
 | 2026-11-07 12:09 | 应用发布 | `824cfb5` | main 已同步；分段校验及旧测试阻塞修复后发布，配置哈希不变；健康、静态资源与已有成片 Range 读取通过 | [正式发布记录](archive/verification/production-main-824cfb5-2026-11-07.md) |
 | 2026-11-06 11:34 | 监控（告警上下文） | 保持 `8216c27`，未重启 | 更新 deploy 监控脚本：报错告警带完整项目 id、深链与请求路径等排障上下文；不改 crontab／webhook／应用；备份 `prod_monitor.py.20261106113344` | [11 月 6 日监控告警上下文](archive/verification/production-monitor-context-2026-11-06.md) |
@@ -23,7 +24,7 @@
 | 2026-11-02 17:32 | 运行配置 | 保持 `8216c27` | AI 共享额度 6/1 → 60/5，即时生效 | [11 月 2 日配置变更](archive/verification/production-config-change-2026-11-02.md) |
 | 2026-10-31 | 应用发布 | `8216c277f27fd88040944faae77a9e82a15be765` | 下方字幕识别及主动打开时间轴等；前驱 `us-east-20261030-reviewed-ea3db64` | [正式发布及验证](archive/verification/bottom-subtitles-production-2026-10-31.md) |
 
-2026-11-07 发布后实读的应用 release 为 `us-east-20261107-main-824cfb5`，commit `824cfb56cc05d5ebb40dcb006c6b67de6d67fa12`；健康正常，生产配置保持原值。此结论对应该次发布后的核验时刻。
+2026-11-07 15:49 发布后实读的应用 release 为 `us-east-20261107-first-load-f40e59f`，commit `f40e59fe4c91e6743f97f497e537ecc2027b91fe`；健康正常、worker 存活、maintenance=false，生产配置保持原值。此前 12:09 发布的 `us-east-20261107-main-824cfb5` 为保留的 previous。此结论对应该次发布后的核验时刻。
 
 ## 每次变更的记录要求
 
