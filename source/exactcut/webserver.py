@@ -1198,6 +1198,15 @@ class Handler(BaseHTTPRequestHandler):
             fresh['imported_batches'] = result['imported_batches']
         return fresh
 
+    def restored_workspace(self, state=None):
+        if state is None:
+            path = ROOT / '.web-state/workspaces' / (self.user['username'] + '.json')
+            state = read_json(path) if path.exists() else {}
+        chosen = state.get('last_batch_id')
+        if state.get('initialized') and isinstance(chosen, str) and self.can_access(chosen):
+            return {'batch_id': chosen}
+        return None
+
     def workspace(self, data):
         """Called under the existing mutation lock; persist onboarding per account."""
         path = ROOT / '.web-state/workspaces' / (self.user['username'] + '.json')
@@ -1210,9 +1219,9 @@ class Handler(BaseHTTPRequestHandler):
             state['initialized'] = True
             write_json_atomic(path, state)
             return {'batch_id': bid}
-        chosen = state.get('last_batch_id')
-        if state.get('initialized') and isinstance(chosen, str) and self.can_access(chosen):
-            return {'batch_id': chosen}
+        restored = self.restored_workspace(state)
+        if restored is not None:
+            return restored
         batches = workflow.summaries(self.can_access, compact=True)
         accessible = {b['id']: b for b in batches if self.can_access(b['id'])}
         owned = [b for b in batches if accounts.owner(workflow.folder(b['id'])) == self.user['username']]
@@ -1837,8 +1846,11 @@ class Handler(BaseHTTPRequestHandler):
                 if not self.is_admin(): return
                 return self.respond(200, {'users':accounts.manage(self.server.auth_db,self.user['username'],data)})
             if self.path == '/api/workspace':
-                with LOCK:
-                    return self.respond(200, self.workspace(data))
+                result = self.restored_workspace() if not data else None
+                if result is None:
+                    with LOCK:
+                        result = self.workspace(data)
+                return self.respond(200, result)
             if self.path == '/api/storage/cleanup':
                 if not self.is_admin():return
                 from .storage import cleanup,report

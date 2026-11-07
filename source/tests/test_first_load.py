@@ -43,26 +43,27 @@ def test_every_served_script_is_declared_as_package_data(app):
     assert not missing, f'Browser modules missing from installed package: {missing}'
 
 
-def test_startup_parallel_identity_preserves_workspace_dependency():
+def test_startup_waits_for_identity_then_opens_project_without_waiting_for_sidebar():
     source = Path(__file__).resolve().parents[1] / 'exactcut/web/app.js'
     script = r'''
 const fs=require('fs'),vm=require('vm'),assert=require('assert/strict');
 const source=fs.readFileSync(process.argv[1],'utf8');
 (async()=>{
-for(const linked of ['', '#linked']){
+for(const linked of ['', '#'+ 'a'.repeat(32)]){
  const calls=[],elements=new Map(),listeners=new Map();let resolveMe,resolveWorkspace,opened;
  const ctx=vm.createContext({Promise,window:{addEventListener:(event,handler)=>listeners.set(event,handler)},location:{hash:linked},$:id=>{if(!elements.has(id))elements.set(id,{});return elements.get(id)},
  api:path=>{calls.push(path);if(path==='/api/me')return new Promise(r=>resolveMe=r);if(path==='/api/workspace')return new Promise(r=>resolveWorkspace=r);throw Error(path)},
  refreshBatches:async()=>{calls.push('list');return [{id:'linked'}]},openBatch:async(id,opts)=>{opened=[id,opts]},showEmptyWorkspace:()=>calls.push('empty'),refreshQueue:()=>calls.push('queue'),toast:()=>{},poll:async()=>calls.push('poll')});
  vm.runInContext('let currentUser,polling=true;'+source.slice(source.indexOf('async function restoreWorkspace('),source.indexOf(';setInterval(')),ctx);
- assert.deepEqual(calls,['/api/me','/api/workspace']);
+ assert.deepEqual(calls,['/api/me']);
  assert.equal(typeof listeners.get('hashchange'),'function');
- resolveWorkspace({batch_id:null});await new Promise(setImmediate);
  assert(!calls.includes('list'),'list must wait for identity');
  resolveMe({role:'producer',name:'Fixture'});await new Promise(setImmediate);
+ if(linked){assert(!calls.includes('/api/workspace'),'a deep link must not wait for saved selection')}
+ else{assert(calls.includes('/api/workspace'));resolveWorkspace({batch_id:null});await new Promise(setImmediate)}
  assert.equal(calls.filter(x=>x==='list').length,1);assert(!calls.includes('poll'),'no immediate duplicate poll');
  assert.equal(calls.filter(x=>x==='queue').length,1);
- if(linked){assert.equal(opened[0],'linked');assert.equal(opened[1].refreshList,false)}else assert(calls.includes('empty'));
+ if(linked){assert.equal(opened[0],'a'.repeat(32));assert.equal(opened[1].refreshList,false)}else assert(calls.includes('empty'));
  assert.equal(vm.runInContext('polling',ctx),false);
 }
 })().catch(e=>{console.error(e);process.exit(1)});

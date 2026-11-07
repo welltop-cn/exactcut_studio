@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import json
 from unittest.mock import patch
 
@@ -60,7 +61,9 @@ def test_list_and_detail_do_not_hold_global_lock_while_sending(app, monkeypatch)
     monkeypatch.setattr(webserver.Handler, 'respond', observe)
     for route in ('/home/api/batches', '/home/api/batches/sidebar', '/home/api/batches/' + bid):
         assert request(app, 'GET', route, headers=headers)[0] == 200
-    assert held == [False, False, False]
+    assert request(app, 'POST', '/home/api/workspace', {'batch_id': bid}, headers)[0] == 200
+    assert request(app, 'POST', '/home/api/workspace', {}, headers)[0] == 200
+    assert held == [False, False, False, False, False]
 
 
 def test_managed_sidebar_does_not_build_details(app, monkeypatch):
@@ -85,6 +88,40 @@ def test_initialized_workspace_restores_accessible_selection_without_listing(app
     monkeypatch.setattr(workflow, 'summaries', expensive)
     status, _, body = request(app, 'POST', '/home/api/workspace', {}, headers)
     assert status == 200, body
+    assert json.loads(body) == {'batch_id': first}
+
+
+def test_saved_workspace_rechecks_ownership_after_access_changes(app):
+    accounts.manage(app.auth_db, 'admin', {'username': 'alice', 'name': 'Alice',
+                                        'password': 'fixture-alice-password'})
+    status, response_headers, _ = request(app, 'POST', '/home/api/login',
+                                         {'username': 'alice', 'password': 'fixture-alice-password'},
+                                         {'X-Exactcut-Request': '1'})
+    assert status == 200
+    headers = {'Cookie': response_headers['Set-Cookie'].split(';')[0], 'X-Exactcut-Request': '1'}
+    first = json.loads(request(app, 'POST', '/home/api/workspace', {}, headers)[2])['batch_id']
+    accounts.assign(workflow.folder(first), {'username': 'bob'})
+    status, _, body = request(app, 'POST', '/home/api/workspace', {}, headers)
+    assert status == 200
+    assert json.loads(body) == {'batch_id': None}
+    assert request(app, 'GET', '/home/api/batches/' + first, headers=headers)[0] == 404
+    assert request(app, 'POST', '/home/api/workspace', {'batch_id': first}, headers)[0] == 400
+
+
+def test_initialized_workspace_restores_while_scheduler_holds_global_lock(app):
+    headers = login(app)
+    first = json.loads(request(app, 'POST', '/home/api/workspace', {}, headers)[2])['batch_id']
+    blocked = False
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with webserver.LOCK:
+            pending = pool.submit(request, app, 'POST', '/home/api/workspace', {}, headers)
+            try:
+                pending.result(timeout=1)
+            except TimeoutError:
+                blocked = True
+        status, _, body = pending.result(timeout=3)
+    assert not blocked, 'read-only workspace restoration must not wait for the scheduler lock'
+    assert status == 200
     assert json.loads(body) == {'batch_id': first}
 
 

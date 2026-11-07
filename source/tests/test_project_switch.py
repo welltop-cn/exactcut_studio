@@ -8,7 +8,7 @@ def test_project_switch_hides_old_content_and_ignores_out_of_order_responses():
     script = r'''
 const vm=require('node:vm'),assert=require('node:assert/strict');
 const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
-const nodes={},pending=[],rendered=[];
+const nodes={},pending=[],rendered=[],workspaceSaves=[];
 let paused=0,released=0;
 const video={dataset:{},pause(){paused++},removeAttribute(){},querySelectorAll(){return []},load(){released++}};
 const ctx=vm.createContext({
@@ -17,7 +17,7 @@ const ctx=vm.createContext({
  previewObserver:{disconnect(){}},clearTimeout(){},
  $:id=>nodes[id]||(nodes[id]={hidden:false,textContent:'',querySelectorAll:()=>[video]}),
  document:{querySelectorAll:()=>[video]},window:{confirm:()=>true},
- api:(path,data)=>path.endsWith('/hook-previews')?Promise.resolve({jobs:[]}):data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({resolve,reject})),
+ api:(path,data)=>path.endsWith('/hook-previews')?Promise.resolve({jobs:[]}):data?(workspaceSaves.push(data.batch_id),Promise.resolve({})):new Promise((resolve,reject)=>pending.push({resolve,reject})),
  renderBatches(){},showPage(name){nodes.page=name},renderEditor(){rendered.push(ctx.current.marker)},
  controls(){},renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
  localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){nodes.page='error'}
@@ -38,15 +38,18 @@ const item=marker=>({id:'a',marker,runtime:{status:'draft'},assets:[]});
  assert.equal(nodes.page,'empty','old project must be hidden before network completes');
  assert.match(nodes.emptyWorkspaceTitle.textContent,/加载/);
  assert.equal(paused,1);assert.equal(released,1);
+ assert.deepEqual(workspaceSaves,[],'workspace persistence must not compete with the detail request');
  const second=vm.runInContext("openBatch('b')",ctx);
  const third=vm.runInContext("openBatch('a')",ctx);
  pending[2].resolve(item('latest'));await third;
  pending[0].resolve(item('stale'));await first;
  pending[1].reject(Error('stale failure'));await second;
  assert.deepEqual(rendered,['latest']);assert.equal(ctx.current.marker,'latest');
+ assert.deepEqual(workspaceSaves,['a'],'only a successful current navigation may save selection');
  const failed=vm.runInContext("openBatch('b')",ctx);
  pending[3].reject(Error('offline'));await assert.rejects(failed,/offline/);
  assert.equal(nodes.page,'error');
+ assert.deepEqual(workspaceSaves,['a'],'failed navigation must not save an inaccessible selection');
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
     result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
