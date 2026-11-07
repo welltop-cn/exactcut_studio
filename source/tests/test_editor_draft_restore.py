@@ -1,4 +1,4 @@
-"""Full render snapshots and pending-segment confirmation use real editor handlers."""
+"""Full render snapshots preserve unselected segments through real editor handlers."""
 import shutil
 import subprocess
 from pathlib import Path
@@ -9,7 +9,7 @@ from test_phase2_preview_api import fixture
 import pytest
 
 
-def test_render_draft_and_pending_confirmation():
+def test_render_draft_and_unselected_segments_survive_generation():
     node = shutil.which('node')
     if not node:
         pytest.skip('Node unavailable')
@@ -30,7 +30,7 @@ const simpleEffect=()=>true,validBox=()=>true,checkedReport=r=>r;
 const belongs=(t,e)=>t.eventId===e.id,eventRange=e=>clipEdits[e.id]||e;
 const allEvents=()=>[...aiEvents,...manualClips],legacyJob=()=>false;
 const clearRemovedClip=()=>{},paint=()=>{},status=()=>{};
-eval(section('  const validTarget=', '  function pausePlayback('));
+eval(section('  const validShape=', '  function pausePlayback('));
 eval(section('  const editorDraft=', '  function validBox(').replace('const editorDraft=', 'var editorDraft='));
 eval(section('  function restoreParameters(', '  async function batchRequest('));
 eval(section('  function timelineItems(', '  function timelineTitle('));
@@ -43,26 +43,29 @@ const original={schema_version:1,
  {eventId:'ai-4',uid:'inactive',start:40,end:48,seed_frame:40,x:1,y:1,w:5,h:5,motion:'fixed',label:'未选区域',reason:'保留',adopted:false}],
  deletions:[{eventId:'ai-1',start:10,end:18}],ignoredEvents:['ai-2'],drawingEvents:['ai-3'],
  clipEdits:{'ai-5':{start:51,end:57}},clipEffects:{'ai-0':{style:'solid'}},effect:{style:'pixel'}};
-// No localStorage: recover every field, including unprocessed segments and names.
+// Legacy ignored segments become unselected, preserving their ranges and regions.
+const normalized={...structuredClone(original),ignoredEvents:[]};
 restoreParameters({editor_draft:original});
-assert.deepStrictEqual(editorDraft(),original);
-assert.equal(timelineItems().length,22);assert.equal(pendingCount(),19);
-assert(save());assert.deepStrictEqual(JSON.parse(store.get('draft')),original);
+assert.deepStrictEqual(editorDraft(),normalized);
+assert.deepStrictEqual(original.ignoredEvents,['ai-2']);
+assert.equal(timelineItems().length,22);assert.equal(pendingCount(),20);
+assert(save());assert.deepStrictEqual(JSON.parse(store.get('draft')),normalized);
 // Locked job must restore its own snapshot even if another local draft exists.
 store.set('draft','invalid local draft');restoreParameters({editor_draft:original});
-assert.deepStrictEqual(editorDraft(),original);
-let batchJob={id:'previous'},resultBefore=true,shown=0,submitted=0,confirmed=[],accept=false;
+assert.deepStrictEqual(editorDraft(),normalized);
+let batchJob={id:'previous'},resultBefore=true,shown=0,submitted=0,confirmed=[];
 const selectedBox=()=>null,showResult=()=>shown++,batchRequest=()=>submitted++;
-const window={confirm:message=>(confirmed.push(message),accept)};
+const window={confirm:message=>(confirmed.push(message),false)};
 eval(section("  $('mosaicBatchStart').onclick=", "  $('mosaicBatchView').onclick="));
 $('mosaicBatchStart').onclick();
-assert.deepStrictEqual(confirmed,['还有 19 段待处理，这些段会保持原样。继续生成？']);
-assert.equal(batchJob.id,'previous');assert.equal(resultBefore,true);assert.equal(shown,0);assert.equal(submitted,0);
-accept=true;$('mosaicBatchStart').onclick();assert.equal(submitted,1);assert.equal(shown,1);
-// Same counter drives header summary and confirmation; drawing without a box is pending.
-assert(processingSummary(1,pendingCount()).includes('待处理 19 段'));
-ignoredEvents=aiEvents.slice(2).map(e=>e.id).concat(manualClips.map(e=>e.id));
-assert.equal(pendingCount(),0);confirmed=[];$('mosaicBatchStart').onclick();
+assert.deepStrictEqual(confirmed,[]);
+assert.equal(batchJob,null);assert.equal(resultBefore,false);assert.equal(shown,1);assert.equal(submitted,1);
+assert.deepStrictEqual(editorDraft(),normalized);
+// Unselected segments remain in the draft and are summarized without a confirmation.
+assert(processingSummary(1,pendingCount()).includes('不处理 20 段'));
+deletions=allEvents().filter(e=>!targets.some(t=>belongs(t,e)&&t.adopted!==false))
+  .map(e=>({eventId:e.id,start:e.start,end:e.end}));
+assert.equal(pendingCount(),0);$('mosaicBatchStart').onclick();
 assert.equal(confirmed.length,0);assert.equal(submitted,2);
 // Leaving an already discarded result keeps the draft and never invokes reset/discard.
 (async()=>{
@@ -77,6 +80,7 @@ assert.equal(confirmed.length,0);assert.equal(submitted,2);
  assert.deepStrictEqual(requests[0].body.editor_draft,expected);requests=[];
  const save=()=>true;
  batchJob={status:'completed',discarded_at:'now'};
+ window.confirm=()=>true;
  eval(section("  $('mosaicDiscard').onclick=", "  $('mosaicReplace').onclick="));
  await $('mosaicDiscard').onclick();assert.equal(closed,1);assert.deepStrictEqual(requests,[]);
 })().catch(e=>{console.error(e);process.exitCode=1});

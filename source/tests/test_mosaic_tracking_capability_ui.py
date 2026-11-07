@@ -66,23 +66,27 @@ def test_new_manual_clip_has_no_tracking_choice(editor):
 
 
 @pytest.mark.parametrize('legacy_missing_motion',[False,True])
-def test_legacy_tracked_draft_opens_as_fixed_with_notice_without_tracker(editor,legacy_missing_motion):
+@pytest.mark.parametrize('clip_style',[None,'pixel','blur'])
+def test_legacy_tracked_draft_opens_as_fixed_with_notice_without_tracker(editor,legacy_missing_motion,clip_style):
     open_auto(editor);add_manual_mosaic(editor)
     editor.locator('#mosaicClose').click()
-    editor.evaluate("""missing => {const key=Object.keys(localStorage).find(k=>k.includes('workbench.v3'));
+    editor.evaluate("""([missing,clipStyle]) => {const key=Object.keys(localStorage).find(k=>k.includes('workbench.v3'));
       const draft=JSON.parse(localStorage.getItem(key));
       if(missing)delete draft.targets[0].motion;else draft.targets[0].motion='tracked';
       draft.effect={style:'soft_blur',strength:'heavy',expansion:'large'};
-      localStorage.setItem(key,JSON.stringify(draft));}""",legacy_missing_motion)
+      // Old drafts without an override inherit the global effect. Explicit clip effects win.
+      draft.clipEffects=clipStyle?{[draft.manualClips[0].id]:{style:clipStyle,strength:'medium',expansion:'none'}}:{};
+      localStorage.setItem(key,JSON.stringify(draft));}""",[legacy_missing_motion,clip_style])
     open_auto(editor)
     assert editor.locator('#mosaicBatchStart').is_enabled()
     assert '旧草稿已按当前规则改为固定位置' in editor.locator('#mosaicBatchHint').inner_text()
     assert '跟随目标当前不可用' not in editor.locator('#mosaicBatchHint').inner_text()
     editor.locator('[data-scan-event]').click()
     assert editor.locator('#mosaicMotion').input_value()=='fixed'
-    assert editor.locator('#mosaicLiveStyle').input_value()=='blur','legacy soft blur maps to blur'
+    expected_style=clip_style or 'blur'
+    assert editor.locator('#mosaicLiveStyle').input_value()==expected_style
     assert all(t['motion']=='fixed' for t in saved_targets(editor))
     capture_render(editor)
     editor.locator('#mosaicBatchStart').click()
     assert editor.evaluate('manualBody.targets[0].motion')=='fixed'
-    assert editor.evaluate('manualBody.targets[0].effect')=={'style':'blur','strength':'medium','expansion':'none'}
+    assert editor.evaluate('manualBody.targets[0].effect')=={'style':expected_style,'strength':'medium','expansion':'none'}

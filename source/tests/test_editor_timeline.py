@@ -11,7 +11,7 @@ from test_mosaic_ui import editor, open_auto, scan_result
 @pytest.mark.parametrize('length', [1, 45])
 @pytest.mark.parametrize('kind,label', [
     ('suggestion', 'AI 建议'), ('mosaic', '打码'),
-    ('deletion', '删除'), ('ignored', '忽略'),
+    ('deletion', '删除'), ('unselected', 'AI 建议'),
 ])
 def test_short_blocks_keep_tooltips_and_clickable_width(editor, length, kind, label):
     scan_result(editor)
@@ -22,13 +22,19 @@ def test_short_blocks_keep_tooltips_and_clickable_width(editor, length, kind, la
     }''', length)
     open_auto(editor)
     editor.locator('#mosaicScan').click()
-    if kind != 'suggestion':
-        editor.locator('[data-mosaic-card="e1"]').get_by_role('checkbox', name=label, exact=True).click()
+    card = editor.locator('[data-mosaic-card="e1"]')
+    if kind == 'unselected':
+        card.get_by_role('checkbox', name='打码', exact=True).click()
+        card.get_by_role('checkbox', name='打码', exact=True).click()
+        assert card.get_by_role('checkbox', name='打码', exact=True).get_attribute('aria-checked') == 'false'
+        assert card.get_by_role('checkbox', name='忽略', exact=True).count() == 0
+    elif kind != 'suggestion':
+        card.get_by_role('checkbox', name=label, exact=True).click()
     blocks = editor.locator('[data-timeline-event]')
     assert blocks.count() == 12
     assert blocks.evaluate_all('els=>els.every(el=>el.getBoundingClientRect().width>=8)')
     block = editor.locator('[data-timeline-event="e1"]')
-    assert kind in block.get_attribute('class')
+    assert ('suggestion' if kind == 'unselected' else kind) in block.get_attribute('class')
     assert label in block.get_attribute('title')
     assert ('1:01.0–1:02.5' if length == 45 else '1:01.0–1:01.0') in block.get_attribute('title')
     assert block.locator('.mosaic-block-label').is_hidden()
