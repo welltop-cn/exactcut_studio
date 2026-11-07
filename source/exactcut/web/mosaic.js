@@ -118,23 +118,31 @@
     if(!addingClip){$('mosaicAdjust').open=false;if(context){$('mosaicStart').value=clock(0);$('mosaicEnd').value=clock(meta().frame_count-1);}}
     paint();}
   function motionHint(){return '固定位置 · 所选时间内保持此位置';}
+  // Scrubbing never waits for the exact-frame job and never spends one either: the
+  // video shows the same source frame. The server frame is the startup calibration
+  // and the fallback for a stage that cannot show the wanted frame itself.
+  const exactFrameShown=()=>ready===wanted&&!image.hidden&&video.paused;
+  // A browser may report either the requested time or the frame's own start time,
+  // so allow half a frame instead of flooring a floating-point product.
+  const videoFrameShown=()=>video.paused&&!video.seeking&&video.readyState>=2&&Math.abs(video.currentTime*rate()-wanted)<=.5;
+  const frameShown=()=>exactFrameShown()||videoFrameShown();
   function paint(){
     if(!context)return;
     try{validTimeRange=range();}catch{}
     for(const el of dialog.querySelectorAll('[data-generation-lock]')){el.disabled=el.dataset.generationLock==='true';delete el.dataset.generationLock;}
-    const c=selectedBox(),accurate=ready===wanted&&!image.hidden&&video.paused;
+    const c=selectedBox(),shown=frameShown();
     $('mosaicPosition').textContent=`${clock(wanted)} / ${clock(meta().frame_count-1)}`;
     $('mosaicSeek').value=wanted;if(!timeJumpEditing)$('mosaicFrameNumber').value=clock(wanted);
-    $('mosaicRecognize').disabled=loading||scanLoading||frameLoading||!accurate||!inRange()||!context.session.capabilities?.region_recognition;
+    $('mosaicRecognize').disabled=loading||scanLoading||!shown||!inRange()||!context.session.capabilities?.region_recognition;
     $('mosaicRecognize').textContent=loading?'识别中…':'识别当前帧';
-    $('mosaicDraw').disabled=!accurate||loading||!inRange();$('mosaicDraw').textContent=drawing?'在画面拖出矩形':'手动框选';
+    $('mosaicDraw').disabled=!shown||loading||!inRange();$('mosaicDraw').textContent=drawing?'在画面拖出矩形':'手动框选';
     const outside=!inRange(),regionLimit=activeCount()+(addingClip?candidates.length:0)>=8;
-    $('mosaicAddRegion').disabled=loading||regionLimit||(!outside&&!accurate);
-    $('mosaicRegionHint').textContent=regionLimit?'最多添加 8 个打码区域，请先取消一个。':loading?'正在处理，请稍候。':outside?'当前画面不在所选片段内，点击添加将返回片段开始。':!video.paused?'请先暂停播放，再添加打码区域。':!accurate?'正在读取画面；读取失败时请点击重试画面。':'';
+    $('mosaicAddRegion').disabled=loading||regionLimit||(!outside&&!shown);
+    $('mosaicRegionHint').textContent=regionLimit?'最多添加 8 个打码区域，请先取消一个。':loading?'正在处理，请稍候。':outside?'当前画面不在所选片段内，点击添加将返回片段开始。':!video.paused?'请先暂停播放，再添加打码区域。':!shown?'正在读取画面；读取失败时请点击重试画面。':'';
     $('mosaicReturnToClip').hidden=!outside;
     $('mosaicRemoveRegion').hidden=!c;
-    $('mosaicRemoveRegion').disabled=loading||!accurate;
-    $('mosaicConfirm').disabled=loading||(!scanEvent&&(!accurate||!validBox(c)||!inRange()));
+    $('mosaicRemoveRegion').disabled=loading||!shown;
+    $('mosaicConfirm').disabled=loading||(!scanEvent&&(!shown||!validBox(c)||!inRange()));
     $('mosaicConfirm').textContent='采用区域';
     $('mosaicTrack').hidden=motion==='fixed'||!context.session.capabilities?.tracking||editing===null||targets[editing]?.adopted===false;
     $('mosaicBoxFields').hidden=!c;
@@ -150,7 +158,7 @@
     $('mosaicAddSubmit').hidden=!addingClip;$('mosaicConfirm').hidden=addingClip||!!scanEvent||editing!==null||!candidates.length;
     $('mosaicAddSubmit').disabled=editLocked()||(manualAction==='mosaic'&&$('mosaicConfirm').disabled);
     $('mosaicManualAction').value=manualAction;$('mosaicMotion').value=motion;
-    if(accurate)$('mosaicFrameHint').textContent=motionHint();
+    if(shown){$('mosaicFrameHint').textContent=motionHint();$('mosaicFrameRetry').hidden=true;}
     const mosaicChosen=addingClip?manualAction==='mosaic':choosingMosaic||!!selectedLiveTarget()||(!scanEvent&&editing===null&&$('mosaicAdjust').open);
     $('mosaicAdjust').classList.toggle('manual-delete',!mosaicChosen);
     $('mosaicPrevEvent').disabled=eventIndex<=0;
@@ -366,20 +374,31 @@
   function drawOverlay(){
     if(!context)return;
     drawLivePreview();
-    overlay.hidden=ready!==wanted||image.hidden||!video.paused||(!candidates.length&&!drawing);
+    overlay.hidden=!frameShown()||(!candidates.length&&!drawing);
     if(overlay.hidden)return;
     const g=geometry();Object.assign(overlay.style,{left:g.left+'px',top:g.top+'px',width:g.width+'px',height:g.height+'px'});
     overlay.classList.toggle('drawing',drawing);
     overlay.innerHTML=candidates.map(c=>`<button class="mosaic-box ${targets.some(t=>t.uid===c.uid&&t.adopted!==false&&!t.removed)?'':'suggestion'} ${c.id===selected?'selected':''}" data-box="${esc(c.id)}" aria-label="选择 ${esc(c.label)}" style="left:${c.x/meta().width*100}%;top:${c.y/meta().height*100}%;width:${c.w/meta().width*100}%;height:${c.h/meta().height*100}%;border-radius:${['circle','ellipse'].includes(c.shape)?'50%':'0'}"><span>${esc(c.label)}</span>${c.id===selected&&!editLocked()?['n','s','e','w','ne','nw','se','sw'].map(edge=>`<i data-resize="${edge}" class="mosaic-handle ${edge}"></i>`).join(''):''}</button>`).join('');
   }
-  async function loadFrame(){
+  let seekFrameTimer=null;
+  async function loadFrame(force=false){
     if(document.hidden||!context||!dialog.open||!video.paused||resultMode)return;
+    // The stage already shows the wanted frame; do not queue a server frame job for it.
+    if(frameShown()){clearTimeout(seekFrameTimer);finishScanRead();return;}
+    // A seek in flight usually lands within one poll; wait for it instead of paying
+    // for a server frame, but never wait longer than the bounded retry below.
+    if(video.seeking&&!force&&!video.error){
+      clearTimeout(seekFrameTimer);
+      const frame=wanted;
+      seekFrameTimer=setTimeout(()=>{if(context&&frame===wanted)loadFrame(true);},1500);
+      return;
+    }
     if(frameLoading&&pendingFrame===wanted&&!controller?.signal.aborted)return;
     const version=epoch,frame=wanted,url=base()+`/frame/${frame}`;
     controller?.abort();const request=new AbortController();controller=request;pendingFrame=frame;frameLoading=true;paint();
     $('mosaicFrameHint').textContent='正在读取准确帧…';$('mosaicFrameRetry').hidden=true;
     try{
-      const response=await EditorBusy.run(()=>EditorBusy.frame(appUrl(url),request.signal,job=>{if(active(version)&&request===controller)$('mosaicFrameHint').textContent=job.progress||'准确帧已排队，等待后台读取…';}),{signal:request.signal,maxRetries:1,diagnostics:{batch:context.batch,request:context.asset.request_id,session:context.session.id},valid:()=>active(version)&&request===controller&&wanted===frame,onWait:(n,max)=>{$('mosaicFrameHint').textContent=`处理资源暂忙，正在重试（${n}/${max}）`;}});
+      const response=await EditorBusy.run(()=>EditorBusy.frame(appUrl(url),request.signal,job=>{if(active(version)&&request===controller&&!frameShown())$('mosaicFrameHint').textContent=job.progress||'准确帧已排队，等待后台读取…';}),{signal:request.signal,maxRetries:1,diagnostics:{batch:context.batch,request:context.asset.request_id,session:context.session.id},valid:()=>active(version)&&request===controller&&wanted===frame,onWait:(n,max)=>{$('mosaicFrameHint').textContent=`处理资源暂忙，正在重试（${n}/${max}）`;}});
       const blob=await response.blob();if(!active(version)||request!==controller||request.signal.aborted||document.hidden)return;
       const next=URL.createObjectURL(blob);image.src=next;
       try{await image.decode();}catch{URL.revokeObjectURL(next);throw Error('准确帧读取失败，请重试');}
@@ -387,7 +406,12 @@
       if(frameUrl)URL.revokeObjectURL(frameUrl);frameUrl=next;ready=frame;image.hidden=false;
       $('mosaicFrameHint').textContent=motionHint();
     }catch(e){if(active(version)&&request===controller&&e.name!=='AbortError'){$('mosaicFrameHint').textContent=EditorBusy.message(e.message,'画面读取失败，请点击重试');$('mosaicFrameRetry').hidden=false;}}
-    finally{if(active(version)&&request===controller){frameLoading=false;paint();if(scanReadPending&&ready===wanted&&!image.hidden)scanVideo(false);}}
+    finally{if(active(version)&&request===controller){frameLoading=false;paint();finishScanRead();}}
+  }
+  // The pending startup scan read no longer waits for a server frame that
+  // scrubbing may never request; it only needs the preview to be showing.
+  function finishScanRead(){
+    if(scanReadPending&&frameShown())scanVideo(false);
   }
   // Navigation retains only an existing clip/region selection, never an in-flight recognition.
   function retainSelection(){
@@ -400,7 +424,7 @@
   // Trim work keeps its gesture token; explicit navigation invalidates it.
   function seek(frame,keep=false,sequence){
     if(!context||(sequence!==undefined&&sequence!==seekSequence))return;
-    const request=sequence??++seekSequence;timeJumpEditing=false;clearTimeout(timer);controller?.abort();pausePlayback();
+    const request=sequence??++seekSequence;timeJumpEditing=false;clearTimeout(timer);clearTimeout(seekFrameTimer);controller?.abort();pausePlayback();
     wanted=Math.max(0,Math.min(meta().frame_count-1,Math.round(frame)));ready=-1;image.hidden=true;
     if(!keep)retainSelection();
     if(sourceBinding)sourceBinding.seek((wanted+.05)/rate());
@@ -536,7 +560,7 @@
     const r=range();
     if(manualAction==='delete'&&deletions.length>=40)throw Error('最多选择 40 个删除片段。');
     if(manualClips.length>=40)throw Error('最多添加 40 个手动片段。');
-    if(manualAction==='mosaic'&&(!validBox(selectedBox())||!inRange()||ready!==wanted))throw Error('请先在片段内框选打码区域。');
+    if(manualAction==='mosaic'&&(!validBox(selectedBox())||!inRange()||!frameShown()))throw Error('请先在片段内框选打码区域。');
     if(manualAction==='mosaic'&&targets.length+candidates.length>320)throw Error('本机草稿区域已达上限。');
     if(manualAction==='mosaic'&&activeCount()+candidates.length>8)throw Error('最多打码 8 个区域，请先取消一个。');
     const event={id:'manual-'+regionId(),...r,label:'手动片段',reason:'',status:'needs_review',candidates:[]};
@@ -554,7 +578,7 @@
   $('mosaicAdjustToggle').onclick=()=>{$('mosaicAdjust').open=true;paint();};
   $('mosaicAdjust').addEventListener('toggle',()=>{if(context){dialog.classList.toggle('adjusting',$('mosaicAdjust').open);if(!scanEvent&&editing===null&&!addingClip)$('mosaicAdjust').classList.toggle('manual-delete',!$('mosaicAdjust').open);}});
   $('mosaicRecognize').onclick=recognize;
-  $('mosaicFrameRetry').onclick=loadFrame;
+  $('mosaicFrameRetry').onclick=()=>loadFrame();
   $('mosaicPrevious').onclick=()=>seek(wanted-1);$('mosaicNext').onclick=()=>seek(wanted+1);
   $('mosaicSeek').oninput=e=>seek(Number(e.target.value));
   const timeGuard=fn=>(...args)=>{try{const result=fn(...args);if(timeValidationError)status('');return result;}catch(e){
@@ -1083,7 +1107,7 @@
   $('mosaicDraw').onclick=()=>{if($('mosaicDraw').disabled)return;drawing=!drawing;paint();if(drawing)status('在画面内拖出矩形；也可用像素输入框微调。');};
   function point(e){const r=overlay.getBoundingClientRect();return {x:Math.max(0,Math.min(meta().width,Math.round((e.clientX-r.left)/r.width*meta().width))),y:Math.max(0,Math.min(meta().height,Math.round((e.clientY-r.top)/r.height*meta().height)))};}
   overlay.onpointerdown=e=>{
-    if(editLocked()||e.button!==0||ready!==wanted||image.hidden||!video.paused)return;
+    if(editLocked()||e.button!==0||!frameShown())return;
     const b=e.target.closest('[data-box]'),p=point(e);
     if(b&&!drawing){
       selectRegion(b.dataset.box);
@@ -1430,7 +1454,7 @@
     }catch{liveCanvas.hidden=true;$('mosaicLiveHint').textContent='实时预览暂不可用，可使用动态预览检查效果。';}
   }
   function animateLivePreview(){cancelAnimationFrame(liveAnimation);if(!context||!dialog.open||video.paused||document.hidden)return;if(!skipDeletedPlayback())drawLivePreview();if(!video.paused)liveAnimation=requestAnimationFrame(animateLivePreview);}
-  video.addEventListener('playing',animateLivePreview);video.addEventListener('seeked',drawLivePreview);
+  video.addEventListener('playing',animateLivePreview);video.addEventListener('seeked',()=>{if(!context)return;paint();loadFrame();finishScanRead();});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelAnimationFrame(liveAnimation);else if(context&&dialog.open){if(video.paused)drawLivePreview();else animateLivePreview();}});
   function stopWorkspacePreview(){
     cancelAnimationFrame(liveAnimation);thumbnailEpoch++;thumbnailCancel?.();thumbnailCancel=null;thumbnailSource='';timelineSignature='';timelineDrag=null;thumbReader.pause();thumbReader.removeAttribute('src');thumbReader.load();liveCanvas.hidden=true;compareOriginal=false;$('mosaicCompare').setAttribute('aria-pressed','false');$('mosaicCompare').textContent='对比原画';
