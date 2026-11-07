@@ -2,9 +2,9 @@
 
 线上变更包括应用发布、运行配置调整、凭据更新、回滚。应用 commit 不足以表示全部线上状态，必须同时查阅后续配置记录。
 
-## 发布准备（未上线）
+## 发布准备历史
 
-- 2026-11-07：候选 `824cfb5` 修复前一轮门禁阻塞，校正旧界面/草稿测试，限定分段 PSNR 输入帧范围并补充损坏回退测试。本地完整 2555 passed，Linux 标准完整 2148 passed，Linux 浏览器补验 668 passed，均无失败；跳过与覆盖边界见专项记录。候选已封存，只读 `check-switch` 通过，未执行 publish，生产仍为 `8216c27`。详见[阻塞修复记录](verification/release-blocker-fixes-824cfb5-2026-11-07.md)。
+- 2026-11-07：候选 `824cfb5` 修复前一轮门禁阻塞，校正旧界面/草稿测试，限定分段 PSNR 输入帧范围并补充损坏回退测试。本地完整 2555 passed，Linux 标准完整 2148 passed，Linux 浏览器补验 668 passed，均无失败；跳过与覆盖边界见专项记录。候选已封存，准备阶段只读 `check-switch` 通过；随后已于 12:09 正式发布，见下方线上记录。详见[阻塞修复记录](verification/release-blocker-fixes-824cfb5-2026-11-07.md)。
 
 - 2026-11-06：固定 main `2554630`，参考 `8216c27..489c5dd` 人工清单并纳入之后的编辑修复。已构建独立 Linux 候选，但完整回归发现失败，**未执行 publish，生产仍为 `8216c27`**。详见[候选准备及阻塞记录](verification/release-preparation-2554630-2026-11-06.md)。准备记录不能当作线上发布记录。
 
@@ -14,6 +14,7 @@
 
 | 时间 | 类型 | 应用版本 | 内容 | 详细记录 |
 | --- | --- | --- | --- | --- |
+| 2026-11-07 12:09 | 应用发布 | `824cfb5` | main 已同步；分段校验及旧测试阻塞修复后发布，配置哈希不变；健康、静态资源与已有成片 Range 读取通过 | [正式发布记录](archive/verification/production-main-824cfb5-2026-11-07.md) |
 | 2026-11-06 11:34 | 监控（告警上下文） | 保持 `8216c27`，未重启 | 更新 deploy 监控脚本：报错告警带完整项目 id、深链与请求路径等排障上下文；不改 crontab／webhook／应用；备份 `prod_monitor.py.20261106113344` | [11 月 6 日监控告警上下文](archive/verification/production-monitor-context-2026-11-06.md) |
 | 2026-11-05 12:33（马涛本人 root 执行） | 监控（root cron 日志复制） | 保持 `8216c27`，未重启 | root 每 5 分钟把新增 error/critical 日志行复制到 deploy 可读目录，监控脚本改读该目录；不动应用和源日志；12:33 扫描恢复正常 | [11 月 5 日线上监控上线](archive/verification/production-monitor-2026-11-05.md) |
 | 2026-11-05 12:10 | 监控（新增 deploy 用户 cron） | 保持 `8216c27`，未重启 | 新增线上监控脚本，每 5 分钟检查服务存活和资源并推送飞书告警群；报错事件扫描因无日志读权限暂未启用 | [11 月 5 日线上监控上线](archive/verification/production-monitor-2026-11-05.md) |
@@ -21,7 +22,7 @@
 | 2026-11-02 17:32 | 运行配置 | 保持 `8216c27` | AI 共享额度 6/1 → 60/5，即时生效 | [11 月 2 日配置变更](archive/verification/production-config-change-2026-11-02.md) |
 | 2026-10-31 | 应用发布 | `8216c277f27fd88040944faae77a9e82a15be765` | 下方字幕识别及主动打开时间轴等；前驱 `us-east-20261030-reviewed-ea3db64` | [正式发布及验证](archive/verification/bottom-subtitles-production-2026-10-31.md) |
 
-截至上述证据，最后已核实的应用 release 为 `us-east-20261031-bottom-subtitles-8216c27`。这是历史执行证据，不是本索引编写时重新读取的线上实时状态。
+2026-11-07 发布后实读的应用 release 为 `us-east-20261107-main-824cfb5`，commit `824cfb56cc05d5ebb40dcb006c6b67de6d67fa12`；健康正常，生产配置保持原值。此结论对应该次发布后的核验时刻。
 
 ## 每次变更的记录要求
 
