@@ -75,6 +75,9 @@ def test_scrubbing_shows_the_video_frame_without_spending_a_server_frame(editor)
 
 def test_playhead_preview_survives_a_browser_that_reports_the_frame_start(editor):
     open_event(editor)
+    # Keep frame 123 inside the selected clip so overlay visibility tests frame readiness.
+    editor.locator('#mosaicEnd').fill('00:04:29')
+    editor.locator('#mosaicEnd').dispatch_event('change')
     stub_seekable_video(editor, snap_to_frame=True)
     count_frame_requests(editor)
     hold_frame_requests(editor)
