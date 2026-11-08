@@ -31,7 +31,7 @@ ROOT = data_root()
 STATE = ROOT / '.web-state'
 JOBS = STATE / 'jobs'
 WORK = queue.Queue()
-LOCK = threading.Lock()
+LOCK = threading.RLock()
 WORKER_HEARTBEAT = 0.0
 WORKER_FAILURES = 0
 INLINE_RENDERS = set()
@@ -89,14 +89,17 @@ def save(job):
                    job_id=job['id'], child_pid=job.get('pid'))
 
 
-def stored_jobs():
+def read_job(file, *, isolate=True):
+    from . import job_records
+    with LOCK, batch_control.LOCK:
+        return job_records.load(file, JOBS, workflow.BATCHES, isolate=isolate)
+
+
+def stored_jobs(*, isolate=False):
+    """普通查询只读；持久化隔离必须由调度边界显式请求。"""
     for file in JOBS.glob('*.json'):
-        try:
-            job = json.loads(file.read_text())
-            if isinstance(job, dict) and isinstance(job.get('id'), str):
-                yield job
-        except (OSError, ValueError):
-            logging.exception('Unreadable job record: %s', file.name)
+        job = read_job(file, isolate=isolate)
+        if job is not None: yield job
 
 
 def queue_size():
@@ -528,7 +531,7 @@ def job_alive(job):
 
 def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
     verify = stage_results.scheduler_verified if scheduler else stage_results.verified
-    jobs = list(stored_jobs())
+    jobs = list(stored_jobs(isolate=True))
     workflow.recover_verification_queue(jobs)
     owned = owned or {}
     live_ids = set(owned)
@@ -677,6 +680,7 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
     queued.update(job.get('batch_id') for job in latest_jobs if job.get('status') == 'queued')
     for file in workflow.BATCHES.glob('*/runtime.json'):
         path = file.parent
+        if not (path / 'draft.json').is_file(): continue
         if workflow.material_versions.managed(path): continue
         if path.name in live or path.name in queued:
             continue
@@ -816,6 +820,11 @@ def worker_tick(pending, owned):
             code = process.poll()
             if code is None:
                 continue
+            durable = read_job(JOBS / (job['id'] + '.json'))
+            if durable is None:
+                log.close(); storage.release(key, JOBS)
+                del owned[key]; WORK.task_done(); continue
+            job = durable
             try:
                 if job.get('attempt'): stage_results.scheduler_verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
             except stage_results.EvidencePending:
@@ -830,10 +839,14 @@ def worker_tick(pending, owned):
                 del owned[key]
                 WORK.task_done()
         for entry in list(pending):
-            job, _ = entry
-            if job.get('batch_id') and not (workflow.BATCHES / job['batch_id'] / 'draft.json').exists():
+            job, cmd = entry
+            file = JOBS / (job['id'] + '.json')
+            durable = read_job(file)
+            if durable is None or durable.get('status') != 'queued':
                 pending.remove(entry)
                 WORK.task_done()
+            else:
+                pending[pending.index(entry)] = (durable, durable.get('command', cmd))
         # Adoption must register crash-window roots before any SIGCONT decision.
         evidence_waiting = recover_jobs(owned=owned, scheduler=True)
         external_active = {key: 0 for key in concurrency.LANES}
@@ -877,9 +890,10 @@ def worker_tick(pending, owned):
         for owner, entry in fair_pending(pending):
             job, cmd = entry
             file = JOBS / (job['id'] + '.json')
-            if file.exists():
-                job = read_json(file)
-                cmd = job.get('command', cmd)
+            job = read_job(file)
+            if job is None:
+                pending.remove(entry); WORK.task_done(); continue
+            cmd = job.get('command', cmd)
             if job.get('status') != 'queued':
                 pending.remove(entry)
                 WORK.task_done()
