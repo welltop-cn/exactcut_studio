@@ -151,7 +151,7 @@ def status(path, drama, episodes, jobs, manifest):
                     state.update(status='waiting')
             elif job and job.get('status') in {'failed', 'interrupted'}:
                 state.update(status='failed')
-            elif job and job.get('status') in {'queued', 'running'} and state['status'] == 'waiting':
+            elif job and job.get('status') in {'queued', 'running'} and state['status'] in {'waiting', 'queued'}:
                 state.update(status='queued')
             else:
                 state.update(status='waiting')

@@ -32,6 +32,7 @@ STATE = ROOT / '.web-state'
 JOBS = STATE / 'jobs'
 WORK = queue.Queue()
 LOCK = threading.Lock()
+PREFETCH_LOCK = threading.Lock()
 WORKER_HEARTBEAT = 0.0
 WORKER_FAILURES = 0
 INLINE_RENDERS = set()
@@ -236,27 +237,34 @@ def prefetch_sources(batch_id, data, actor):
         require_material_fetch()
     write_json_atomic(path / 'source-prefetch.json', {'drama_id': drama, 'episodes': episodes,
                                                     'frame_episodes': sorted(manifest.frame_episodes)})
-    jobs = [job for job in stored_jobs() if job.get('batch_id') == batch_id
-            and job.get('action') == 'prefetch' and (not job.get('instance') or batch_control.belongs(job))]
-    result = source_prefetch.status(path, drama, episodes, jobs, manifest)
-    missing = [e['episode'] for e in result['episodes'] if e['status'] == 'waiting'
-               or (e['status'] == 'failed' and data.get('retry') is True)]
-    if missing:
-        job = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'project': drama, 'episodes': missing,
-               'actor': actor, 'action': 'prefetch', 'created': time.time(), 'status': 'queued',
-               'instance': instance_marker()}
-        cmd = [sys.executable, '-u', '-m', 'exactcut.source_prefetch', batch_id, job['id'], instance_marker()]
-        job['command'] = cmd
-        save(job)
-        WORK.put((job, cmd))
-        for state in result['episodes']:
-            if state['episode'] in missing:
-                state.update(status='queued')
-                state.pop('error_info', None)
-        for timing in result['timing_explanation']:
-            for segment in timing['segments']:
-                if segment['episode'] in missing and segment.get('source_status') in {'waiting', 'failed'}:
-                    segment['source_status'] = 'queued'
+    # HTTP callers already hold LOCK; use a separate lock for prefetch admission.
+    with PREFETCH_LOCK:
+        jobs = [job for job in stored_jobs() if job.get('batch_id') == batch_id
+                and job.get('action') == 'prefetch' and (not job.get('instance') or batch_control.belongs(job))]
+        result = source_prefetch.status(path, drama, episodes, jobs, manifest)
+        missing = [e['episode'] for e in result['episodes'] if e['status'] == 'waiting'
+                   or (e['status'] == 'failed' and data.get('retry') is True)]
+        covered = {episode for job in jobs
+                   if job.get('project') == drama and batch_control.belongs(job)
+                   and job.get('status') in {'queued', 'running'}
+                   for episode in job.get('episodes', [])}
+        missing = [episode for episode in missing if episode not in covered]
+        if missing:
+            job = {'id': uuid.uuid4().hex, 'batch_id': batch_id, 'project': drama, 'episodes': missing,
+                   'actor': actor, 'action': 'prefetch', 'created': time.time(), 'status': 'queued',
+                   'instance': instance_marker()}
+            cmd = [sys.executable, '-u', '-m', 'exactcut.source_prefetch', batch_id, job['id'], instance_marker()]
+            job['command'] = cmd
+            save(job)
+            WORK.put((job, cmd))
+            for state in result['episodes']:
+                if state['episode'] in missing:
+                    state.update(status='queued')
+                    state.pop('error_info', None)
+            for timing in result['timing_explanation']:
+                for segment in timing['segments']:
+                    if segment['episode'] in missing and segment.get('source_status') in {'waiting', 'failed'}:
+                        segment['source_status'] = 'queued'
     return result
 
 
