@@ -254,8 +254,9 @@ def prefetch_sources(batch_id, data, actor):
         require_material_fetch()
     write_json_atomic(path / 'source-prefetch.json', {'drama_id': drama, 'episodes': episodes,
                                                     'frame_episodes': sorted(manifest.frame_episodes)})
-    # HTTP callers already hold LOCK; use a separate lock for prefetch admission.
-    with PREFETCH_LOCK:
+    # Managed callers do not hold LOCK; legacy callers do. Keep one lock order
+    # before stored_jobs() acquires LOCK again while reading existing jobs.
+    with LOCK, PREFETCH_LOCK:
         jobs = [job for job in stored_jobs() if job.get('batch_id') == batch_id
                 and job.get('action') == 'prefetch' and (not job.get('instance') or batch_control.belongs(job))]
         result = source_prefetch.status(path, drama, episodes, jobs, manifest)

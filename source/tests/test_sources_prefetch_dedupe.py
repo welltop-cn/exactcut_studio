@@ -51,6 +51,51 @@ def test_repeated_requests_reuse_queued_and_running_job(env):
     assert web.WORK.qsize() == 1
 
 
+def test_mixed_managed_and_legacy_requests_do_not_deadlock(env, monkeypatch):
+    """纳管入口不持 LOCK；旧入口持 LOCK，两者并发仍能结束。"""
+    inner = threading.Lock()
+    entered = threading.Event()
+    started = threading.Event()
+    errors = []
+
+    class BoundedPrefetchLock:
+        def __enter__(self):
+            if not inner.acquire(timeout=1):
+                raise RuntimeError('素材预取锁与全局锁互相等待')
+            entered.set()
+
+        def __exit__(self, *args):
+            inner.release()
+
+    monkeypatch.setattr(web, 'PREFETCH_LOCK', BoundedPrefetchLock())
+    data = {'draft': draft(frame_clip(episode='EP2'))}
+    web.prefetch_sources(env, data, 'admin')
+    entered.clear()
+
+    def managed_request():
+        started.set()
+        try:
+            web.prefetch_sources(env, data, 'admin')
+        except Exception as exc:
+            errors.append(exc)
+
+    with web.LOCK:
+        thread = threading.Thread(target=managed_request, daemon=True)
+        thread.start()
+        assert started.wait(1)
+        # 原实现允许纳管请求先持预取锁；统一顺序后它会在 LOCK 前等待。
+        entered.wait(0.2)
+        try:
+            web.prefetch_sources(env, data, 'admin')
+        except Exception as exc:
+            errors.append(exc)
+    thread.join(timeout=3)
+    assert not thread.is_alive(), '并发预取请求未结束'
+    assert not errors
+    assert len(prefetch_jobs(env)) == 1
+    assert web.WORK.qsize() == 1
+
+
 def test_concurrent_requests_create_one_job(env):
     data = draft(frame_clip(episode='EP2'))
     barrier = threading.Barrier(6)
