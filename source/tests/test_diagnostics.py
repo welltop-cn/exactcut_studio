@@ -564,9 +564,10 @@ def test_browser_script_preserves_fetch_failure_and_reports_no_form_data():
 const vm=require('vm'), fs=require('fs'), assert=require('assert');
 const events={}, sent=[];
 const error=new TypeError('private error text');
+let thrown=error;
 const window={addEventListener:(name, fn)=>events[name]=fn, fetch:async(url, options)=>{
   if(String(url).endsWith('client-events')) {sent.push(...JSON.parse(options.body).events.map(event=>({...JSON.parse(options.body),...event})));return {ok:true};}
-  throw error;
+  throw thrown;
 }};
 const document={baseURI:'http://localhost/home/',addEventListener:()=>{}};
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{window,document,URL,performance,setTimeout:()=>1,clearTimeout(){}});
@@ -578,6 +579,12 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{window,document,URL,
   (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.source==='app.js' && x.line===12));
   assert(!JSON.stringify(sent).includes('private'));
+  // 切项目主动取消（NavigationAbort）照样抛给调用方，但不记 network_error。
+  const before=sent.filter(x=>x.event==='network_error').length;
+  thrown=Object.assign(Error('nav'),{name:'NavigationAbort'});
+  await assert.rejects(window.fetch('api/batches/'+'a'.repeat(32)+'/originals'),e=>e===thrown);
+  (events.pagehide||events['window.pagehide'])();
+  assert.equal(sent.filter(x=>x.event==='network_error').length,before);
 })().catch(e=>{console.error(e);process.exit(1)});
 '''
     path = Path(__file__).resolve().parents[1] / 'exactcut/web/diagnostics.js'

@@ -198,7 +198,8 @@
       } catch (_) {}
       return response;
     } catch (error) {
-      if (context) report({event: 'network_error', ...context,
+      // 切项目时主动取消的旧请求不是网络故障，不上报。
+      if (context && error?.name !== 'NavigationAbort') report({event: 'network_error', ...context,
         duration_ms: Math.round(performance.now() - start), error_type: name(error?.name)});
       throw error;
     }

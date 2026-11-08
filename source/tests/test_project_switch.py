@@ -14,7 +14,7 @@ const video={dataset:{},pause(){paused++},removeAttribute(){},querySelectorAll()
 const ctx=vm.createContext({
  dirty:false,selectedId:'old',current:{id:'old'},batchCache:[],archivedView:false,
  assetKeys:'old',hookPreviews:new Map(),validationDismissed:false,prefetchTimer:0,
- previewObserver:{disconnect(){}},clearTimeout(){},
+ previewObserver:{disconnect(){}},clearTimeout(){},cancelBatchLookups(){},
  $:id=>nodes[id]||(nodes[id]={hidden:false,textContent:'',querySelectorAll:()=>[video]}),
  document:{querySelectorAll:()=>[video]},window:{confirm:()=>true},
  api:(path,data)=>path.endsWith('/hook-previews')?Promise.resolve({jobs:[]}):data?(workspaceSaves.push(data.batch_id),Promise.resolve({})):new Promise((resolve,reject)=>pending.push({resolve,reject})),
@@ -64,7 +64,7 @@ const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
 const nodes={},pending=[],rendered=[];
 const ctx=vm.createContext({dirty:false,selectedId:null,current:null,batchCache:[],archivedView:false,
  assetKeys:'',hookPreviews:new Map(),validationDismissed:false,prefetchTimer:0,previewObserver:null,
- clearTimeout(){},$:id=>nodes[id]||(nodes[id]={querySelectorAll:()=>[]}),window:{confirm:()=>true},
+ clearTimeout(){},cancelBatchLookups(){},$:id=>nodes[id]||(nodes[id]={querySelectorAll:()=>[]}),window:{confirm:()=>true},
  api:(path,data)=>path.endsWith('/hook-previews')?Promise.resolve({jobs:[]}):data?Promise.resolve({}):new Promise((resolve,reject)=>pending.push({path,resolve,reject})),
  renderBatches(){},showPage(name){nodes.page=name},renderEditor(){rendered.push(ctx.current.id)},
  controls(){},renderRuntime(){},setTab(){},scheduleSourcePrefetch(){},refreshBatches:async()=>{},
@@ -281,5 +281,73 @@ vm.runInContext(source.slice(source.indexOf('function pollInterval('),source.ind
 '''
     # Function property avoids adding a global dependency to isolated poll consumers.
     script = script.replace("vm.runInContext(source.slice", "ctx.openBatch=function(){};\nvm.runInContext(source.slice")
+    result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_switch_lookups_start_promptly_abort_and_discard_stale_results():
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    script = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict');
+const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+const timers=new Map(),calls=[],painted=[],sourcePainted=[],dialogPainted=[],nodes={};let timerId=0;
+const ctx=vm.createContext({AbortController,dirty:false,selectedId:null,current:null,batchCache:[],archivedView:false,
+ assetKeys:'',hookPreviews:new Map(),validationDismissed:false,prefetching:false,prefetchTimer:0,
+ currentUser:{features:{material_fetch:true}},
+ setTimeout:(fn,ms)=>{timers.set(++timerId,{fn,ms});return timerId},clearTimeout:id=>timers.delete(id),
+ $:id=>nodes[id]??={querySelectorAll:()=>[],dataset:{}},window:{confirm:()=>true},
+ api:(path,data,options)=>{if(!path.includes('/originals?')&&!path.endsWith('/sources'))return Promise.resolve({});
+ return new Promise((resolve,reject)=>calls.push({path,data,signal:options?.signal,resolve,reject}))},
+ renderBatches(){},showPage(){},renderEditor(){vm.runInContext('scheduleOriginalsLookup()',ctx)},
+ renderRuntime(){},setTab(){},controls(){},stopPreviewLoads(){},restoreHookPreviews(){},refreshBatches:async()=>{},
+ localStorage:{setItem(){}},history:{replaceState(){}},showEmptyWorkspace(){},
+ originalsTicket:0,refreshOriginalsPending(){},renderOriginalsList:data=>dialogPainted.push(data.marker),esc:String,
+ enteredDramaId:()=>ctx.current.draft.drama_id,paintOriginalsAvailability(){},refreshTiming(){},
+ renderSourcePrefetch(){sourcePainted.push(ctx.current.id)},
+ rememberOriginals:(id,drama,data)=>painted.push([id,data.marker])});
+vm.runInContext(source.split('\n').find(l=>l.startsWith('function rememberSavedDraft(')),ctx);
+vm.runInContext(source.slice(source.indexOf('let openingBatchId='),source.indexOf('function isoDate(')),ctx);
+vm.runInContext(source.slice(source.indexOf('let originalsController='),source.indexOf('function validDramaId(')),ctx);
+for(const name of ['validDramaId','beginOriginalsLookup','scheduleOriginalsLookup','cancelBatchLookups','loadOriginals']){
+ const line=source.split('\n').find(l=>l.startsWith('function '+name+'('));assert(line,name);vm.runInContext(line,ctx);
+}
+vm.runInContext(source.slice(source.indexOf('function scheduleSourcePrefetch('),source.indexOf('function changed(')),ctx);
+const item=id=>({id,revision:1,draft:{drama_id:'101494',rows:[]},runtime:{status:'draft'},assets:[]});
+const runTimers=ms=>{for(const [id,t] of [...timers])if(t.ms===ms){timers.delete(id);t.fn()}};
+const tick=()=>new Promise(setImmediate);
+(async()=>{
+ for(let i=0;i<5;i++){
+  ctx.next=item('p'+i);await vm.runInContext("openBatch(next.id)",Object.assign(ctx,{api:(path,data,options)=>{
+   if(path==='/api/batches/'+ctx.next.id)return Promise.resolve(ctx.next);
+   if(!path.includes('/originals?')&&!path.endsWith('/sources'))return Promise.resolve({});
+   return new Promise((resolve,reject)=>calls.push({path,data,signal:options?.signal,resolve,reject}));
+  }}));
+  assert.equal(calls.filter(c=>c.path.includes('/originals?')).length,0,'rapid switching waits a 150ms dwell, not 600ms');assert([...timers.values()].every(t=>t.ms===150));
+ }
+ await vm.runInContext('prefetchSources()',ctx);assert.equal(calls.filter(c=>c.path.endsWith('/sources')).length,0,'poll cannot bypass the settle timer');
+ runTimers(150);assert.equal(calls.filter(c=>c.path.endsWith('/sources')).length,1,'only settled project posts sources');
+ const originals=calls.filter(c=>c.path.includes('/originals?'));assert.equal(originals.length,1,'only settled project queries originals');assert(originals[0].path.includes('/p4/'));
+ for(const call of calls)call.resolve({marker:call.path,timing_explanation:[]});await tick();
+ assert.equal(painted.length,1);assert.equal(painted[0][0],'p4');assert.deepEqual(sourcePainted,['p4']);
+ // Input still waits 600ms, and navigation cancels an outstanding sources POST.
+ const before=calls.length;ctx.current.draft.drama_id='101606';vm.runInContext('scheduleOriginalsLookup();scheduleSourcePrefetch()',ctx);
+ assert.equal(calls.length,before);assert([...timers.values()].every(t=>t.ms===600));
+ runTimers(600);assert.equal(calls.length,before+2);
+ const oldSources=calls.at(-1);vm.runInContext("cancelBatchLookups();selectedId='elsewhere'",ctx);
+ assert(oldSources.signal.aborted);ctx.selectedId='p4';
+ const freshSource=vm.runInContext('prefetchSources()',ctx);const sourceCall=calls.at(-1);
+ oldSources.resolve({timing_explanation:[]});await tick();assert.deepEqual(sourcePainted,['p4']);assert(ctx.prefetching,'old cleanup cannot release the new request lock');
+ sourceCall.resolve({timing_explanation:[]});await freshSource;assert.deepEqual(sourcePainted,['p4','p4']);
+ // A -> B -> A cannot accept an old response merely because the ID matches again.
+ ctx.selectedId='p4';vm.runInContext('scheduleOriginalsLookup(true)',ctx);
+ const paintedBefore=painted.length;calls[before].resolve({marker:'stale same id'});await tick();assert.equal(painted.length,paintedBefore);
+ calls.at(-1).resolve({marker:'fresh'});await tick();
+ assert.equal(painted.at(-1)[1],'fresh');
+ vm.runInContext('loadOriginals(true)',ctx);const dialogOld=calls.at(-1);
+ vm.runInContext('cancelBatchLookups();loadOriginals(true)',ctx);const dialogNew=calls.at(-1);
+ assert(dialogOld.signal.aborted);dialogOld.resolve({marker:'old dialog'});await tick();assert.deepEqual(dialogPainted,[]);
+ dialogNew.resolve({marker:'new dialog'});await tick();assert.deepEqual(dialogPainted,['new dialog']);
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
     result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr

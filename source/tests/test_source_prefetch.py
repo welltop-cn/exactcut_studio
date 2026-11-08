@@ -343,7 +343,7 @@ assert.equal(vm.runInContext('mergedTiming(local,server).segments[0].source_stat
 assert.equal(vm.runInContext('mergedTiming(local,server).segments[0].error',timing),'');
 (async()=>{
  const calls=[],timers=[];let finish;
- const ctx=vm.createContext({current:{id:'batch-a',draft:{drama_id:'101573',rows:[]},runtime:{status:'draft'}},
+ const ctx=vm.createContext({AbortController,current:{id:'batch-a',draft:{drama_id:'101573',rows:[]},runtime:{status:'draft'}},
  currentUser:{features:{material_fetch:true}},dirty:true,prefetching:false,prefetchTimer:null,
  openingBatchId:null,selectedId:'batch-a',
  api:async(path,data)=>{calls.push([path,data]);return new Promise(resolve=>finish=resolve)},
