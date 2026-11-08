@@ -14,6 +14,7 @@
 
 | 时间 | 类型 | 应用版本 | 内容 | 详细记录 |
 | --- | --- | --- | --- | --- |
+| 2026-11-08 17:28 | nginx 配置（reload） | 保持 `de8d7e7`，应用未重启 | 先备份完整 nginx，仅在 ExactCut HTTPS server 新增指定文本 gzip 6 行；nginx -t 后 reload；batches JSON 1,416,338→178,228 字节（−87.42%），sidebar 76,157→12,612（−83.44%）；首页/JSON/JS gzip、JPEG 不压缩、视频 200 与 Range 206 字节及 healthz 核验通过 | [gzip 配置与核验](verification/nginx-gzip-2026-11-08.md) |
 | 2026-11-08 17:19 | 应用发布 | `de8d7e7`（审查原 main `e31abe7` 后补修） | worker 单轮复用/结束项目跳过、请求优化、预取去重与坏任务隔离；补修混合入口预取死锁；本机 2811、Linux 2397、Linux Chromium UI 401 及媒体集成 7 项通过，配置与挂载不变，公网健康/8 个脚本哈希及项目读取通过 | [审查与正式发布](verification/production-main-2026-11-08.md) |
 | 2026-11-07 23:32 | 应用发布 | `79b2ca8`（合并 `c631b03`） | 打码时间轴拖动使用播放器本地画面，保留首次后台帧及异常兜底；修正回归夹具后本机 2572 / Linux 2158 通过；健康与公网 8 个 JS 哈希核验通过，三份配置哈希不变 | [本地预览发布记录](verification/production-mosaic-local-frame-2026-11-07.md) |
 | 2026-11-07 16:52 | 应用发布 | `4a5bc20` | 修复原片流传中断不续传、纳管项目结束任务抛 `ValueError` 拖垮 worker tick、发布 revision 冲突不自愈；配置与凭据不变；完整回归 2565/2158 通过，健康、静态资源、EP25 原片流读取通过 | [三项缺陷修复与上线](verification/production-error-fixes-4a5bc20-2026-11-07.md) |
