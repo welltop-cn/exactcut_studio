@@ -111,7 +111,7 @@ def test_durable_render_jobs_keep_terminal_shards_producing_until_reaped(workspa
     for request in manifest['requests']:
         result_store.put(path / 'production', request['request_id'], {'status': 'qc_passed'})
     job_file = workspace / '.web-state/jobs/render.json'
-    job = {'id': 'a' * 32, 'batch_id': path.name, 'request_id': rid, 'phase': 'render', 'status': 'running'}
+    job = {'id': job_file.stem, 'batch_id': path.name, 'request_id': rid, 'phase': 'render', 'status': 'running'}
     write_json_atomic(job_file, job)
     w.update(path, request_parallel=True)
     assert read_json(path / 'runtime.json')['status'] == 'producing'

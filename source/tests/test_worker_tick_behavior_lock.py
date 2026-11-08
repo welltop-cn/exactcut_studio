@@ -26,7 +26,6 @@ Execution/process discovery, disk-size estimation and cutting queue reports are
 faked here. JSON,
 recovery, admission, reconciliation, ownership and durable cursors remain real.
 """
-import json
 import signal
 from unittest.mock import Mock
 
@@ -38,6 +37,7 @@ from exactcut.util import read_json, write_json_atomic
 from test_concurrency import runner, queued, close_logs
 from test_material_versions import enrolled, token
 from test_round1_scheduler import resident
+from test_worker_bad_job_isolation import isolated, assert_one_alert
 from test_workflow import workspace
 
 
@@ -289,16 +289,26 @@ def test_partial_files_do_not_block_other_jobs(scheduler, broken):
         assert len(control.read(path)['children']) == 1
 
 
-@pytest.mark.parametrize('content,error', [('{bad', json.JSONDecodeError), ('[]', TypeError)])
-def test_bad_job_record_currently_aborts_tick(scheduler, content, error):
+@pytest.mark.parametrize('content', ['{bad', '[]'], ids=['invalid-json', 'non-object'])
+def test_bad_job_record_isolated_without_blocking_tick(scheduler, isolated, content):
+    from exactcut import diagnostics as diag
     pending, owned = scheduler
     ordinary = queued('a', 'fetch')
-    (web.JOBS / 'broken.json').write_text(content)
-    # stored_jobs skips these records, but storage.rebuild_reservations currently
-    # reads them again without guarding JSON/type errors. Lock that exception too.
-    with pytest.raises(error):
-        web.worker_tick(pending, owned)
-    assert not owned and saved(ordinary)['status'] == 'queued'
+    file = web.JOBS / 'broken.json'
+    file.write_text(content)
+    original = file.read_bytes()
+    web.worker_tick(pending, owned)
+    assert list(owned) == [ordinary['id']]
+    assert saved(ordinary)['status'] == 'running'
+    assert file.read_bytes() == original
+    marker = web.JOBS.parent / 'job-quarantine' / 'broken.json.json'
+    assert read_json(marker)['reason']
+    diag._throttled.clear()
+    web.recover_jobs(enqueue=True)
+    web.worker_tick(pending, owned)
+    assert list(owned) == [ordinary['id']]
+    assert file.read_bytes() == original
+    assert_one_alert(isolated, 'broken', None)
 
 
 @pytest.mark.parametrize('broken', ['missing', 'corrupt'])

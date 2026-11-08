@@ -111,7 +111,13 @@ def require_editable(path, request_id, *, source_sha=None, allow_job=None, reado
         if record.get('executor_running') or (not runtime.get('request_parallel') and (runtime.get('executor_running') or runtime.get('status') in w.ACTIVE)):
             raise CutError('视频正在处理，请完成后再编辑', 409)
     for file in (path.parent.parent / 'jobs').glob('*.json'):
-        job = read_json(file)
+        if readonly:
+            # 详情展示只读过滤坏记录；实际编辑准入仍保留原有检查。
+            from . import job_records
+            job = job_records.load(file, file.parent, path.parent, isolate=False, reader=read_json)
+            if job is None: continue
+        else:
+            job = read_json(file)
         if job.get('batch_id') == path.name and job.get('status') in {'queued', 'running', 'waiting_resource'} and (not job.get('request_id') or job['request_id'] == request_id):
             raise CutError('素材仍有处理任务，请完成后再编辑', 409)
     if source_sha is not None:

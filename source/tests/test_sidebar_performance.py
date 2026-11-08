@@ -5,6 +5,7 @@ from unittest.mock import patch
 from exactcut import accounts, workflow, webserver
 from exactcut.util import read_json, write_json_atomic
 from test_web_base_path import app, login, request
+from test_workflow import workspace
 
 
 def test_sidebar_summary_excludes_history_and_keeps_authorization(app):
@@ -32,7 +33,7 @@ def test_sidebar_summary_excludes_history_and_keeps_authorization(app):
         assert runtime.call_count == 1
 
 
-def test_compact_summaries_read_each_job_once_and_preserve_derived_status(app):
+def test_compact_summaries_read_each_job_once_and_preserve_derived_status(workspace):
     for _ in range(3):
         bid = workflow.create_blank()['id']
         path = workflow.folder(bid)
@@ -42,7 +43,7 @@ def test_compact_summaries_read_each_job_once_and_preserve_derived_status(app):
         write_json_atomic(path / 'confirmed.json', {'requests': [{'request_id': 'r1'}]})
         write_json_atomic(path / 'production/results.json', {'requests': {'r1': {'status': 'qc_passed'}}})
         write_json_atomic(workflow.ROOT / '.web-state/jobs' / (bid + '.json'),
-                          {'batch_id': bid, 'phase': 'render', 'request_id': 'r1', 'status': 'queued'})
+                          {'id': bid, 'batch_id': bid, 'phase': 'render', 'request_id': 'r1', 'status': 'queued'})
     with patch.object(workflow, 'read_json', wraps=workflow.read_json) as reads:
         rows = workflow.summaries(compact=True)
         job_reads = [call for call in reads.call_args_list if call.args[0].parent.name == 'jobs']

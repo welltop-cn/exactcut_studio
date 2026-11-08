@@ -61,13 +61,17 @@ def test_errors_and_job_copies(tmp_path, monkeypatch, caplog):
         for _ in range(2):
             with pytest.raises(FileNotFoundError): snap.job(file, lambda: read_json(file))
         file.write_text('{bad')
+        original = file.read_bytes()
         for _ in range(2):
             with pytest.raises(json.JSONDecodeError): snap.job(file, lambda: read_json(file))
             assert list(web.stored_jobs()) == []
-        assert caplog.text.count('Unreadable job record') == 2
-        write_json_atomic(file, {'id': 'ok', 'nested': [1]})
+        # Read-only queries filter invalid records without alerts or durable writes.
+        assert not [r for r in caplog.records if r.levelno >= 30]
+        assert file.read_bytes() == original
+        assert not (tmp_path.parent / 'job-quarantine').exists()
+        write_json_atomic(file, {'id': 'bad', 'nested': [1]})
         list(web.stored_jobs())[0]['nested'].append(2)
-        assert list(web.stored_jobs()) == [{'id': 'ok', 'nested': [1]}]
+        assert list(web.stored_jobs()) == [{'id': 'bad', 'nested': [1]}]
         write_json_atomic(tmp_path / 'other.json', {'id': 'other'})
         assert [j['id'] for j in web.stored_jobs()] == [read_json(f)['id'] for f in tmp_path.glob('*.json')]
         file.unlink()

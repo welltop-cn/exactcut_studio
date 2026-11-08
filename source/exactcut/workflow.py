@@ -96,6 +96,16 @@ def runtime(path, *, jobs=None):
     return data
 
 
+def _summary_jobs():
+    """只读过滤坏任务；持久化隔离、告警及执行器处理留给调度器。"""
+    from . import job_records
+    jobs = ROOT / '.web-state/jobs'
+    for file in jobs.glob('*.json'):
+        job = job_records.load(file, jobs, BATCHES, isolate=False, reader=read_json)
+        if job is not None:
+            yield job
+
+
 def production_summary(path, data, records=None, *, jobs=None):
     """One rule for persisted summaries and reads; count only confirmed requests."""
     if not data.get('request_parallel') or not (path / 'confirmed.json').exists():
@@ -120,7 +130,7 @@ def production_summary(path, data, records=None, *, jobs=None):
     pending.update(render_executors)
     queued = set()
     if jobs is None:
-        jobs = (read_json(file) for file in (ROOT / '.web-state/jobs').glob('*.json'))
+        jobs = _summary_jobs()
     batch_id = path.name
     for job in jobs:
         if (job.get('batch_id') == batch_id and job.get('phase') == 'render'
@@ -573,7 +583,7 @@ def summaries(can_access=None, *, compact=False):
     if not BATCHES.exists():
         return []
     result = []
-    jobs = [read_json(file) for file in (ROOT / '.web-state/jobs').glob('*.json')] if compact else None
+    jobs = list(_summary_jobs()) if compact else None
     for p in BATCHES.glob('*/draft.json'):
         from .material_versions import internal
         if internal(p.parent):

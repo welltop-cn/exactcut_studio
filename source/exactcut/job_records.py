@@ -5,6 +5,7 @@ import re
 import threading
 import signal
 import time
+from contextlib import nullcontext
 
 from .util import read_json, write_json_atomic
 from . import diagnostics as diag
@@ -44,8 +45,9 @@ def read(file, *, isolate=False, reader=read_json):
 
 def load(file, jobs, batches, *, isolate=False, reader=read_json):
     from . import batch_control
-    # rebuild/outbox 也使用同一身份确认及隔离入口，且在预留账本锁之前调用。
-    with batch_control.LOCK:
+    # 隔离变更持控制锁；只读调用可能已持 runtime.lock，不能反向获取控制锁。
+    # rebuild/outbox 的隔离入口仍在预留账本锁之前调用。
+    with batch_control.LOCK if isolate else nullcontext():
         job = read(file, isolate=isolate, reader=reader)
         if job is None or job.get('quarantine'): return None
         reason = validate(job, file, batches)
