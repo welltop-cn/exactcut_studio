@@ -58,6 +58,7 @@ def set_owner(owner):
 class Observation:
     def __init__(self, owner='unknown'):
         self.owner = owner
+        self.holder_owner = None
         self.metrics = {}
 
     def fields(self):
@@ -161,6 +162,7 @@ class TimedLock:
 
     def _record(self, state, ended):
         _, acquired, started, observation, blocked_by, owner = state
+        owner = observation.holder_owner or owner
         wait = max(0, (acquired - started) * 1000)
         hold = max(0, (ended - acquired) * 1000)
         old = observation.metrics.get(self.name, (0, 0, 0))
@@ -281,6 +283,7 @@ class Phases:
 @contextmanager
 def phases():
     with observe('worker.recover_outbox') as observation:
+        observation.holder_owner = 'worker.tick'
         timer = Phases(observation)
         try:
             yield timer

@@ -57,7 +57,7 @@ OOM/SIGKILL 需结合容器 `OOMKilled`、ExitCode 和宿主机日志，不能�
 
 | 事件 | 字段与频率 |
 | --- | --- |
-| `lock.slow` | `lock` 为锁名；`owner` 为本次获取者的低基数标签，HTTP 使用方法与路由模板，32 位十六进制 ID 归一化为 `:id`，其他动态部分为 `:part`，不含查询串或用户名；worker 使用 `worker.<阶段>`。`kind` 为 `wait` 或 `hold`；`wait_ms`、`hold_ms` 为本次最外层获取的毫秒数；等待事件的 `blocked_by` 是开始等待时持有者的标签，随 worker 当前阶段更新，持有事件该字段为空。等待或持有达到阈值时触发，同一锁、owner、kind 每 30 秒最多一条。 |
+| `lock.slow` | `lock` 为锁名；`owner` 为本次获取者的低基数标签，HTTP 使用方法与路由模板，32 位十六进制 ID 归一化为 `:id`，其他动态部分为 `:part`，不含查询串或用户名；worker 的 `owner`（含 `lock.summary` 的 `owners`）固定为 `worker.tick`，等待者的 `blocked_by` 仍使用 worker 实时阶段标签（如 `worker.reconcile`）。`kind` 为 `wait` 或 `hold`；`wait_ms`、`hold_ms` 为本次最外层获取的毫秒数；等待事件的 `blocked_by` 是开始等待时持有者的标签，随 worker 当前阶段更新，持有事件该字段为空。等待或持有达到阈值时触发，同一锁、owner、kind 每 30 秒最多一条。 |
 | `lock.summary` | 每把锁每 60 秒最多一条，释放时顺带触发，无后台线程。`owners` 按获取时的 owner 汇总：`count` 为最外层获取次数，`wait_ms_total/max`、`hold_ms_total/max` 为该窗口累计值与最大值，`slow_count` 为等待或持有达到阈值的获取次数。窗口从锁初始化或上次汇总开始，空闲时不写日志。 |
 | `scheduler.tick_slow` | tick 持锁达到 200ms 时触发，每 60 秒最多一条。`total_ms` 为整个 tick 耗时，`lock_hold_ms` 为 web 锁持有耗时，`phases_ms` 为阶段耗时映射：`recover_outbox`（锁外恢复）、`drain`（队列排空）、`lock_wait`（等待两把锁）、`poll_finish`（进程完成处理）、`recover_jobs`、`external`（外部进程统计及任务扫描）、`reconcile`、`durable_scan`（持久化排队任务扫描及二次排空）、`resource_usage`、`dispatch`。异常退出的 tick 也统计已执行阶段。 |
 | `scheduler.tick_summary` | 每 60 秒最多一条，在 tick 结束时触发；`tick_count` 为窗口 tick 数，`phases_ms` 中每阶段的 `total_ms`、`max_ms` 为窗口累计与最大耗时。 |

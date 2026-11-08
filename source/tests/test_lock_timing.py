@@ -180,6 +180,13 @@ def test_worker_phases_and_blocker(runner, logs, monkeypatch):
             'external', 'reconcile', 'durable_scan', 'resource_usage', 'dispatch'} <= slow['phases_ms'].keys()
     wait = next(r for r in rows if r['event'] == 'lock.slow' and r.get('trace_id') == 'concurrent-request')
     assert wait['blocked_by'] == 'worker.reconcile'
+    assert wait['owner'] == 'GET /api/batches/sidebar'
+    holds = [r for r in rows if r['event'] == 'lock.slow' and r['kind'] == 'hold']
+    assert holds and all(r['owner'] == 'worker.tick' for r in holds)
+    lock_summaries = [r for r in rows if r['event'] == 'lock.summary']
+    assert lock_summaries
+    assert all('worker.tick' in r['owners'] and 'worker.lock_wait' not in r['owners']
+               for r in lock_summaries)
     summary = next(r for r in rows if r['event'] == 'scheduler.tick_summary')
     assert summary['tick_count'] == 1
     # A second tick inside the minute must not emit a summary.
