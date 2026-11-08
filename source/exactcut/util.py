@@ -40,6 +40,8 @@ def write_json_atomic(path: Path, payload: Any) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        from . import tick_snapshot
+        tick_snapshot.invalidate(path)
     finally:
         try:
             os.unlink(temporary)

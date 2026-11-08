@@ -11,18 +11,20 @@ from pathlib import Path
 from .util import read_json, write_json_atomic, now_iso
 from .runtime import instance_marker
 from . import diagnostics as diag
+from . import lock_timing, tick_snapshot
 
-LOCK = threading.RLock()
+LOCK = lock_timing.TimedLock(threading.RLock(), 'batch_control')
 ACTIVE = {'queued', 'downloading', 'indexing', 'producing', 'publishing'}
 
 
-def read(path):
+def read(path, *, fresh=False):
     file = path / 'control.json'
     value = read_json(file) if file.exists() else {'paused': False, 'archived': False, 'suspended': []}
     from . import material_versions as m
-    identity = m.internal(path)
+    identity = m.internal(path) if fresh else tick_snapshot.internal(path)
     if identity:
-        state = m.read(path.parent / identity['parent_batch_id'])
+        parent = path.parent / identity['parent_batch_id']
+        state = m.read(parent) if fresh else tick_snapshot.parent_state(parent)
         stale = state['deleted_at'] or state['assets'][identity['asset_id']]['deleted_at']
         if identity['kind'] == 'candidate':
             version = state['versions'][identity['version_id']]
@@ -136,7 +138,7 @@ def identify(process, *, process_token=None, lane=None, request_id=None):
 def remember_child(path, identity):
     if not path.is_dir() or not valid_token(identity.get('process_token')):
         return
-    control = read(path)
+    control = read(path, fresh=True)
     children = [item for item in control.get('children', []) if item.get('pid') != identity['pid']]
     stored = {key: identity.get(key) for key in ('pid', 'pgid', 'process_token', 'lane', 'request_id')}
     stored['instance'] = identity.get('instance') or instance_marker()
@@ -209,17 +211,17 @@ def _signal_controlled(path, control, child, sig, table=None):
 
 
 def signal_children(path, sig, table=None):
-    control = read(path)
+    control = read(path, fresh=True)
     signaled = []
     for child in control.get('children', []):
         if valid_token(child.get('process_token')) and _signal_controlled(path, control, child, sig, table):
             signaled.append(child)
     if sig == signal.SIGSTOP:
-        control = read(path)
+        control = read(path, fresh=True)
         control['suspended'] = signaled
         write(path, control)
     elif sig == signal.SIGCONT:
-        control = read(path)
+        control = read(path, fresh=True)
         control['suspended'] = []
         write(path, control, '已继续执行')
     return signaled
@@ -283,7 +285,7 @@ def change(path, action):
     # Legacy production holds the media gate throughout a stage. Controls must
     # still reach it; completed edit results do not freeze project controls.
     with LOCK:
-        control = read(path)
+        control = read(path, fresh=True)
         state = read_json(path / 'runtime.json')
         if action == 'pause':
             if cutting_active(path.name):
@@ -313,11 +315,11 @@ def change(path, action):
             write(path, control, '已取消归档，暂停的任务需点击继续执行')
         else:
             raise ValueError('未知批次操作')
-        return read(path)
+        return read(path, fresh=True)
 
 
 def ensure_editable(path, *, execution=False):
-    control = read(path)
+    control = read(path, fresh=True)
     if control.get('archived'):
         raise ValueError('批次已归档，请先取消归档')
     if execution and (control.get('paused') or control.get('suspended')):
@@ -391,10 +393,12 @@ def reconcile(batch_root, table=None, *, external_active=None, cursor_file=None)
             total = limits['max_active_children'] if limits['enabled'] else 1
             if sum(counts.values()) > total:
                 continue
-            control = read(path)
+            control = read(path, fresh=True)
+            if control.get('paused') or control.get('archived'):
+                continue
             if _signal_controlled(path, control, child, signal.SIGCONT, table):
                 active_batches.add(candidate)
-                control = read(path)
+                control = read(path, fresh=True)
                 control['suspended'] = [item for item in control.get('suspended', [])
                                         if item.get('process_token') != child['process_token']]
                 write(path, control, '已继续执行')
