@@ -565,15 +565,17 @@ const vm=require('vm'), fs=require('fs'), assert=require('assert');
 const events={}, sent=[];
 const error=new TypeError('private error text');
 const window={addEventListener:(name, fn)=>events[name]=fn, fetch:async(url, options)=>{
-  if(String(url).endsWith('client-events')) {sent.push(JSON.parse(options.body));return {ok:true};}
+  if(String(url).endsWith('client-events')) {sent.push(...JSON.parse(options.body).events.map(event=>({...JSON.parse(options.body),...event})));return {ok:true};}
   throw error;
 }};
 const document={baseURI:'http://localhost/home/',addEventListener:()=>{}};
-vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{window,document,URL,performance});
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{window,document,URL,performance,setTimeout:()=>1,clearTimeout(){}});
 (async()=>{
   await assert.rejects(window.fetch('api/jobs',{body:'password=private-form'}),e=>e===error);
   events.error({filename:'http://localhost/home/app.js?secret=private-query',lineno:12,colno:3,error});
+  (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.event==='network_error'));
+  (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.source==='app.js' && x.line===12));
   assert(!JSON.stringify(sent).includes('private'));
 })().catch(e=>{console.error(e);process.exit(1)});
@@ -592,7 +594,7 @@ const events={}, sent=[], calls=[]; let now=0;
 class Clock extends Date {static now(){return now;}}
 const response={ok:false,status:429,headers:new Headers({'X-Request-ID':'a'.repeat(32)})};
 const window={addEventListener:(n,fn)=>events['window.'+n]=fn,fetch:async(url,options)=>{
-  if(String(url).endsWith('client-events')){sent.push(JSON.parse(options.body));return {ok:true};}
+  if(String(url).endsWith('client-events')){sent.push(...JSON.parse(options.body).events.map(event=>({...JSON.parse(options.body),...event})));return {ok:true};}
   calls.push([url,options]); return response;
 }};
 const document={baseURI:'http://localhost/home/',visibilityState:'visible',
@@ -600,12 +602,14 @@ const document={baseURI:'http://localhost/home/',visibilityState:'visible',
   querySelector:()=>({dataset:{batch:'b'.repeat(32)}}),
   addEventListener:(n,fn)=>events[n]=fn};
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),
-  {window,document,URL,performance,Headers,Request,crypto:require('crypto').webcrypto,Date:Clock});
+  {window,document,URL,performance,Headers,Request,crypto:require('crypto').webcrypto,Date:Clock,setTimeout:()=>1,clearTimeout(){}});
 (async()=>{
   const button={id:'saveButton',dataset:{},disabled:false};
   events.click({target:{closest:()=>button}});
+  (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.event==='action'&&x.action==='saveButton'&&x.batch_id==='b'.repeat(32)));
   events.click({target:{closest:()=>({...button,id:'startNow'})}});
+  (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.event==='action'&&x.action==='startNow'));
   const req=new Request('http://localhost/home/api/batches/'+'b'.repeat(32)+'/hook-preview?secret=private-query',
     {method:'POST',headers:{'X-Exactcut-Request':'1'},body:'private-form'});
@@ -613,6 +617,7 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),
   const hdr=new Headers(calls[0][1].headers);
   assert.strictEqual(hdr.get('X-Exactcut-Request'),'1');
   const id=hdr.get('X-Client-Request-ID');assert(/^[a-f0-9]{32}$/.test(id));
+  (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.http_trace_id==='a'.repeat(32)&&x.client_request_id===id&&x.route==='batches.hook-preview'));
   assert.strictEqual(req.bodyUsed,false);
   assert.strictEqual(calls[0][0],req);
@@ -625,19 +630,22 @@ vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),
   assert.strictEqual(calls[1][1].signal,controller.signal);
   assert.strictEqual(calls[1][1].method,'POST');
   events.error({target:{tagName:'VIDEO',dataset:{previewRequest:'R123'},readyState:0,networkState:3,error:{code:4},currentTime:0}});
+  (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.event==='media_error'&&x.request_id==='R123'&&x.media_error===4));
   const video={tagName:'VIDEO',id:'mosaicSource',dataset:{previewRequest:'R456',previewBatch:'c'.repeat(32),previewSession:'e'.repeat(32)},readyState:2,networkState:2,error:null,currentTime:12.5,paused:true,seeking:true,ended:false,src:'private-video-url'};
   events.waiting({target:video});
+  (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.event==='media_waiting'&&x.source==='mosaicSource'&&x.batch_id==='c'.repeat(32)&&x.session_id==='e'.repeat(32)&&x.current_ms===12500&&x.seeking===1));
   const context={batch:'c'.repeat(32),asset:{request_id:'R456'},session:{id:'e'.repeat(32)}};
   video.dataset.previewSession='f'.repeat(32);
   window.reportMediaPlayFailure(video,{name:'AbortError',message:'private-error-url'},context);
+  (events.pagehide||events['window.pagehide'])();
   assert(sent.some(x=>x.event==='media_play_rejection'&&x.error_type==='AbortError'&&x.session_id==='e'.repeat(32)&&x.paused===1));
   window.reportMediaPlayFailure(null,{},null); // Diagnostics must never interrupt the UI.
   for(let i=0;i<50;i++)events.click({target:{closest:()=>button}});
-  const count=sent.length;now=61000;
+  events['window.pagehide']();const count=sent.length;now=61000;
   events.click({target:{closest:()=>button}});
-  assert(sent.length>count,'reports must resume after the minute budget resets');
+  events['window.pagehide']();assert(sent.length>count,'reports must resume after the minute budget resets');
   assert(!JSON.stringify(sent).includes('private'));
   assert(sent.every(x=>x.page_id&&x.frontend_build==='d'.repeat(20)));
   const before=sent.length;await window.fetch('https://external.invalid/api/private');
@@ -695,3 +703,68 @@ def test_private_span_keeps_provider_code_without_response(monkeypatch):
     assert fields['duration_ms']>=0
 
 from interactive_test_support import interactive_dispatcher
+
+
+def test_browser_batch_matches_legacy_logs_and_skips_invalid(diag, monkeypatch):
+    from io import BytesIO
+    from exactcut import webserver
+    d, root = diag
+    monkeypatch.setattr(webserver, 'maintenance_file', lambda: root / 'absent')
+    headers = {}
+    app = None
+    def request(app, method, path, payload, headers):
+        handler = webserver.Handler.__new__(webserver.Handler)
+        handler.path = '/api/client-events'
+        handler.user = {'username': 'fixture'}
+        handler.authorized = lambda: True
+        raw = json.dumps(payload).encode()
+        handler.headers = {'Content-Length': str(len(raw)), 'X-Exactcut-Request': '1'}
+        handler.rfile = BytesIO(raw)
+        result = []
+        handler.respond = lambda status, body: result.append((status, body))
+        handler.handle_post()
+        return result[0]
+    logged = []
+    monkeypatch.setattr(d, 'throttled', lambda *args, **kwargs: logged.append((args, kwargs)))
+    common = {'page_id': 'a' * 32, 'frontend_build': 'test'}
+    events = [{'event': 'action', 'action': 'saveButton', 'message': 'ignored'},
+              {'event': 'page_error', 'source': 'app.js', 'line': 12}]
+    for event in events:
+        assert request(app, 'POST', '/home/api/client-events', {**common, **event}, headers)[0] == 200
+    expected = logged[:]
+    logged.clear()
+    payload = {**common, 'events': [events[0], None, {'event': 'unknown'},
+                                  {'event': 'page_error', 'source': 'invalid/value'}, events[1]]}
+    assert request(app, 'POST', '/home/api/client-events', payload, headers)[0] == 200
+    assert logged == expected
+    assert request(app, 'POST', '/home/api/client-events', {**common, 'events': events * 26}, headers)[0] == 400
+    assert request(app, 'POST', '/home/api/client-events', {**common, 'events': [], 'padding': 'x' * 65536}, headers)[0] == 400
+
+
+def test_browser_buffers_flushes_and_never_retries():
+    script = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict'),fs=require('node:fs');
+const listeners={},timers=new Map(),sent=[];let next=0;
+const window={addEventListener:(n,f)=>listeners[n]=f,fetch:(url,opts)=>{sent.push(opts);return Promise.reject(Error('offline'))}};
+const document={baseURI:'https://example.invalid/',visibilityState:'visible',addEventListener:(n,f)=>listeners[n]=f};
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8').replace("report({event: 'page_ready'","window.testReport=report; report({event: 'page_ready'"),{window,document,URL,performance,
+ setTimeout:(f,ms)=>{assert.equal(ms,3000);timers.set(++next,f);return next},clearTimeout:id=>timers.delete(id)});
+const emit=()=>window.reportEditorRetry({action:'retry_scheduled',source:'test'});
+assert.equal(sent.length,0);assert.equal(timers.size,1);
+let timer=[...timers.values()][0];timer();assert.equal(sent.length,1);
+assert.equal(JSON.parse(sent[0].body).events[0].event,'page_ready');
+for(let i=0;i<20;i++)emit();assert.equal(sent.length,2);assert.equal(JSON.parse(sent[1].body).events.length,20);
+emit();document.visibilityState='hidden';listeners.visibilitychange();
+assert.equal(sent.length,3);assert.equal(JSON.parse(sent[2].body).events.length,2);
+emit();listeners.pagehide();listeners.pagehide();assert.equal(sent.length,4);
+const all=sent.flatMap(o=>JSON.parse(o.body).events);assert.equal(all.length,24);
+assert(sent.every(o=>o.keepalive&&Buffer.byteLength(o.body)<=60*1024));
+// Exercise byte splitting with deliberately oversized synthetic metadata.
+for(let i=0;i<20;i++)window.testReport({event:'page_error',source:'字'.repeat(1500)});
+assert.equal(sent.slice(4).flatMap(o=>JSON.parse(o.body).events).length,20);
+assert(sent.length>5,'large batches must split');
+assert(sent.every(o=>Buffer.byteLength(o.body)<=60*1024));
+'''
+    path = Path(__file__).resolve().parents[1] / 'exactcut/web/diagnostics.js'
+    result = subprocess.run(['node', '-e', script, str(path)], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr

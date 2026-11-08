@@ -1868,6 +1868,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.respond(503, {'error': '验收实例禁止启动或控制生产任务'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
+            if self.path == '/api/client-events' and size > 64 * 1024:
+                return self.respond(400, {'error': '无效诊断事件'})
             if size < 1 or size > 15_000_000:
                 raise ValueError('请求大小必须在 15 MB 以内')
             data = json.loads(self.rfile.read(size))
@@ -1878,16 +1880,27 @@ class Handler(BaseHTTPRequestHandler):
                            'request_started', 'request_completed', 'media_error', 'media_stalled',
                            'media_waiting', 'media_playing', 'media_play_rejection', 'page_ready', 'visibility',
                            'editor_retry', 'editor_action_latency', 'editor_long_task'}
-                if data.get('event') not in allowed or size > 4096:
+                batch = 'events' in data
+                entries = data.get('events') if batch else [data]
+                if not isinstance(entries, list) or len(entries) > 50 or (not batch and size > 4096):
                     return self.respond(400, {'error': '无效诊断事件'})
-                fields = diag.browser_fields(data)
-                if not diag.allow_browser_event(self.user['username']):
-                    return self.respond(200, {'ok': True})
-                key = tuple(fields.get(name) for name in ('event', 'page_id', 'route', 'batch_id', 'action',
-                            'status', 'request_id', 'client_request_id', 'source', 'line', 'error_type', 'visibility', 'session_id'))
-                diag.throttled('browser.event', (self.user['username'], key), interval=10,
-                               level='warning' if fields['event'] in {'page_error', 'unhandled_rejection', 'network_error', 'media_error', 'media_play_rejection'} or fields.get('status', 0) >= 400 else 'info',
-                               actor=self.user['username'], browser=fields)
+                for entry in entries:
+                    try:
+                        if not isinstance(entry, dict) or entry.get('event') not in allowed or (batch and len(json.dumps(entry, ensure_ascii=False).encode()) > 4096):
+                            raise ValueError('无效诊断事件')
+                        fields = diag.browser_fields({**entry, 'page_id': data.get('page_id'),
+                                                      'frontend_build': data.get('frontend_build')} if batch else entry)
+                    except (ValueError, TypeError):
+                        if batch:
+                            continue
+                        return self.respond(400, {'error': '无效诊断事件'})
+                    if not diag.allow_browser_event(self.user['username']):
+                        continue
+                    key = tuple(fields.get(name) for name in ('event', 'page_id', 'route', 'batch_id', 'action',
+                                'status', 'request_id', 'client_request_id', 'source', 'line', 'error_type', 'visibility', 'session_id'))
+                    diag.throttled('browser.event', (self.user['username'], key), interval=10,
+                                   level='warning' if fields['event'] in {'page_error', 'unhandled_rejection', 'network_error', 'media_error', 'media_play_rejection'} or fields.get('status', 0) >= 400 else 'info',
+                                   actor=self.user['username'], browser=fields)
                 return self.respond(200, {'ok': True})
             if self.path == '/api/login':
                 user = accounts.authenticate(self.server.auth_db, data.get('username',''), data.get('password',''))

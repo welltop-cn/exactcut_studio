@@ -12,16 +12,32 @@
   let build = 'unknown';
   try { build = name(document.currentScript.dataset?.appVersion || new URL(document.currentScript.src).searchParams.get('v')); } catch (_) {}
   let budgetAt = Date.now(), routine = 0, failures = 0;
+  let pending = [], flushTimer = null;
+  const envelope = events => JSON.stringify({page_id: page, frontend_build: build, events});
+  const flush = () => {
+    clearTimeout(flushTimer); flushTimer = null;
+    const events = pending; pending = [];
+    while (events.length) {
+      let count = Math.min(20, events.length), body = envelope(events.slice(0, count));
+      while (count > 1 && unescape(encodeURIComponent(body)).length > 60 * 1024) body = envelope(events.slice(0, --count));
+      events.splice(0, count);
+      try {
+        originalFetch(new URL('api/client-events', base), {
+          method: 'POST', headers: {'Content-Type': 'application/json', 'X-Exactcut-Request': '1'},
+          body, keepalive: true
+        }).catch(() => {});
+      } catch (_) {}
+    }
+  };
   const report = data => {
     try {
       if (Date.now() - budgetAt >= 60000) { budgetAt = Date.now(); routine = 0; failures = 0; }
       const failure = /error|rejection/.test(data.event) || data.status >= 400;
       if (failure ? failures >= 40 : routine >= 40) return;
       if (failure) failures++; else routine++;
-      originalFetch(new URL('api/client-events', base), {
-        method: 'POST', headers: {'Content-Type': 'application/json', 'X-Exactcut-Request': '1'},
-        body: JSON.stringify({page_id: page, frontend_build: build, ...data}), keepalive: true
-      }).catch(() => {});
+      pending.push(data);
+      if (pending.length >= 20) flush();
+      else if (flushTimer === null) flushTimer = setTimeout(flush, 3000);
     } catch (_) { /* Diagnostics must not change page behavior. */ }
   };
   const selectedBatch = () => {
@@ -83,7 +99,11 @@
         ...(video.dataset.previewSession ? {session_id: name(video.dataset.previewSession)} : {})});
     }, true);
   }
-  listen(document, 'visibilitychange', () => report({event: 'visibility', ...selectedBatch(), visibility: name(document.visibilityState)}));
+  listen(document, 'visibilitychange', () => {
+    report({event: 'visibility', ...selectedBatch(), visibility: name(document.visibilityState)});
+    if (document.visibilityState === 'hidden') flush();
+  });
+  listen(window, 'pagehide', flush);
   // Only caller-selected metadata is accepted, never arbitrary error/body fields.
   window.reportEditorRetry = data => {
     try {
