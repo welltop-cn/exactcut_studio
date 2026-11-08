@@ -110,6 +110,16 @@ def stored_jobs(*, isolate=False, reuse=False):
         if job is not None: yield job
 
 
+def queue_jobs():
+    """队列展示只读扫描；不依赖调度全局锁，也不执行隔离写入。"""
+    from . import job_records
+    for file in JOBS.glob('*.json'):
+        job = job_records.load(file, JOBS, workflow.BATCHES, isolate=False)
+        if (job is not None and job.get('status') in {'queued', 'running'}
+                and concurrency.lane(job) in {'fetch', 'render'}):
+            yield job
+
+
 def queue_size():
     count = 0
     for job in stored_jobs():
@@ -138,7 +148,7 @@ def queue_snapshot(user):
              for lane in ('fetch', 'render')}
     tasks = []
     now = time.time()
-    for job in sorted(stored_jobs(), key=lambda item: item.get('created', 0)):
+    for job in sorted(queue_jobs(), key=lambda item: item.get('created', 0)):
         lane = concurrency.lane(job)
         if lane not in pools or job.get('status') not in {'queued', 'running'}:
             continue

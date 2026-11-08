@@ -15,7 +15,9 @@ def test_queue_exposes_only_global_counts_and_authorized_details(tmp_path, monke
         write_json_atomic(path/'runtime.json', {'status':'producing'})
         jobs.append({'id': owner+'-job', 'batch_id':bid, 'request_id':owner+'-asset', 'lane':'render', 'status':state,'created':10,'started':20,'command':['secret command'],'actor':'spoofed'})
     jobs.append({'id':'upload','batch_id':'a'*32,'lane':'upload','status':'running'})
-    monkeypatch.setattr(web, 'stored_jobs', lambda: iter(jobs))
+    monkeypatch.setattr(web, 'JOBS', tmp_path / 'jobs')
+    for job in jobs:
+        write_json_atomic(web.JOBS / (job['id'] + '.json'), job)
     result=web.queue_snapshot({'username':'alice','role':'user'})
     assert result['pools']['render']=={'running':1,'queued':1,'paused':0,'limit':3}
     assert len(result['tasks'])==1
