@@ -374,7 +374,7 @@
   function drawOverlay(){
     if(!context)return;
     drawLivePreview();
-    overlay.hidden=!frameShown()||(!candidates.length&&!drawing);
+    overlay.hidden=!frameShown()||((!inRange()||!candidates.length)&&!drawing);
     if(overlay.hidden)return;
     const g=geometry();Object.assign(overlay.style,{left:g.left+'px',top:g.top+'px',width:g.width+'px',height:g.height+'px'});
     overlay.classList.toggle('drawing',drawing);

@@ -1899,6 +1899,8 @@ def test_pointerup_adopts_mask_steps_move_resize_and_reopens_without_confirmatio
 
 @pytest.mark.parametrize('navigation',['previous','next','jump','slider','timeline'])
 def test_navigation_preserves_selection_outside_half_open_clip_range(editor,navigation):
+    from playwright.sync_api import expect
+
     draw_unlocalized_segment(editor)
     editor.locator('[data-scan-event="e1"]').click()
     assert editor.locator('#mosaicStatus').inner_text()=='拖动框可调整位置，整段使用同一位置。'
@@ -1920,9 +1922,12 @@ def test_navigation_preserves_selection_outside_half_open_clip_range(editor,navi
     assert editor.locator('#mosaicEnd').input_value()=='00:02:29'
     assert editor.locator('#mosaicRegionTools').is_visible()
     assert editor.locator('#mosaicReturnToClip').is_visible()
+    expect(editor.locator('#mosaicFrame')).to_be_visible()
+    expect(editor.locator('#mosaicOverlay')).to_be_hidden()
     assert active_count(editor)==1
     editor.locator('#mosaicReturnToClip').click()
     assert editor.locator('#mosaicFrameNumber').input_value()=='00:01:00'
+    expect(editor.locator('#mosaicOverlay')).to_be_visible()
 
 
 def test_time_and_every_coordinate_change_persist_without_confirmation(editor):
