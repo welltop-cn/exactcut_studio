@@ -193,7 +193,14 @@ def asset_timing(request_id, jobs, *, now=None):
 def batch_response(batch_id, job=None):
     result = workflow.detail(batch_id)
     from .material_workers import parent_batch_id
-    jobs = [item for item in stored_jobs() if item.get('batch_id') and parent_batch_id(item['batch_id']) == batch_id]
+    parents = {}
+
+    def parent_of(child_id):
+        if child_id not in parents:
+            parents[child_id] = parent_batch_id(child_id)
+        return parents[child_id]
+
+    jobs = [item for item in stored_jobs() if item.get('batch_id') and parent_of(item['batch_id']) == batch_id]
     media_state = workflow.material_versions.read(workflow.folder(batch_id)) if result.get('media_managed') else None
     for asset in result.get('assets', []):
         current_jobs = jobs

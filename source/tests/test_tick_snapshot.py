@@ -201,6 +201,30 @@ def test_three_ticks_equivalent_and_parse_bound(scheduler, monkeypatch, tmp_path
     assert semantic(disabled) == semantic(enabled)
 
 
+def test_batch_response_memo(scheduler, monkeypatch):
+    parent, child = batch('p'), batch('c')
+    write_json_atomic(child / 'draft.json', {'media_internal': {'parent_batch_id': parent.name}})
+    for i in range(4): web.save({'id': str(i), 'batch_id': child.name, 'status': 'completed', 'created': i})
+    detail = {'runtime': {'status': 'review'}, 'assets': [{'request_id': 'r'}]}
+    monkeypatch.setattr(w, 'detail', lambda bid: copy.deepcopy(detail))
+    monkeypatch.setattr(web, 'job_response', lambda job: {'queue_position': 0})
+    calls, original = [], m.read_json
+    def counted(file):
+        if file == child / 'draft.json': calls.append(1)
+        return original(file)
+    monkeypatch.setattr(m, 'read_json', counted)
+    result = web.batch_response(parent.name)
+    assert len(calls) == 1
+    jobs = [j for j in web.stored_jobs() if material_workers.parent_batch_id(j['batch_id']) == parent.name]
+    expected = copy.deepcopy(detail); expected['assets'][0]['timing'] = web.asset_timing('r', jobs)
+    job = max(jobs, key=lambda j: j['created'])
+    expected['submission'] = {key: job.get(key) for key in ('id', 'action', 'status', 'created', 'request_id')}
+    expected['submission']['queue_position'] = 0
+    assert result == expected
+    calls.clear(); assert web.batch_response(parent.name) == expected
+    assert len(calls) == 1
+
+
 def test_fingerprint_same_size_restored_mtime(tmp_path):
     file = tmp_path / 'job.json'
     file.write_text('{"id":"one"}')
