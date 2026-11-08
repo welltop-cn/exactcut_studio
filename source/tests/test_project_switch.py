@@ -236,8 +236,8 @@ def test_scheduled_poll_slows_idle_and_stops_hidden_tabs():
 const assert=require('node:assert/strict');let now=100000,calls=0;const Date={now:()=>now};
 const document={hidden:false};let current={runtime:{status:'review'}},batchCache=[];
 const activeStatuses=['queued','downloading','indexing','producing','publishing'];
-const poll=()=>{calls++};
-''' + code + r'''
+let openingBatchId=null;const poll=()=>{calls++};
+''' + next(line for line in source.splitlines() if line.startswith('function pollInterval(')) + '\n' + code + r'''
 scheduledPoll();assert.equal(calls,1);now+=3000;scheduledPoll();assert.equal(calls,1);
 now+=12000;scheduledPoll();assert.equal(calls,2);
 current.runtime.status='producing';now+=3000;scheduledPoll();assert.equal(calls,3);
@@ -246,4 +246,40 @@ document.hidden=false;scheduledPoll(true);assert.equal(calls,4);
 current.runtime.status='review';current.source_prefetch={episodes:[{status:'downloading'}]};now+=3000;scheduledPoll();assert.equal(calls,5);
 '''
     result = subprocess.run(['node', '-e', script], text=True, capture_output=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_switch_defers_all_polling_and_recent_detail_only_skips_detail():
+    source = (Path(__file__).resolve().parents[1] / 'exactcut/web/app.js').read_text()
+    script = r'''
+const vm=require('node:vm'),assert=require('node:assert/strict');
+const source=JSON.parse(require('node:fs').readFileSync(0,'utf8'));
+let now=100000,list=0,queue=0,details=0;
+const ctx=vm.createContext({Date:{now:()=>now,parse:Date.parse},document:{hidden:false},
+ current:{id:'a',runtime:{status:'review'}},selectedId:'a',openingBatchId:'b',openingBatchRequest:1,
+ batchCache:[],activeStatuses:['producing'],polling:false,busy:new Set(),
+ refreshBatches:async()=>list++,refreshQueue:async()=>queue++,prefetchSources:async()=>{},
+ api:async()=>{details++;throw Error('fixture')},$:()=>({})});
+vm.runInContext(source.slice(source.indexOf('function pollInterval('),source.indexOf('async function feedbackPage(')),ctx);
+(async()=>{
+ await vm.runInContext('scheduledPoll(true)',ctx);await vm.runInContext('poll()',ctx);
+ assert.equal(list,0);assert.equal(queue,0);assert.equal(details,0);
+ ctx.openingBatchId=null;
+ vm.runInContext("openBatch.lastDetail={id:'a',at:Date.now()}",ctx);
+ await vm.runInContext('scheduledPoll()',ctx);
+ assert.equal(list,1);assert.equal(queue,1);assert.equal(details,0);
+ now+=15000;await vm.runInContext('scheduledPoll()',ctx);
+ assert.equal(list,2);assert.equal(queue,2);assert.equal(details,1);
+ // Active projects keep the existing three-second cadence.
+ ctx.current.runtime.status='producing';now+=1000;
+ vm.runInContext("openBatch.lastDetail={id:'a',at:Date.now()}",ctx);
+ await vm.runInContext('refreshSelectedBatch()',ctx);assert.equal(details,1);
+ now+=3000;await vm.runInContext('scheduledPoll()',ctx);assert.equal(details,2);
+ vm.runInContext("openBatch.lastDetail={id:'a',at:Date.now()}",ctx);
+ await assert.rejects(vm.runInContext('refreshSelectedBatch(true)',ctx));assert.equal(details,3,'conflict resync bypasses the recent-detail optimization');
+})().catch(e=>{console.error(e);process.exit(1)});
+'''
+    # Function property avoids adding a global dependency to isolated poll consumers.
+    script = script.replace("vm.runInContext(source.slice", "ctx.openBatch=function(){};\nvm.runInContext(source.slice")
+    result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr
