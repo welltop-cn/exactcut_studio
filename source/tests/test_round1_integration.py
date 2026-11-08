@@ -274,8 +274,10 @@ def test_enabled_false_preserves_persisted_delayed_poll_protocol(chain):
     assert len(chain.poll_calls) == 1
 
 
+@pytest.mark.parametrize('skip_finished', ['0', '1'])
 @pytest.mark.parametrize('original_proof', ['valid', 'missing', 'crash_before_result', 'readonly_local_failure', 'no_admission', 'tampered', 'other_binding'])
-def test_controlled_verification_resolves_only_proven_original_job_for_old_rollback(chain, monkeypatch, ops, tmp_path, original_proof):
+def test_controlled_verification_resolves_only_proven_original_job_for_old_rollback(chain, monkeypatch, ops, tmp_path, original_proof, skip_finished):
+    monkeypatch.setenv('EXACTCUT_SKIP_FINISHED', skip_finished)
     from unittest.mock import Mock
     from test_linux_release import Engine, initialize, release
     batch = chain.batch(); chain.review(batch); chain.approve(batch); chain.tick(); chain.finish('upload', batch)
@@ -305,6 +307,7 @@ def test_controlled_verification_resolves_only_proven_original_job_for_old_rollb
     evidence_before = evidence_path.read_bytes() if evidence_path.exists() else None
     process.code = -9 if original_proof == 'crash_before_result' else 2
     chain.table.rows.pop(process.pid); chain.tick()
+    assert original['status'] == 'unverified', 'resident job holders must observe durable completion'
     assert read_json(web.JOBS / (original['id'] + '.json'))['status'] == 'unverified'
     if original_proof in {'missing', 'no_admission'}:
         evidence_path.unlink()

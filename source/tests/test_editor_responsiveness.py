@@ -12,36 +12,41 @@ def test_editor_lag_and_retry_reports_are_scoped_bounded_and_private():
         pytest.skip('Node unavailable')
     script = r'''
 const vm=require('vm'),fs=require('fs'),assert=require('assert');
-const sent=[],events={},callbacks=[];let now=0,observer;
+const sent=[],events={},callbacks=[],timers=new Map();let now=0,observer,timerId=0;
+const setTimeout=(fn,ms)=>{timers.set(++timerId,{fn,ms});return timerId},clearTimeout=id=>timers.delete(id);
+const flush=()=>events['window.pagehide']();
 const dialog={open:true,id:'mosaicDialog'};
 const video={dataset:{previewBatch:'b'.repeat(32),previewRequest:'R123',previewSession:'c'.repeat(32)}};
-const window={addEventListener:(n,fn)=>events['window.'+n]=fn,fetch:async(u,o)=>{sent.push(JSON.parse(o.body));return {ok:true};}};
+const window={addEventListener:(n,fn)=>events['window.'+n]=fn,fetch:async(u,o)=>{const body=JSON.parse(o.body);assert(body.page_id);assert(body.events.length<=20);sent.push(...body.events);return {ok:true};}};
 const document={baseURI:'http://localhost/home/',visibilityState:'visible',
  addEventListener:(n,fn)=>{(events[n]??=[]).push(fn);},
  getElementById:id=>id==='mosaicDialog'?dialog:id==='mosaicSource'?video:null};
 class Observer {static supportedEntryTypes=['longtask'];constructor(fn){observer=fn;}observe(){}}
 vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{window,document,URL,
- performance:{now:()=>now},PerformanceObserver:Observer,requestAnimationFrame:fn=>callbacks.push(fn)});
+ setTimeout,clearTimeout,performance:{now:()=>now},PerformanceObserver:Observer,requestAnimationFrame:fn=>callbacks.push(fn)});
 const target={closest:s=>s==='dialog'?dialog:null,id:'private-label'};
 assert(events.pointerdown,'editor actions must be monitored');
 for(const f of events.pointerdown)f({target});
 now=350;callbacks.splice(0).forEach(f=>f());
+assert.equal(sent.length,0,'reports must wait for a batch flush');
+assert.equal([...timers.values()][0].ms,3000);flush();
 assert(sent.some(e=>e.event==='editor_action_latency'&&e.duration_ms===350&&e.session_id==='c'.repeat(32)));
-observer({getEntries:()=>[{startTime:1,duration:300}]});
+observer({getEntries:()=>[{startTime:1,duration:300}]});flush();
 assert(sent.some(e=>e.event==='editor_long_task'&&e.duration_ms===300));
-const n=sent.length;observer({getEntries:()=>[{startTime:2,duration:310}]});assert.equal(sent.length,n,'rate limited');
+const n=sent.length;observer({getEntries:()=>[{startTime:2,duration:310}]});flush();assert.equal(sent.length,n,'rate limited');
 now=6000;for(const f of events.pointerdown)f({target});
-video.dataset.previewSession='d'.repeat(32);now=6500;callbacks.splice(0).forEach(f=>f());
+video.dataset.previewSession='d'.repeat(32);now=6500;callbacks.splice(0).forEach(f=>f());flush();
 assert.equal(sent.length,n,'changed session must not inherit action latency');
 now=12000;for(const f of events.pointerdown)f({target});
 for(const f of events.close)f({target:dialog});
-now=12500;callbacks.splice(0).forEach(f=>f());assert.equal(sent.length,n,'close/reopen same session must not inherit old latency');
-document.visibilityState='hidden';observer({getEntries:()=>[{startTime:6001,duration:500}]});assert.equal(sent.length,n);
+now=12500;callbacks.splice(0).forEach(f=>f());flush();assert.equal(sent.length,n,'close/reopen same session must not inherit old latency');
+document.visibilityState='hidden';observer({getEntries:()=>[{startTime:6001,duration:500}]});flush();assert.equal(sent.length,n);
 window.reportEditorRetry({action:'retry_scheduled',source:'frame',batch_id:'b'.repeat(32),request_id:'R123',session_id:'c'.repeat(32),duration_ms:1000,password:'private-secret',url:'private-url'});
+flush();
 assert(sent.some(e=>e.event==='editor_retry'&&e.source==='frame'));
 assert(!JSON.stringify(sent).includes('private'));
 // Monitoring unsupported or throwing must not affect startup.
-vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{window:{...window},document,URL,performance:{now:()=>0}});
+vm.runInNewContext(fs.readFileSync(process.argv[1],'utf8'),{window:{...window},document,URL,setTimeout,clearTimeout,performance:{now:()=>0}});
 '''
     path = Path(__file__).resolve().parents[1] / 'exactcut/web/diagnostics.js'
     subprocess.run([node, '-e', script, str(path)], check=True, capture_output=True, text=True)

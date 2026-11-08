@@ -14,7 +14,7 @@ from test_worker_tick_behavior_lock import scheduler, batch, finish_owned, saved
 def test_readonly_warm_cache_cannot_bypass_scheduler_isolation(scheduler, isolated, monkeypatch):
     pending, owned = scheduler
     monkeypatch.setenv('EXACTCUT_SKIP_FINISHED', '1')
-    monkeypatch.setattr(fs._local, 'memory', fs.Memory())
+    monkeypatch.setattr(fs._local, 'memory', fs.Memory(), raising=False)
     finished = batch('f')
     write_json_atomic(finished / 'runtime.json', {'status': 'complete', 'events': []})
     skips = []

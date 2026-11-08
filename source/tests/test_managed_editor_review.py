@@ -11,7 +11,7 @@ def run(script):
 
 
 def test_worker_revision_preserves_dirty_draft_and_concurrent_editor_fence():
-    refresh = next(line for line in SOURCE.splitlines() if line.startswith('async function refreshSelectedBatch()'))
+    refresh = next(line for line in SOURCE.splitlines() if line.startswith('async function refreshSelectedBatch('))
     run("""
 let current={id:'a',media_managed:true,revision:4,draft:{text:'my unsaved edit'},runtime:{updated_at:'2026-10-11T01:00:00Z'}};
 let savedDraftBaseline={id:'a',draft:JSON.stringify({text:'saved original'})};

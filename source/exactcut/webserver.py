@@ -877,7 +877,10 @@ def _worker_tick(pending, owned, *, skip_counts=None):
                     if durable is None:
                         log.close(); storage.release(key, JOBS)
                         del owned[key]; WORK.task_done(); continue
-                    job = durable
+                    # Keep the resident job object authoritative for its holders,
+                    # while replacing every field from the validated durable record.
+                    job.clear()
+                    job.update(durable)
                     try:
                         if job.get('attempt'): stage_results.scheduler_verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
                     except stage_results.EvidencePending:

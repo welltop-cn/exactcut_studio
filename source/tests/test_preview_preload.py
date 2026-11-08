@@ -41,20 +41,28 @@ def test_switch_from_preview_sets_destination_tab_before_rendering():
     script = r'''
 const vm=require('node:vm'),assert=require('node:assert/strict');
 const source=JSON.parse(require('fs').readFileSync(0,'utf8'));
-const seen=[];
-const ctx=vm.createContext({activeTab:'review',hookPreviews:new Map(),
+const seen=[],timers=new Map();let timerId=0;
+const ctx=vm.createContext({activeTab:'review',hookPreviews:new Map(),prefetchTimer:0,
+ selectedId:'b',prefetchSources(){ctx.prefetchCalls++},prefetchCalls:0,
+ setTimeout(fn,ms){timers.set(++timerId,{fn,ms});return timerId},clearTimeout(id){timers.delete(id)},
  localStorage:{setItem(){}},history:{replaceState(){}},showPage(){},
  setTab(name){ctx.activeTab=name},
  renderEditor(){seen.push(ctx.activeTab)},renderRuntime(){seen.push(ctx.activeTab)}});
 vm.runInContext(source.split('\n').find(line=>line.startsWith('function rememberSavedDraft(')),ctx);
 vm.runInContext(source.slice(source.indexOf('function displayBatch('),source.indexOf('async function openBatch(')),ctx);
-ctx.item={id:'b',runtime:{status:'review'},assets:[{preview:'/video'}]};
+vm.runInContext(source.split('\n').find(line=>line.startsWith('function scheduleSourcePrefetch(')),ctx);
+ctx.item={id:'b',draft:{},runtime:{status:'review'},assets:[{preview:'/video'}]};
 vm.runInContext('displayBatch(item)',ctx);
 assert.deepEqual(seen,['progress','progress'],'renderers must not inherit the old preview tab');
 assert.equal(ctx.activeTab,'progress');
-seen.length=0;ctx.activeTab='review';ctx.item.runtime.status='draft';
+assert.equal(ctx.prefetchCalls,0);assert.equal(timers.size,1);assert.equal([...timers.values()][0].ms,150);
+[...timers.values()][0].fn();assert.equal(ctx.prefetchCalls,1);
+timers.clear();
+seen.length=0;ctx.activeTab='review';ctx.item.runtime.status='draft';ctx.item.draft={changed:true};
 vm.runInContext('displayBatch(item)',ctx);
 assert.deepEqual(seen,['editor','editor']);assert.equal(ctx.activeTab,'editor');
+assert.equal([...timers.values()][0].ms,150);
+ctx.selectedId='other';[...timers.values()][0].fn();assert.equal(ctx.prefetchCalls,1);
 '''
     result = subprocess.run(['node', '-e', script], input=json.dumps(source), text=True, capture_output=True)
     assert result.returncode == 0, result.stderr

@@ -51,7 +51,8 @@ def test_frontend_cutting_messages_and_polling_without_browser():
 
     source = (Path(__file__).parents[1] / 'exactcut/web/app.js').read_text()
     runtime = source[source.index('function runtimeMessage('):source.index('const previewRequests=')]
-    polling = next(line for line in source.splitlines() if line.startswith('function scheduledPoll('))
+    polling = '\n'.join(line for line in source.splitlines()
+                        if line.startswith(('function pollInterval(', 'function scheduledPoll(')))
     cards = source[source.index('function executionAsset('):source.index('function renderQueue(')]
     script = r'''
 const assert=require('node:assert/strict');
@@ -68,6 +69,7 @@ const EditorBusy={message:s=>s};
 const renderRequestProgress=(assets,r)=>$('requestProgress').innerHTML=assets.map(a=>productionProgress(a,r)).join('');
 let current={filename:'网页填写',assets:[{request_id:'R1',status:'qc_passed',preview:'/old'}],
   runtime:{status:'review',download_complete:true,events:[],message:'成片已就绪，可播放查看'}};
+let openingBatchId=null;
 let batchCache=[],activeStatuses=['producing'],calls=0;const poll=()=>calls++;
 ''' + cards + runtime + polling + r'''
 for(const message of ['剪切/打码排队中','剪切/打码处理中',null]){
@@ -85,7 +87,10 @@ current.runtime.cutting_active=false;current.runtime.cutting_message='';renderRu
 assert.equal($('liveMessage').textContent,'成片已就绪，可播放查看');
 assert.equal($('batchStatus').textContent,'待预览');assert.equal($('progressMessage').hidden,true);
 scheduledPoll.lastAttempt=Date.now()-4000;scheduledPoll();assert.equal(calls,1);
-scheduledPoll.lastAttempt=Date.now()-16000;scheduledPoll();assert.equal(calls,2);
+scheduledPoll.lastAttempt=Date.now()-16000;
+openingBatchId='next';scheduledPoll();assert.equal(calls,1);
+openingBatchId=null;document.hidden=true;scheduledPoll();assert.equal(calls,1);
+document.hidden=false;scheduledPoll();assert.equal(calls,2);
 '''
     result = subprocess.run([shutil.which('node'), '-e', script], capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
