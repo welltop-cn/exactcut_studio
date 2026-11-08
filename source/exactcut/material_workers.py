@@ -114,45 +114,60 @@ def recover_outbox():
             snapshot.append((file, read_json(file)))
         except (OSError, ValueError):
             continue
+    from .finished_skip import Check, JobSnapshot, finish_checks
+    snapshot = JobSnapshot(snapshot)
+    finished_checks = []
     for marker in (w.BATCHES.parent / 'media-registry').glob('*.json'):
         parent = w.BATCHES / marker.stem
+        check = Check('outbox', parent, jobs, snapshot)
+        if check.skip:
+            continue
         try:
-            cancel_invalid_children(parent, snapshot=snapshot)
-            reconcile_candidates(parent, jobs, snapshot=snapshot)
-            state = m.read(parent)
-            for event in list(state['outbox'].values()):
-                if event['kind'] == 'media-upload':
-                    if not state['deleted_at'] and not state['control']['paused'] and not state['control']['archived']:
-                        recover_media_upload(parent, event)
-                    continue
-                if event['kind'] == 'verification':
-                    if not state['deleted_at'] and not state['control']['paused'] and not state['control']['archived']:
-                        recover_verification(parent, event)
-                    continue
-                child = w.BATCHES / event['child_id']
-                if event['kind'] == 'delivery' and (child / 'publications.json').exists():
-                    entry = read_json(child / 'publications.json').get(event['asset_id'], {})
-                    _merge_delivery(parent, event, entry)
-                    if (entry.get('intent') or entry.get('status') != 'upload_queued'
-                            or m.read(parent)['deliveries'][event['delivery_id']]['status'] == 'unverified'): continue
-                if state['deleted_at'] or state['control']['paused'] or state['control']['archived']: continue
-                if event['kind'] == 'candidate':
-                    asset = state['assets'][event['asset_id']]
-                    if asset['deleted_at'] or asset['candidate_version'] != event['version_id']: continue
-                    version = state['versions'][event['version_id']]
-                    if version['status'] not in {'queued', 'processing'} or version.get('upload_job_id'): continue
-                child = materialize(parent, event)
-                job = _job(parent, event, child)
-                target = jobs / (job['id'] + '.json')
-                if not target.exists(): m.durable_write(target, job)
-                with m.locked(parent):
-                    latest = m._read(parent)
-                    if latest['outbox'][event['child_id']]['status'] != 'materialized':
-                        latest['outbox'][event['child_id']]['status'] = 'materialized'
-                        m._write(parent, latest)
+            _recover_parent(parent, jobs, snapshot)
         except (OSError, ValueError, KeyError) as exc:
             from . import diagnostics as diag
             diag.event('media.recovery_failed', level='warning', batch_id=parent.name, error=exc)
+        else:
+            finished_checks.append(check)
+    finish_checks(finished_checks)
+
+
+def _recover_parent(parent, jobs, snapshot):
+    """单个父项目的原恢复顺序；文件依赖由 finished_skip.outbox_inputs 维护。"""
+    from . import workflow as w
+    cancel_invalid_children(parent, snapshot=snapshot)
+    reconcile_candidates(parent, jobs, snapshot=snapshot)
+    state = m.read(parent)
+    for event in list(state['outbox'].values()):
+        if event['kind'] == 'media-upload':
+            if not state['deleted_at'] and not state['control']['paused'] and not state['control']['archived']:
+                recover_media_upload(parent, event)
+            continue
+        if event['kind'] == 'verification':
+            if not state['deleted_at'] and not state['control']['paused'] and not state['control']['archived']:
+                recover_verification(parent, event)
+            continue
+        child = w.BATCHES / event['child_id']
+        if event['kind'] == 'delivery' and (child / 'publications.json').exists():
+            entry = read_json(child / 'publications.json').get(event['asset_id'], {})
+            _merge_delivery(parent, event, entry)
+            if (entry.get('intent') or entry.get('status') != 'upload_queued'
+                    or m.read(parent)['deliveries'][event['delivery_id']]['status'] == 'unverified'): continue
+        if state['deleted_at'] or state['control']['paused'] or state['control']['archived']: continue
+        if event['kind'] == 'candidate':
+            asset = state['assets'][event['asset_id']]
+            if asset['deleted_at'] or asset['candidate_version'] != event['version_id']: continue
+            version = state['versions'][event['version_id']]
+            if version['status'] not in {'queued', 'processing'} or version.get('upload_job_id'): continue
+        child = materialize(parent, event)
+        job = _job(parent, event, child)
+        target = jobs / (job['id'] + '.json')
+        if not target.exists(): m.durable_write(target, job)
+        with m.locked(parent):
+            latest = m._read(parent)
+            if latest['outbox'][event['child_id']]['status'] != 'materialized':
+                latest['outbox'][event['child_id']]['status'] = 'materialized'
+                m._write(parent, latest)
 
 
 def require_oss():

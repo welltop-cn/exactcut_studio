@@ -208,6 +208,7 @@ _tick_lock = threading.Lock()
 _tick_last = _clock()
 _tick_count = 0
 _tick_stats = {}
+_tick_counters = {}
 
 
 class Phases:
@@ -216,6 +217,7 @@ class Phases:
         self.started = self.last = _clock()
         self.name = None
         self.durations = {}
+        self.counts = {}
         self.hold_started = None
         self.hold_ms = 0
         self.hold_ended = False
@@ -249,7 +251,7 @@ class Phases:
                 pass
 
     def finish(self):
-        global _tick_last, _tick_count, _tick_stats
+        global _tick_last, _tick_count, _tick_stats, _tick_counters
         try:
             now = _clock()
             if self.hold_started is not None and not self.hold_ended:
@@ -264,18 +266,23 @@ class Phases:
                     row = _tick_stats.setdefault(name, {'total_ms': 0, 'max_ms': 0})
                     row['total_ms'] += duration
                     row['max_ms'] = max(row['max_ms'], duration)
+                # 计数沿用 finished_skip.COUNTERS；汇总为窗口内处理/跳过的项目总数。
+                for name, count in self.counts.items():
+                    _tick_counters[name] = _tick_counters.get(name, 0) + count
                 if now - _tick_last >= SUMMARY_SECONDS:
-                    summary = (_tick_count, _tick_stats)
+                    summary = (_tick_count, _tick_stats, _tick_counters)
+                    _tick_counters = {}
                     _tick_count, _tick_stats, _tick_last = 0, {}, now
             if self.hold_ms >= SLOW_MS:
                 diag.throttled('scheduler.tick_slow', 'worker', interval=60,
                                total_ms=round((now - self.started) * 1000, 1),
                                lock_hold_ms=round(self.hold_ms, 1),
-                               phases_ms={k: round(v, 1) for k, v in self.durations.items()})
+                               phases_ms={k: round(v, 1) for k, v in self.durations.items()},
+                               **self.counts)
             if summary:
                 diag.event('scheduler.tick_summary', tick_count=summary[0], phases_ms={
                     k: {key: round(value, 1) for key, value in row.items()}
-                    for k, row in summary[1].items()})
+                    for k, row in summary[1].items()}, **summary[2])
         except Exception:
             pass
 

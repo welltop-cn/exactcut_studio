@@ -121,8 +121,9 @@ def production_summary(path, data, records=None, *, jobs=None):
     queued = set()
     if jobs is None:
         jobs = (read_json(file) for file in (ROOT / '.web-state/jobs').glob('*.json'))
+    batch_id = path.name
     for job in jobs:
-        if (job.get('batch_id') == path.name and job.get('phase') == 'render'
+        if (job.get('batch_id') == batch_id and job.get('phase') == 'render'
                 and job.get('status') in {'queued', 'running', 'waiting_resource'}):
             rid = job.get('request_id')
             queued.update(ids if rid is None else ids & {rid})

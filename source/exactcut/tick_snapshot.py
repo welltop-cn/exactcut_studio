@@ -90,7 +90,7 @@ def internal(path):
 
 def parent_state(path):
     from . import material_versions as m
-    # Only batch_control's read-only flag calculation consumes this object.
+    # batch_control flags and finished_skip fingerprints consume this object read-only.
     return _read(path, [m.registry(path), path / 'media-state.json'], lambda: m.read(path))
 
 

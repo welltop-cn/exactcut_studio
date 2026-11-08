@@ -683,12 +683,23 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
     # Stage completion may have queued a successor after the recovery snapshot.
     latest_jobs = list(stored_jobs())
     queued.update(job.get('batch_id') for job in latest_jobs if job.get('status') == 'queued')
+    from .finished_skip import Check, JobSnapshot, finish_checks
+    job_snapshot = JobSnapshot((JOBS / (job['id'] + '.json'), job) for job in latest_jobs)
+    finished_checks = []
+    jobs_by_batch = {}
+    for job in latest_jobs:
+        jobs_by_batch.setdefault(job.get('batch_id'), []).append(job)
     for file in workflow.BATCHES.glob('*/runtime.json'):
         path = file.parent
         if workflow.material_versions.managed(path): continue
-        if path.name in live or path.name in queued:
+        batch_id = path.name
+        if batch_id in live or batch_id in queued:
             continue
-        if workflow.runtime(path, jobs=latest_jobs)['status'] in workflow.ACTIVE:
+        batch_jobs = jobs_by_batch.get(batch_id, [])
+        check = Check('crash', path, JOBS, job_snapshot)
+        if check.skip:
+            continue
+        if workflow.runtime(path, jobs=batch_jobs)['status'] in workflow.ACTIVE:
             # Includes a crash between confirming a batch and persisting its job.
             publications = workflow.read_json(path / 'publications.json') if (path / 'publications.json').exists() else {}
             for rid, entry in publications.items():
@@ -698,6 +709,8 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
             control = batch_control.read(path, fresh=True)
             control.update(paused=False, suspended=[])
             batch_control.write(path, control)
+        finished_checks.append(check)
+    finish_checks(finished_checks)
 
     return evidence_waiting
 
@@ -809,12 +822,14 @@ def release_hook_preview(token):
 
 
 def worker_tick(pending, owned):
-    with tick_snapshot.scope():
-        return _worker_tick(pending, owned)
+    from . import finished_skip
+    with tick_snapshot.scope(), finished_skip.worker_scope() as counts:
+        return _worker_tick(pending, owned, skip_counts=counts)
 
 
-def _worker_tick(pending, owned):
+def _worker_tick(pending, owned, *, skip_counts=None):
     with lock_timing.phases() as timing:
+        timing.counts = skip_counts or {}
         timing.phase('recover_outbox')
         workflow.material_versions.recover_outbox()
         timing.phase('drain')
