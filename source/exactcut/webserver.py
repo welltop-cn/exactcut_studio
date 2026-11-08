@@ -32,7 +32,7 @@ ROOT = data_root()
 STATE = ROOT / '.web-state'
 JOBS = STATE / 'jobs'
 WORK = queue.Queue()
-LOCK = lock_timing.TimedLock(threading.Lock(), 'web')
+LOCK = lock_timing.TimedLock(threading.RLock(), 'web')
 PREFETCH_LOCK = threading.Lock()
 WORKER_HEARTBEAT = 0.0
 WORKER_FAILURES = 0
@@ -91,17 +91,23 @@ def save(job):
                    job_id=job['id'], child_pid=job.get('pid'))
 
 
-def stored_jobs(*, reuse=False):
-    if reuse:
-        yield from tick_snapshot.job_list(JOBS, stored_jobs)
+def read_job(file, *, isolate=True):
+    from . import job_records
+    with LOCK, batch_control.LOCK:
+        # Cache only the raw JSON. Validation (including batch existence) and
+        # isolation must run on every read, even after a read-only cache fill.
+        return job_records.load(file, JOBS, workflow.BATCHES, isolate=isolate,
+                                reader=lambda path: tick_snapshot.job(path, lambda: read_json(path)))
+
+
+def stored_jobs(*, isolate=False, reuse=False):
+    """普通查询只读；调度复用的列表仅来自显式隔离后的扫描。"""
+    if reuse and isolate:
+        yield from tick_snapshot.job_list(JOBS, lambda: stored_jobs(isolate=True))
         return
     for file in JOBS.glob('*.json'):
-        try:
-            job = tick_snapshot.job(file, lambda: json.loads(file.read_text()))
-            if isinstance(job, dict) and isinstance(job.get('id'), str):
-                yield job
-        except (OSError, ValueError):
-            logging.exception('Unreadable job record: %s', file.name)
+        job = read_job(file, isolate=isolate)
+        if job is not None: yield job
 
 
 def queue_size():
@@ -547,7 +553,7 @@ def job_alive(job):
 
 def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
     verify = stage_results.scheduler_verified if scheduler else stage_results.verified
-    jobs = list(stored_jobs())
+    jobs = list(stored_jobs(isolate=True))
     workflow.recover_verification_queue(jobs)
     owned = owned or {}
     live_ids = set(owned)
@@ -692,9 +698,11 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
             continue
     storage.rebuild_reservations(JOBS, live_ids, workflow.BATCHES, workflow.ROOT, inline_ids=INLINE_RENDERS, scheduler=scheduler)
     # Stage completion may have queued a successor after the recovery snapshot.
-    # Always obtain a fresh post-recovery list: the first scan may have queued
-    # successors. Only this list and the read-only tick consumers opt in.
-    latest_jobs = tick_snapshot.job_list(JOBS, stored_jobs, refresh=True)
+    # Always obtain a fresh, isolated post-recovery list: the first scan may
+    # have queued successors. Cache only validated jobs after isolation, never
+    # a read-only scan that silently filtered invalid records. Cache misses in
+    # later scheduler consumers must use the same isolation boundary.
+    latest_jobs = tick_snapshot.job_list(JOBS, lambda: stored_jobs(isolate=True), refresh=True)
     queued.update(job.get('batch_id') for job in latest_jobs if job.get('status') == 'queued')
     from .finished_skip import Check, JobSnapshot, finish_checks
     job_snapshot = JobSnapshot((JOBS / (job['id'] + '.json'), job) for job in latest_jobs)
@@ -704,6 +712,7 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
         jobs_by_batch.setdefault(job.get('batch_id'), []).append(job)
     for file in workflow.BATCHES.glob('*/runtime.json'):
         path = file.parent
+        if not (path / 'draft.json').is_file(): continue
         if workflow.material_versions.managed(path): continue
         batch_id = path.name
         if batch_id in live or batch_id in queued:
@@ -778,7 +787,7 @@ def resource_usage(owned=None, *, reuse_jobs=False):
             residents.add(identity)
     # Worker resource accounting can share the post-recovery list under LOCK;
     # standalone HTTP/CLI accounting keeps its original fresh scan.
-    for job in stored_jobs(reuse=reuse_jobs):
+    for job in stored_jobs(isolate=reuse_jobs, reuse=reuse_jobs):
         if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
             if job.get('project'): legacy_projects.add(job['project'])
             identity = batch_control.resident_identity(job)
@@ -864,6 +873,11 @@ def _worker_tick(pending, owned, *, skip_counts=None):
                     code = process.poll()
                     if code is None:
                         continue
+                    durable = read_job(JOBS / (job['id'] + '.json'))
+                    if durable is None:
+                        log.close(); storage.release(key, JOBS)
+                        del owned[key]; WORK.task_done(); continue
+                    job = durable
                     try:
                         if job.get('attempt'): stage_results.scheduler_verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
                     except stage_results.EvidencePending:
@@ -879,10 +893,14 @@ def _worker_tick(pending, owned, *, skip_counts=None):
                         WORK.task_done()
                 timing.phase('recover_jobs')
                 for entry in list(pending):
-                    job, _ = entry
-                    if job.get('batch_id') and not (workflow.BATCHES / job['batch_id'] / 'draft.json').exists():
+                    job, cmd = entry
+                    file = JOBS / (job['id'] + '.json')
+                    durable = read_job(file)
+                    if durable is None or durable.get('status') != 'queued':
                         pending.remove(entry)
                         WORK.task_done()
+                    else:
+                        pending[pending.index(entry)] = (durable, durable.get('command', cmd))
                 # Adoption must register crash-window roots before any SIGCONT decision.
                 evidence_waiting = recover_jobs(owned=owned, scheduler=True)
                 timing.phase('external')
@@ -896,9 +914,10 @@ def _worker_tick(pending, owned, *, skip_counts=None):
                         external_identities.add(identity)
                 # LOCK serializes server job writers; executors persist stage
                 # evidence, not job records. Recovery's crash checks only write
-                # runtime/publications/control. Reuse its latest job values;
-                # any atomic job write (also in another thread) invalidates them.
-                for job in stored_jobs(reuse=True):
+                # runtime/publications/control. Reuse its post-isolation job
+                # values; any atomic job write (also in another thread)
+                # invalidates them, and a cache miss runs isolation again.
+                for job in stored_jobs(isolate=True, reuse=True):
                     if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
                         identity = batch_control.resident_identity(job)
                         if identity not in external_identities:
@@ -921,7 +940,7 @@ def _worker_tick(pending, owned, *, skip_counts=None):
                 known = {entry[0]['id'] for entry in pending} | set(owned)
                 # Reconcile writes controls/cursor, never jobs. These consumers
                 # read the shared values only; dispatch reloads before mutation.
-                for durable in stored_jobs(reuse=True):
+                for durable in stored_jobs(isolate=True, reuse=True):
                     if durable.get('status') == 'queued' and durable.get('command') and durable['id'] not in known:
                         WORK.put((durable, durable['command']))
                         pending.append(WORK.get_nowait())
@@ -937,9 +956,10 @@ def _worker_tick(pending, owned, *, skip_counts=None):
                 for owner, entry in fair_pending(pending):
                     job, cmd = entry
                     file = JOBS / (job['id'] + '.json')
-                    if file.exists():
-                        job = read_json(file)
-                        cmd = job.get('command', cmd)
+                    job = read_job(file)
+                    if job is None:
+                        pending.remove(entry); WORK.task_done(); continue
+                    cmd = job.get('command', cmd)
                     if job.get('status') != 'queued':
                         pending.remove(entry)
                         WORK.task_done()

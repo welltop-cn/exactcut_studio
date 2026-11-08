@@ -108,12 +108,11 @@ def recover_outbox():
     """Called outside old locks. A replay never repairs or replays external intent."""
     from . import workflow as w
     jobs = w.ROOT / '.web-state/jobs'
+    from . import job_records
     snapshot = []
     for file in jobs.glob('*.json'):
-        try:
-            snapshot.append((file, read_json(file)))
-        except (OSError, ValueError):
-            continue
+        job = job_records.load(file, jobs, w.BATCHES, isolate=True, reader=read_json)
+        if job is not None: snapshot.append((file, job))
     from .finished_skip import Check, JobSnapshot, finish_checks
     snapshot = JobSnapshot(snapshot)
     finished_checks = []

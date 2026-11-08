@@ -336,11 +336,17 @@ def release(job_id, jobs=None):
 def rebuild_reservations(jobs, live_ids, batches=None, root=None, *, inline_ids=(), scheduler=False):
     """Durable admission survives the spawn-before-PID crash window."""
     from .util import read_json, write_json_atomic
+    from . import job_records
+    records = [(file, job_records.load(file, jobs, batches, isolate=True))
+               for file in jobs.glob('*.json')]
     with reservation_lock(jobs) as ledger:
         recovered = {key: value for key, value in ledger['jobs'].items() if key in inline_ids}
-        for file in jobs.glob('*.json'):
-            job = read_json(file)
-            if job['id'] in live_ids:
+        for file, job in records:
+            if job is None:
+                if file.stem in live_ids and file.stem in ledger['jobs']:
+                    recovered[file.stem] = ledger['jobs'][file.stem]
+                continue
+            if job.get('id') == file.stem and file.stem in live_ids:
                 admission = job.get('admission') or {}
                 paths = admission.get('paths')
                 previous = admission.get('allocations') or ledger['jobs'].get(job['id'])
