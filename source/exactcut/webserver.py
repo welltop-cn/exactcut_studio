@@ -26,12 +26,13 @@ from .util import json_sha256, write_json_atomic, read_json, load_env_file
 from .runtime import CODE_ROOT, data_root, require_publish, feature_flags, instance_marker, environment, release_id, maintenance_file, mutation_lock
 from .runtime import project_env_file, claim_data_root
 from . import diagnostics as diag
+from . import lock_timing
 
 ROOT = data_root()
 STATE = ROOT / '.web-state'
 JOBS = STATE / 'jobs'
 WORK = queue.Queue()
-LOCK = threading.Lock()
+LOCK = lock_timing.TimedLock(threading.Lock(), 'web')
 WORKER_HEARTBEAT = 0.0
 WORKER_FAILURES = 0
 INLINE_RENDERS = set()
@@ -801,166 +802,177 @@ def release_hook_preview(token):
 
 
 def worker_tick(pending, owned):
-    workflow.material_versions.recover_outbox()
-    while True:
-        try:
-            entry = WORK.get_nowait()
-            if any(item[0]['id'] == entry[0]['id'] for item in pending) or entry[0]['id'] in owned:
-                WORK.task_done()
-            else:
-                pending.append(entry)
-        except queue.Empty:
-            break
-    with LOCK, batch_control.LOCK:
-        for key, (job, process, log) in list(owned.items()):
-            code = process.poll()
-            if code is None:
-                continue
-            try:
-                if job.get('attempt'): stage_results.scheduler_verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
-            except stage_results.EvidencePending:
-                # The executor has exited: evidence waiting consumes no execution slot.
-                log.close(); storage.release(job['id'], JOBS)
-                del owned[key]; WORK.task_done()
-                continue
-            try:
-                log.close()
-                finish_job(job, code, scheduler=True)
-            finally:
-                del owned[key]
-                WORK.task_done()
-        for entry in list(pending):
-            job, _ = entry
-            if job.get('batch_id') and not (workflow.BATCHES / job['batch_id'] / 'draft.json').exists():
-                pending.remove(entry)
-                WORK.task_done()
-        # Adoption must register crash-window roots before any SIGCONT decision.
-        evidence_waiting = recover_jobs(owned=owned, scheduler=True)
-        external_active = {key: 0 for key in concurrency.LANES}
-        external_identities = set()
-        for job, process, _ in owned.values():
-            if not job.get('batch_id'):
-                identity = batch_control.resident_identity(job, process)
-                if identity not in external_identities:
-                    external_active[concurrency.lane(job)] += 1
-                external_identities.add(identity)
-        for job in stored_jobs():
-            if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
-                identity = batch_control.resident_identity(job)
-                if identity not in external_identities:
-                    external_active[concurrency.lane(job)] += 1
-                external_identities.add(identity)
-        if any(external_active.values()):
-            batch_control.reconcile(workflow.BATCHES, external_active=external_active,
-                                    cursor_file=JOBS.parent / 'scheduler.json')
-        else:
-            batch_control.reconcile(workflow.BATCHES, cursor_file=JOBS.parent / 'scheduler.json')
+    with lock_timing.phases() as timing:
+        timing.phase('recover_outbox')
+        workflow.material_versions.recover_outbox()
+        timing.phase('drain')
         while True:
             try:
                 entry = WORK.get_nowait()
                 if any(item[0]['id'] == entry[0]['id'] for item in pending) or entry[0]['id'] in owned:
                     WORK.task_done()
-                else: pending.append(entry)
-            except queue.Empty: break
-        known = {entry[0]['id'] for entry in pending} | set(owned)
-        for durable in stored_jobs():
-            if durable.get('status') == 'queued' and durable.get('command') and durable['id'] not in known:
-                WORK.put((durable, durable['command']))
-                pending.append(WORK.get_nowait())
-                known.add(durable['id'])
-        limits = concurrency.settings()
-        counts, tokens, batches, legacy_projects = resource_usage(owned)
-        diag.throttled('scheduler.snapshot', 'worker', pending=len(pending), running=len(owned),
-                       pools=counts, limits=limits, resident_count=len(tokens), active_previews=len(INLINE_RENDERS),
-                       oldest_wait_seconds=round(max((time.time()-e[0].get('created', time.time()) for e in pending), default=0)))
-        batches.update(evidence_waiting)
-        for owner, entry in fair_pending(pending):
-            job, cmd = entry
-            file = JOBS / (job['id'] + '.json')
-            if file.exists():
-                job = read_json(file)
-                cmd = job.get('command', cmd)
-            if job.get('status') != 'queued':
-                pending.remove(entry)
-                WORK.task_done()
-                continue
-            if job.get('not_before', 0) > time.time():
-                log_wait(job, 'retry_backoff', not_before=job['not_before'])
-                continue
-            if (job.get('phase') in {'render', 'media-upload'} and job.get('attempt') and job.get('batch_id')
-                    and workflow.material_versions.internal(workflow.BATCHES / job['batch_id'])):
-                continue  # Pre-tick recovery gives each render attempt a fresh container.
-            resource = concurrency.lane(job)
-            if counts[resource] >= limits[resource] or len(tokens) >= limits['max_active_children']:
-                log_wait(job, 'pool_full', pools=counts, resident_count=len(tokens))
-                continue
-            if not limits['enabled'] and sum(counts.values()):
-                log_wait(job, 'serial_mode')
-                continue
-            batch = job.get('batch_id')
-            if not batch and job.get('project') in legacy_projects: continue
-            if batch:
-                control = batch_control.read(workflow.folder(batch))
-                if control.get('paused') or control.get('archived') or concurrency.scope_blocked(concurrency.scope(job), batches):
-                    log_wait(job, 'paused' if control.get('paused') else 'archived' if control.get('archived') else 'dependency_active')
-                    continue
-            try:
-                fingerprint = stage_results.scheduler_fingerprint(job, workflow.BATCHES, workflow.ROOT, jobs=JOBS)
-            except stage_results.EvidencePending:
-                log_wait(job, 'evidence_pending')
-                continue
-            except (ValueError, RuntimeError, OSError) as exc:
-                finish_job(job, -1, str(exc), local_failure=True, scheduler=True); pending.remove(entry); WORK.task_done(); continue
-            try:
-                allocations = storage.scheduler_job_budget(job, workflow.BATCHES, workflow.ROOT)
-                if not storage.reserve(job['id'], allocations, JOBS):
-                    log_wait(job, 'disk_reservation', requested_bytes=sum(allocations.values()))
-                    continue
-                job['admission'] = {'paths': allocations, 'allocations': storage.device_allocations(allocations), 'at': time.time()}
-                job['attempt'] = job.get('attempt', 0) + 1
-                job['input_fingerprint'] = fingerprint
-            except stage_results.EvidencePending:
-                continue
-            except (ValueError, RuntimeError, OSError) as exc:
-                finish_job(job, -1, str(exc), local_failure=True, scheduler=True); pending.remove(entry); WORK.task_done(); continue
-            log = None
-            try:
-                log = (JOBS / (job['id'] + '.log')).open('ab')
-                token = uuid.uuid4().hex
-                if len(cmd) > 2 and cmd[1] == '-X' and cmd[2].startswith('exactcut_process_token='):
-                    cmd = [cmd[0], *cmd[3:]]
-                cmd = [cmd[0], '-X', 'exactcut_process_token=' + token, *cmd[1:]]
-                job.update(process_token=token, command=cmd, instance=instance_marker(), lane=resource)
-                save(job)
-                process = subprocess.Popen(cmd, cwd=CODE_ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-            except Exception as exc:
-                diag.event('job.spawn_failed', level='error', job_id=job['id'], batch_id=batch, error=exc)
-                if log is not None: log.close()
-                # No process was spawned; this is a known local failure.
-                finish_job(job, -1, '启动失败，可重试：' + type(exc).__name__, local_failure=True, scheduler=True)
-                pending.remove(entry)
-                WORK.task_done()
-            else:
-                identity = batch_control.identify(process, process_token=token,
-                                                 lane=resource, request_id=job.get('request_id'))
-                owned[job['id']] = (job, process, log)
-                pending.remove(entry)
-                job.update(status='running', started=time.time(), instance=instance_marker())
-                if identity:
-                    job.update(pid=identity['pid'], pgid=identity['pgid'])
-                save(job)
-                diag.event('job.started', job_id=job['id'], batch_id=batch, request_id=job.get('request_id'),
-                           trace_id=job.get('trace_id'), phase=job.get('phase'), attempt=job.get('attempt'),
-                           child_pid=process.pid, queue_seconds=round(time.time()-job.get('created', time.time()), 3))
-                if identity and batch:
-                    batch_control.remember_child(workflow.folder(batch), identity)
-                counts[resource] += 1
-                tokens.add(batch_control.resident_identity(job, process))
-                if batch:
-                    batches.add(concurrency.scope(job))
-                elif job.get('project'):
-                    legacy_projects.add(job['project'])
-                write_json_atomic(JOBS.parent / 'scheduler.json', {'owner': owner})
+                else:
+                    pending.append(entry)
+            except queue.Empty:
+                break
+        timing.phase('lock_wait')
+        with LOCK, batch_control.LOCK:
+            with timing.holding():
+                for key, (job, process, log) in list(owned.items()):
+                    code = process.poll()
+                    if code is None:
+                        continue
+                    try:
+                        if job.get('attempt'): stage_results.scheduler_verified(job, JOBS, workflow.BATCHES, workflow.ROOT)
+                    except stage_results.EvidencePending:
+                        # The executor has exited: evidence waiting consumes no execution slot.
+                        log.close(); storage.release(job['id'], JOBS)
+                        del owned[key]; WORK.task_done()
+                        continue
+                    try:
+                        log.close()
+                        finish_job(job, code, scheduler=True)
+                    finally:
+                        del owned[key]
+                        WORK.task_done()
+                timing.phase('recover_jobs')
+                for entry in list(pending):
+                    job, _ = entry
+                    if job.get('batch_id') and not (workflow.BATCHES / job['batch_id'] / 'draft.json').exists():
+                        pending.remove(entry)
+                        WORK.task_done()
+                # Adoption must register crash-window roots before any SIGCONT decision.
+                evidence_waiting = recover_jobs(owned=owned, scheduler=True)
+                timing.phase('external')
+                external_active = {key: 0 for key in concurrency.LANES}
+                external_identities = set()
+                for job, process, _ in owned.values():
+                    if not job.get('batch_id'):
+                        identity = batch_control.resident_identity(job, process)
+                        if identity not in external_identities:
+                            external_active[concurrency.lane(job)] += 1
+                        external_identities.add(identity)
+                for job in stored_jobs():
+                    if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
+                        identity = batch_control.resident_identity(job)
+                        if identity not in external_identities:
+                            external_active[concurrency.lane(job)] += 1
+                        external_identities.add(identity)
+                timing.phase('reconcile')
+                if any(external_active.values()):
+                    batch_control.reconcile(workflow.BATCHES, external_active=external_active,
+                                            cursor_file=JOBS.parent / 'scheduler.json')
+                else:
+                    batch_control.reconcile(workflow.BATCHES, cursor_file=JOBS.parent / 'scheduler.json')
+                timing.phase('durable_scan')
+                while True:
+                    try:
+                        entry = WORK.get_nowait()
+                        if any(item[0]['id'] == entry[0]['id'] for item in pending) or entry[0]['id'] in owned:
+                            WORK.task_done()
+                        else: pending.append(entry)
+                    except queue.Empty: break
+                known = {entry[0]['id'] for entry in pending} | set(owned)
+                for durable in stored_jobs():
+                    if durable.get('status') == 'queued' and durable.get('command') and durable['id'] not in known:
+                        WORK.put((durable, durable['command']))
+                        pending.append(WORK.get_nowait())
+                        known.add(durable['id'])
+                timing.phase('resource_usage')
+                limits = concurrency.settings()
+                counts, tokens, batches, legacy_projects = resource_usage(owned)
+                diag.throttled('scheduler.snapshot', 'worker', pending=len(pending), running=len(owned),
+                               pools=counts, limits=limits, resident_count=len(tokens), active_previews=len(INLINE_RENDERS),
+                               oldest_wait_seconds=round(max((time.time()-e[0].get('created', time.time()) for e in pending), default=0)))
+                batches.update(evidence_waiting)
+                timing.phase('dispatch')
+                for owner, entry in fair_pending(pending):
+                    job, cmd = entry
+                    file = JOBS / (job['id'] + '.json')
+                    if file.exists():
+                        job = read_json(file)
+                        cmd = job.get('command', cmd)
+                    if job.get('status') != 'queued':
+                        pending.remove(entry)
+                        WORK.task_done()
+                        continue
+                    if job.get('not_before', 0) > time.time():
+                        log_wait(job, 'retry_backoff', not_before=job['not_before'])
+                        continue
+                    if (job.get('phase') in {'render', 'media-upload'} and job.get('attempt') and job.get('batch_id')
+                            and workflow.material_versions.internal(workflow.BATCHES / job['batch_id'])):
+                        continue  # Pre-tick recovery gives each render attempt a fresh container.
+                    resource = concurrency.lane(job)
+                    if counts[resource] >= limits[resource] or len(tokens) >= limits['max_active_children']:
+                        log_wait(job, 'pool_full', pools=counts, resident_count=len(tokens))
+                        continue
+                    if not limits['enabled'] and sum(counts.values()):
+                        log_wait(job, 'serial_mode')
+                        continue
+                    batch = job.get('batch_id')
+                    if not batch and job.get('project') in legacy_projects: continue
+                    if batch:
+                        control = batch_control.read(workflow.folder(batch))
+                        if control.get('paused') or control.get('archived') or concurrency.scope_blocked(concurrency.scope(job), batches):
+                            log_wait(job, 'paused' if control.get('paused') else 'archived' if control.get('archived') else 'dependency_active')
+                            continue
+                    try:
+                        fingerprint = stage_results.scheduler_fingerprint(job, workflow.BATCHES, workflow.ROOT, jobs=JOBS)
+                    except stage_results.EvidencePending:
+                        log_wait(job, 'evidence_pending')
+                        continue
+                    except (ValueError, RuntimeError, OSError) as exc:
+                        finish_job(job, -1, str(exc), local_failure=True, scheduler=True); pending.remove(entry); WORK.task_done(); continue
+                    try:
+                        allocations = storage.scheduler_job_budget(job, workflow.BATCHES, workflow.ROOT)
+                        if not storage.reserve(job['id'], allocations, JOBS):
+                            log_wait(job, 'disk_reservation', requested_bytes=sum(allocations.values()))
+                            continue
+                        job['admission'] = {'paths': allocations, 'allocations': storage.device_allocations(allocations), 'at': time.time()}
+                        job['attempt'] = job.get('attempt', 0) + 1
+                        job['input_fingerprint'] = fingerprint
+                    except stage_results.EvidencePending:
+                        continue
+                    except (ValueError, RuntimeError, OSError) as exc:
+                        finish_job(job, -1, str(exc), local_failure=True, scheduler=True); pending.remove(entry); WORK.task_done(); continue
+                    log = None
+                    try:
+                        log = (JOBS / (job['id'] + '.log')).open('ab')
+                        token = uuid.uuid4().hex
+                        if len(cmd) > 2 and cmd[1] == '-X' and cmd[2].startswith('exactcut_process_token='):
+                            cmd = [cmd[0], *cmd[3:]]
+                        cmd = [cmd[0], '-X', 'exactcut_process_token=' + token, *cmd[1:]]
+                        job.update(process_token=token, command=cmd, instance=instance_marker(), lane=resource)
+                        save(job)
+                        process = subprocess.Popen(cmd, cwd=CODE_ROOT, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+                    except Exception as exc:
+                        diag.event('job.spawn_failed', level='error', job_id=job['id'], batch_id=batch, error=exc)
+                        if log is not None: log.close()
+                        # No process was spawned; this is a known local failure.
+                        finish_job(job, -1, '启动失败，可重试：' + type(exc).__name__, local_failure=True, scheduler=True)
+                        pending.remove(entry)
+                        WORK.task_done()
+                    else:
+                        identity = batch_control.identify(process, process_token=token,
+                                                         lane=resource, request_id=job.get('request_id'))
+                        owned[job['id']] = (job, process, log)
+                        pending.remove(entry)
+                        job.update(status='running', started=time.time(), instance=instance_marker())
+                        if identity:
+                            job.update(pid=identity['pid'], pgid=identity['pgid'])
+                        save(job)
+                        diag.event('job.started', job_id=job['id'], batch_id=batch, request_id=job.get('request_id'),
+                                   trace_id=job.get('trace_id'), phase=job.get('phase'), attempt=job.get('attempt'),
+                                   child_pid=process.pid, queue_seconds=round(time.time()-job.get('created', time.time()), 3))
+                        if identity and batch:
+                            batch_control.remember_child(workflow.folder(batch), identity)
+                        counts[resource] += 1
+                        tokens.add(batch_control.resident_identity(job, process))
+                        if batch:
+                            batches.add(concurrency.scope(job))
+                        elif job.get('project'):
+                            legacy_projects.add(job['project'])
+                        write_json_atomic(JOBS.parent / 'scheduler.json', {'owner': owner})
 
 
 def log_wait(job, reason, **fields):
@@ -990,19 +1002,21 @@ class Handler(BaseHTTPRequestHandler):
         self.diagnostic_route = None
         self.user = None
         started = time.monotonic()
-        with diag.context(trace_id=self.trace_id):
+        with diag.context(trace_id=self.trace_id), lock_timing.observe() as lock_observation:
             try:
                 return super().handle_one_request()
             except Exception as exc:
                 diag.event('http.failed', level='error', route=self.diagnostic_route,
                            method=getattr(self, 'command', None), status=self.diagnostic_status,
-                           duration_ms=round((time.monotonic()-started)*1000), error=exc)
+                           duration_ms=round((time.monotonic()-started)*1000), error=exc,
+                           **lock_observation.fields())
                 raise
             finally:
                 if (self.diagnostic_route and self.diagnostic_route != '/healthz'
                         and not (self.diagnostic_route == '/api/client-events' and (self.diagnostic_status or 500) < 400)):
                     fields = dict(route=self.diagnostic_route, method=self.command, status=self.diagnostic_status,
                                   actor=(self.user or {}).get('username'), duration_ms=round((time.monotonic()-started)*1000))
+                    fields.update(lock_observation.fields())
                     # Polls are sampled; failures, writes and slow responses always retained.
                     if self.command == 'GET' and (self.diagnostic_status or 500) < 400 and fields['duration_ms'] < 2000:
                         diag.throttled('http.completed', (fields['route'], fields['actor']), interval=30, **fields)
@@ -1017,6 +1031,7 @@ class Handler(BaseHTTPRequestHandler):
             if prefix and route.startswith(prefix + '/'):
                 route = route[len(prefix):]
             self.diagnostic_route = route if re.fullmatch(r'/[a-zA-Z0-9_./-]{0,240}', route) else '/unrecognized'
+            lock_timing.set_owner(lock_timing.route_owner(self.command, self.diagnostic_route))
             client_id = self.headers.get('X-Client-Request-ID', '')
             if re.fullmatch(r'[0-9a-f]{32}', client_id):
                 diag.bind(client_request_id=client_id)

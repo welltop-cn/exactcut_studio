@@ -50,3 +50,26 @@ docker exec <应用容器> python -m exactcut.diagnostics --actor <账号> --hou
 OOM/SIGKILL 需结合容器 `OOMKilled`、ExitCode 和宿主机日志，不能只按最后一条 started 推断根因。截图与实际媒体仍是视觉问题的必要依据。
 
 代理观测模板在 [nginx-observability.conf](../source/deploy/nginx-observability.conf)。修改或 reload 线上代理属于生产变更，按既有流程授权并记录，不作为查日志的默认步骤。
+
+## 锁与调度阶段计时（B0）
+
+`web` 与 `batch_control` 两把锁记录等待和持有耗时，默认慢锁阈值为 **200ms**（`lock_timing.SLOW_MS`）。重入锁只统计最外层获取与释放，不改变锁范围、顺序或调度决策；新计时事件在当前线程释放所有计时锁后写入，观测异常不影响业务。
+
+| 事件 | 字段与频率 |
+| --- | --- |
+| `lock.slow` | `lock` 为锁名；`owner` 为本次获取者的低基数标签，HTTP 使用方法与路由模板，32 位十六进制 ID 归一化为 `:id`，其他动态部分为 `:part`，不含查询串或用户名；worker 使用 `worker.<阶段>`。`kind` 为 `wait` 或 `hold`；`wait_ms`、`hold_ms` 为本次最外层获取的毫秒数；等待事件的 `blocked_by` 是开始等待时持有者的标签，随 worker 当前阶段更新，持有事件该字段为空。等待或持有达到阈值时触发，同一锁、owner、kind 每 30 秒最多一条。 |
+| `lock.summary` | 每把锁每 60 秒最多一条，释放时顺带触发，无后台线程。`owners` 按获取时的 owner 汇总：`count` 为最外层获取次数，`wait_ms_total/max`、`hold_ms_total/max` 为该窗口累计值与最大值，`slow_count` 为等待或持有达到阈值的获取次数。窗口从锁初始化或上次汇总开始，空闲时不写日志。 |
+| `scheduler.tick_slow` | tick 持锁达到 200ms 时触发，每 60 秒最多一条。`total_ms` 为整个 tick 耗时，`lock_hold_ms` 为 web 锁持有耗时，`phases_ms` 为阶段耗时映射：`recover_outbox`（锁外恢复）、`drain`（队列排空）、`lock_wait`（等待两把锁）、`poll_finish`（进程完成处理）、`recover_jobs`、`external`（外部进程统计及任务扫描）、`reconcile`、`durable_scan`（持久化排队任务扫描及二次排空）、`resource_usage`、`dispatch`。异常退出的 tick 也统计已执行阶段。 |
+| `scheduler.tick_summary` | 每 60 秒最多一条，在 tick 结束时触发；`tick_count` 为窗口 tick 数，`phases_ms` 中每阶段的 `total_ms`、`max_ms` 为窗口累计与最大耗时。 |
+
+`http.completed` 与 `http.failed` 增加 `lock_wait_ms`、`lock_hold_ms`、`lock_count`（web 锁）；获取过控制锁时还有 `batch_control_lock_wait_ms`、`batch_control_lock_hold_ms`、`batch_control_lock_count`。毫秒字段保留一位小数。原有 HTTP 采样规则不变：成功 GET 且耗时小于 2000ms 时按原规则节流，其他完成事件照常保留。
+
+```sh
+python -m exactcut.diagnostics --event lock.slow --hours 2
+python -m exactcut.diagnostics --event lock.summary --hours 2
+python -m exactcut.diagnostics --event scheduler.tick_slow --hours 2
+python -m exactcut.diagnostics --event scheduler.tick_summary --hours 2
+python -m exactcut.diagnostics --trace <响应头X-Request-ID> --hours 2
+```
+
+先从慢请求响应头的 `X-Request-ID`（等于 `http.completed` 的 `trace_id`）查询同一 trace 的 `lock.slow`，看等待耗时及 `blocked_by`。例如 `worker.reconcile` 表示等待开始时 worker 正在协调阶段，再按相近时间查 `scheduler.tick_slow` 的 `phases_ms.reconcile`。worker 本身可能没有请求 trace，周期汇总也不代表单次请求；被节流的事件缺失不能证明没有锁竞争。

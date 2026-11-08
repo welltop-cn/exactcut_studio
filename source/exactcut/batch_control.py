@@ -11,8 +11,9 @@ from pathlib import Path
 from .util import read_json, write_json_atomic, now_iso
 from .runtime import instance_marker
 from . import diagnostics as diag
+from . import lock_timing
 
-LOCK = threading.RLock()
+LOCK = lock_timing.TimedLock(threading.RLock(), 'batch_control')
 ACTIVE = {'queued', 'downloading', 'indexing', 'producing', 'publishing'}
 
 
