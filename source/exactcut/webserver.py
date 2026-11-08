@@ -26,7 +26,7 @@ from .util import json_sha256, write_json_atomic, read_json, load_env_file
 from .runtime import CODE_ROOT, data_root, require_publish, feature_flags, instance_marker, environment, release_id, maintenance_file, mutation_lock
 from .runtime import project_env_file, claim_data_root
 from . import diagnostics as diag
-from . import lock_timing
+from . import lock_timing, tick_snapshot
 
 ROOT = data_root()
 STATE = ROOT / '.web-state'
@@ -93,7 +93,7 @@ def save(job):
 def stored_jobs():
     for file in JOBS.glob('*.json'):
         try:
-            job = json.loads(file.read_text())
+            job = tick_snapshot.job(file, lambda: json.loads(file.read_text()))
             if isinstance(job, dict) and isinstance(job.get('id'), str):
                 yield job
         except (OSError, ValueError):
@@ -688,7 +688,7 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
                 if entry.get('status') in {'upload_queued', 'uploading', 'fbbm_queued'}:
                     workflow.store_publication(path, rid, {**entry, 'status': 'publish_failed', 'error': '执行中断，可重试继续原记录'})
             workflow.update(path, 'interrupted', '执行已中断，可重试制作或继续上传')
-            control = batch_control.read(path)
+            control = batch_control.read(path, fresh=True)
             control.update(paused=False, suspended=[])
             batch_control.write(path, control)
 
@@ -802,6 +802,11 @@ def release_hook_preview(token):
 
 
 def worker_tick(pending, owned):
+    with tick_snapshot.scope():
+        return _worker_tick(pending, owned)
+
+
+def _worker_tick(pending, owned):
     with lock_timing.phases() as timing:
         timing.phase('recover_outbox')
         workflow.material_versions.recover_outbox()
@@ -912,7 +917,7 @@ def worker_tick(pending, owned):
                     batch = job.get('batch_id')
                     if not batch and job.get('project') in legacy_projects: continue
                     if batch:
-                        control = batch_control.read(workflow.folder(batch))
+                        control = batch_control.read(workflow.folder(batch), fresh=True)
                         if control.get('paused') or control.get('archived') or concurrency.scope_blocked(concurrency.scope(job), batches):
                             log_wait(job, 'paused' if control.get('paused') else 'archived' if control.get('archived') else 'dependency_active')
                             continue
