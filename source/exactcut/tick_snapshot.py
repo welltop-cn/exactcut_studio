@@ -12,7 +12,7 @@ _active = []
 @contextmanager
 def scope():
     previous = getattr(_local, 'cache', None)
-    cache = {'entries': {}, 'dependencies': {}, 'generation': 0}
+    cache = {'entries': {}, 'dependencies': {}, 'generation': 0, 'job_lists': {}}
     with _lock:
         _active.append(cache)
     _local.cache = cache
@@ -24,6 +24,7 @@ def scope():
             _active[:] = [item for item in _active if item is not cache]
             cache['entries'].clear()
             cache['dependencies'].clear()
+            cache['job_lists'].clear()
 
 
 def _drop(cache, key):
@@ -43,6 +44,7 @@ def invalidate(path):
     with _lock:
         for cache in _active:
             cache['generation'] += 1
+            cache['job_lists'].pop(path.parent, None)
             for key in tuple(cache['dependencies'].get(path, ())):
                 _drop(cache, key)
 
@@ -101,3 +103,35 @@ def job(file, loader):
     # 20k nested JSON job copies: pickle round trips 0.050s, deepcopy 0.230s.
     # Values originate only from JSON; each consumer receives an independent copy.
     return pickle.loads(pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL))
+
+
+def instance_marker(loader):
+    cache = getattr(_local, 'cache', None)
+    if cache is None:
+        return loader()
+    if 'instance_marker' not in cache:
+        cache['instance_marker'] = loader()
+    return cache['instance_marker']
+
+
+def job_list(directory, loader, *, refresh=False):
+    """Explicit read-only reuse under scheduler LOCK; atomic job writes invalidate it.
+
+    Only the post-recovery/external/durable/resource scans opt in. Other readers retain
+    their glob/stat/copy behavior, including outbox and the recovery input scan.
+    """
+    cache = getattr(_local, 'cache', None)
+    if cache is None:
+        return list(loader())
+    key = directory.absolute()
+    with _lock:
+        if refresh:
+            cache['job_lists'].pop(key, None)
+        if key in cache['job_lists']:
+            return cache['job_lists'][key]
+        generation = cache['generation']
+    value = list(loader())
+    with _lock:
+        if generation == cache['generation']:
+            cache['job_lists'][key] = value
+    return value

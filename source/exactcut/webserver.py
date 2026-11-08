@@ -90,7 +90,10 @@ def save(job):
                    job_id=job['id'], child_pid=job.get('pid'))
 
 
-def stored_jobs():
+def stored_jobs(*, reuse=False):
+    if reuse:
+        yield from tick_snapshot.job_list(JOBS, stored_jobs)
+        return
     for file in JOBS.glob('*.json'):
         try:
             job = tick_snapshot.job(file, lambda: json.loads(file.read_text()))
@@ -681,7 +684,9 @@ def recover_jobs(*, enqueue=False, owned=None, scheduler=False):
             continue
     storage.rebuild_reservations(JOBS, live_ids, workflow.BATCHES, workflow.ROOT, inline_ids=INLINE_RENDERS, scheduler=scheduler)
     # Stage completion may have queued a successor after the recovery snapshot.
-    latest_jobs = list(stored_jobs())
+    # Always obtain a fresh post-recovery list: the first scan may have queued
+    # successors. Only this list and the read-only tick consumers opt in.
+    latest_jobs = tick_snapshot.job_list(JOBS, stored_jobs, refresh=True)
     queued.update(job.get('batch_id') for job in latest_jobs if job.get('status') == 'queued')
     from .finished_skip import Check, JobSnapshot, finish_checks
     job_snapshot = JobSnapshot((JOBS / (job['id'] + '.json'), job) for job in latest_jobs)
@@ -742,7 +747,7 @@ def job_response(job):
     return {**job, 'queue_position': position}
 
 
-def resource_usage(owned=None):
+def resource_usage(owned=None, *, reuse_jobs=False):
     """Background job budgets exclude the independently bounded HTTP previews."""
     owned = owned or {}
     counts = {key: 0 for key in concurrency.LANES}
@@ -763,7 +768,9 @@ def resource_usage(owned=None):
             if identity not in residents:
                 counts[concurrency.lane(child)] += 1
             residents.add(identity)
-    for job in stored_jobs():
+    # Worker resource accounting can share the post-recovery list under LOCK;
+    # standalone HTTP/CLI accounting keeps its original fresh scan.
+    for job in stored_jobs(reuse=reuse_jobs):
         if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
             if job.get('project'): legacy_projects.add(job['project'])
             identity = batch_control.resident_identity(job)
@@ -879,7 +886,11 @@ def _worker_tick(pending, owned, *, skip_counts=None):
                         if identity not in external_identities:
                             external_active[concurrency.lane(job)] += 1
                         external_identities.add(identity)
-                for job in stored_jobs():
+                # LOCK serializes server job writers; executors persist stage
+                # evidence, not job records. Recovery's crash checks only write
+                # runtime/publications/control. Reuse its latest job values;
+                # any atomic job write (also in another thread) invalidates them.
+                for job in stored_jobs(reuse=True):
                     if job.get('status') == 'running' and not job.get('batch_id') and job_alive(job):
                         identity = batch_control.resident_identity(job)
                         if identity not in external_identities:
@@ -900,14 +911,16 @@ def _worker_tick(pending, owned, *, skip_counts=None):
                         else: pending.append(entry)
                     except queue.Empty: break
                 known = {entry[0]['id'] for entry in pending} | set(owned)
-                for durable in stored_jobs():
+                # Reconcile writes controls/cursor, never jobs. These consumers
+                # read the shared values only; dispatch reloads before mutation.
+                for durable in stored_jobs(reuse=True):
                     if durable.get('status') == 'queued' and durable.get('command') and durable['id'] not in known:
                         WORK.put((durable, durable['command']))
                         pending.append(WORK.get_nowait())
                         known.add(durable['id'])
                 timing.phase('resource_usage')
                 limits = concurrency.settings()
-                counts, tokens, batches, legacy_projects = resource_usage(owned)
+                counts, tokens, batches, legacy_projects = resource_usage(owned, reuse_jobs=True)
                 diag.throttled('scheduler.snapshot', 'worker', pending=len(pending), running=len(owned),
                                pools=counts, limits=limits, resident_count=len(tokens), active_previews=len(INLINE_RENDERS),
                                oldest_wait_seconds=round(max((time.time()-e[0].get('created', time.time()) for e in pending), default=0)))

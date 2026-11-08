@@ -75,7 +75,13 @@ def environment():
     return value
 
 def instance_marker():
-    return '--instance=' + hashlib.sha256(str(data_root()).encode()).hexdigest()[:20]
+    from . import tick_snapshot
+    # data_root() derives its path from EXACTCUT_DATA_ROOT, expanduser/resolve;
+    # its remaining reads validate environment ownership. Worker ticks do not
+    # change that environment or redirect the data root. Cache only this tick:
+    # CLI/HTTP/tests outside the scope must still observe environment changes.
+    return tick_snapshot.instance_marker(
+        lambda: '--instance=' + hashlib.sha256(str(data_root()).encode()).hexdigest()[:20])
 
 def require_external(operation):
     if environment() != 'production' or os.environ.get('EXACTCUT_ALLOW_EXTERNAL_WRITES') != '1':

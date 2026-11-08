@@ -115,3 +115,44 @@ jobs 不再依赖目录 stat。outbox 每轮先枚举 jobs 形成 snapshot；cra
 稳态 2 个父项目仍为 pending verification；i3/i7 各增加受影响的 1 个父项目，检查期间输入变化则下一轮再处理后恢复跳过。i9 增加的 1 个父项目关联未来 not_before 的 queued job；该子项目按原规则排除在 crash 检查之外，因此 crash 总数降为 747。全 job 汇总分支仍保守依赖所有 job 文件集合，reservations.json 条件未放宽。
 
 输入副本和基线结果保持隔离；未 commit/push、未联网、未改前端、未运行全量。
+
+## C2：单轮重复计算
+
+`instance_marker()` 复用 `tick_snapshot.scope()` 的线程本地会话，只在当前 worker tick 内保存结果。已核对 `data_root()`：根路径来自环境变量，经 expanduser/resolve 解析，其余文件读取用于环境归属校验；worker 不修改环境变量或重定向根目录。该结论也写入代码注释。退出作用域立即丢弃 marker；作用域外每次仍重新读取环境变量、验证数据根目录并计算哈希，不做全局永久缓存。其他线程不继承会话。稳态 profile 中 1903 次 marker 调用只执行一次 SHA-256。
+
+任务读取按消费阶段复用，而非给 `stored_jobs()` 默认启用缓存。实际调用链除恢复两次、external/durable 两次外，`resource_usage()` 还有一次扫描；稳定无写入轮现在保留两次真实枚举与逐文件读取，其余三处共用恢复后的只读列表，省去重复 glob、stat 校验和 pickle 复制。恢复前的列表可能被 verification 恢复、阶段完成或账本恢复后的任务写入淘汰；带有 “Stage completion may have queued a successor after the recovery snapshot” 注释的第二次读取仍强制 fresh，不能复用第一份列表。
+
+恢复后的 crash 检查只写 runtime/publications/control；external 只读，reconcile 写 control/cursor，durable 扫描只把任务加入队列，资源统计只读。上述阶段持有调度锁与 batch control 锁，服务端任务写入及删除不能穿插；执行器写阶段证据，不直接写这份 jobs。派发前仍重新读取具体 job 文件。原子写入的现有 `tick_snapshot.invalidate()` 现在同时移除对应目录的列表缓存，包括同线程和其他线程的新建、改写；加载期间有写入则不保存列表。正常 HTTP/CLI、启动恢复及其他默认 `stored_jobs()` 调用维持原有逐次读取和独立副本行为。列表仅限这些明确核对过的只读消费者使用，不跨 tick，也不缓存进程存活判断。
+
+新增 `test_worker_tick_reuse.py` 六例：作用域内 marker 只计算一次、跨线程隔离、作用域外随环境变量变化；同线程/跨线程新建与改写 job 使列表失效；恢复首份快照后新建的后继任务、external 扫描后 reconcile 期间新建的任务均在同 tick 派发；连续两轮每个 job 各真实读取两次。六例连续五次通过。未修改的等价性测试 7 例和 finished_skip 测试 57 例全部通过。指定相关清单分别执行默认层与 integration 层，共 320 例通过，7 例受沙箱 socket 权限限制（4 failed、3 errors）；未运行全量测试。
+
+最终实现用独立 pristine 副本预热两轮，再对第 3 轮无注入稳态 tick 做 cProfile。总计 1.718 秒（包含 profiler 开销）。按自身耗时排序的前五个剩余热点如下；这些底层成本不重复累计调用链耗时：
+
+| 热点 | 次数 | 自身耗时 ms |
+| --- | ---: | ---: |
+| JSONDecoder.raw_decode | 10738 | 172 |
+| pathlib._parse_path | 38656 | 135 |
+| posix.stat | 45857 | 93 |
+| pathlib.PurePath.__init__ | 86133 | 71 |
+| 文件 open | 10750 | 64 |
+
+业务调用链中 `own_live_children()` 仍调用 1806 次、累计 363ms，其中 recover_jobs 的 903 个目录全扫描累计约 219ms。此次仅记录，不缓存结果：control 读取还叠加父项目状态验证，进程状态也可随执行器退出而变化；不能把前一次的存活结果直接用于后续资源统计或 reconcile。`finished_skip.fingerprint()` 905 次、累计 330ms，保留其实际消费值比较和逐项 stat。进一步优化这些读取需要单独证明验证和观察时机等价，本轮未扩大改动。
+
+最终版本按指定完整大数据脚本重新复制 pristine 输入，执行十二轮及原有 i3/i5/i7/i9 注入，并与既有基线运行指定 compare：`total diff files: 0`，`api_before same: True`、`api_after same: True`。下表为最后一次完整运行的实际耗时；首轮后范围 892–1245ms，中位数 1029ms，同轮基线中位数 2202ms。profile 与完整等价运行各自独立，未将 profiler 耗时当作普通 tick 耗时。
+
+| 轮（从 0 起） | 基线 ms | C2 ms |
+| --- | ---: | ---: |
+| 0 | 2351 | 10590 |
+| 1 | 2342 | 1190 |
+| 2 | 2410 | 1245 |
+| 3 | 2116 | 971 |
+| 4 | 2113 | 964 |
+| 5 | 2202 | 892 |
+| 6 | 2662 | 963 |
+| 7 | 2180 | 1029 |
+| 8 | 2196 | 1049 |
+| 9 | 2147 | 978 |
+| 10 | 2202 | 1145 |
+| 11 | 2335 | 1062 |
+
+只修改运行时、tick 快照、worker 的明确只读扫描、新增回归和本文档；未修改等价性基线测试、前端或隐藏的 helpNav，未联网、未 commit/push。测试、profile 与大数据写入均限于仓库或临时副本，pristine 输入与比较基线保持只读。
