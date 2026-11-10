@@ -71,3 +71,71 @@ def test_completed_job_cannot_reenable_readonly_editor(frame_page):
     jobs = ready_project(page)
     page.evaluate('job=>watchHookJob(current.id,job)', jobs[0])
     assert page.locator('[data-hook-preview="0"]').is_disabled()
+
+
+@pytest.mark.parametrize('edit', ['hook', 'clip', 'revert', 'other'])
+def test_saved_edit_checks_preview_input_identity(frame_page, edit):
+    from copy import deepcopy
+    page = frame_page
+    job = ready_project(page)[0]
+    page.evaluate('current.draft.rows[0].hook_options.manual_ranges=[]')
+    held = []
+    page.route('**/hook-previews/' + job['id'], lambda route: held.append(route))
+    saved = page.evaluate('current')
+
+    def save(route):
+        response = deepcopy(saved)
+        response['draft'] = route.request.post_data_json['draft']
+        response['revision'] += 1
+        route.fulfill(json=response)
+
+    page.route('**/save', save)
+    page.evaluate("controls.editingId=current.id;controls();setTab('editor')")
+    page.evaluate('job=>{watchHookJob(current.id,job)}', job)
+    page.wait_for_function('hookWatchers.size===1')
+    if edit == 'clip':
+        page.locator('[data-row="0"][data-clip="0"][data-clip-part="end_ms"]').fill('500')
+    else:
+        page.locator('#material-hook-' + ('1' if edit == 'other' else '0')).fill('Edited and saved Hook')
+        if edit == 'revert':
+            page.locator('#material-hook-0').fill('First Hook')
+    page.locator('#saveButton').click()
+    page.wait_for_function('!dirty && current.revision===2')
+    assert len(held) == 1
+    held[0].fulfill(json=job)
+    page.wait_for_function('hookWatchers.size===0')
+    assert page.locator('#material-hook-0').input_value() == ('Edited and saved Hook' if edit == 'hook' else 'First Hook')
+    assert page.locator('.hook-preview-image').count() == (1 if edit == 'other' else 0)
+
+
+@pytest.mark.parametrize(('part', 'value'), [('episode', '2'), ('start_s', '01'), ('end_ms', '500')])
+def test_clip_input_invalidates_existing_preview(frame_page, part, value):
+    page = frame_page
+    job = ready_project(page)[0]
+    page.evaluate("controls.editingId=current.id;controls();setTab('editor')")
+    page.evaluate('job=>watchHookJob(current.id,job)', job)
+    assert page.locator('.hook-preview-image').count() == 1
+    page.locator(f'[data-row="0"][data-clip="0"][data-clip-part="{part}"]').fill(value)
+    assert page.locator('.hook-preview-image').count() == 0
+    assert '设置已变化，请重新预览' in page.locator('[data-hook-result="0"]').inner_text()
+    assert page.evaluate('dirty') is True
+
+
+def test_newer_hook_task_wins_over_late_older_task(frame_page):
+    from copy import deepcopy
+    page = frame_page
+    old = ready_project(page)[0]
+    held = []
+    page.route('**/hook-previews/' + old['id'], lambda route: held.append(route))
+    page.evaluate('job=>{watchHookJob(current.id,job)}', old)
+    page.wait_for_function('hookWatchers.size===1')
+    newer = deepcopy(old)
+    newer['id'] = '3' * 32
+    newer['result']['preview_key'] = '3' * 64
+    newer['result']['image'] = 'data:image/png;base64,bmV3'
+    page.route('**/hook-previews/' + newer['id'], lambda route: route.fulfill(json=newer))
+    page.evaluate('job=>watchHookJob(current.id,job)', newer)
+    assert page.locator('.hook-preview-image').get_attribute('src') == newer['result']['image']
+    held[0].fulfill(json=old)
+    page.wait_for_function('hookWatchers.size===0')
+    assert page.locator('.hook-preview-image').get_attribute('src') == newer['result']['image']
