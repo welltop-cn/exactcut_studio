@@ -812,7 +812,7 @@ def _start_batch(batch_id, revision):
         from .ending import snapshot_images
         snapshot_images(path, project, manifest)
         from .hook_preview import bind_confirmed_previews
-        bind_confirmed_previews(path, project, manifest)
+        bind_confirmed_previews(path, project, manifest.requests)
         write_json_atomic(path / 'confirmed.json', manifest.model_dump(mode='json'))
         write_json_atomic(path / 'confirmation.json', {'at': now_iso(), 'revision': revision})
     update(path, 'queued', '内容已确认，等待下载与制作', plan=download_plan(manifest),

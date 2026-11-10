@@ -210,7 +210,8 @@ def approved_preview(project, request, timeline, sources):
         return None
     try:
         doc = read_json(project/'cache/hook-previews'/f'{key}.json')
-        if (doc.get('sources_complete') and json_sha256(doc) == key
+        if (isinstance(doc, dict) and isinstance(doc.get('decision'), dict)
+                and doc.get('sources_complete') and json_sha256(doc) == key
                 and doc['identity'] == preview_identity(request,timeline,sources)
                 and doc.get('shot_indexes',[]) == shot_index_identity(project,timeline)):
             return doc['decision']

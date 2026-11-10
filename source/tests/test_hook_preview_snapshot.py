@@ -4,11 +4,13 @@ import pytest
 
 from exactcut import hook_preview, interactive_queue, material_versions as m, workflow as w, renderer
 from exactcut.models import BatchManifest
-from exactcut.util import read_json, load_config, write_json_atomic, file_sha256
+from exactcut.util import read_json, load_config, write_json_atomic, file_sha256, json_sha256
 from test_hook_preview_source_identity import hook_input, finish
 from test_phase2_preview_api import fixture
 from test_cutting import make_video
 from test_material_versions import token
+from exactcut.runtime import mutation_lock
+from pathlib import Path
 
 pytestmark = pytest.mark.integration
 
@@ -168,3 +170,119 @@ def test_late_preview_cannot_rewrite_confirmed_execution(hook_input, monkeypatch
         assert file_sha256(project/'frozen.mp4') == digest
     finally:
         release.set(); dispatcher.stop(timeout=None)
+
+
+@pytest.mark.parametrize('managed', [False, True], ids=['legacy', 'managed'])
+def test_confirm_does_not_read_video_bytes_and_repeat_skips_preview_work(hook_input, monkeypatch, managed):
+    import fcntl
+    batch, request, project = hook_input
+    video = project/'source/videos/EP1.mp4'
+    video.parent.mkdir(parents=True, exist_ok=True); make_video(video)
+    path = w.folder(batch['id'])
+    if managed:
+        m.enroll(path); batch = w.detail(batch['id'])
+    dispatcher = interactive_queue.Dispatcher(poll_seconds=.01); assert dispatcher.start()
+    try:
+        job = finish(batch, request, dispatcher)
+    finally:
+        dispatcher.stop(timeout=None)
+    original_open = Path.open
+    def guarded_open(file, *args, **kwargs):
+        if file == video:
+            held = []
+            for lock in (w.ROOT/'.web-state/mutation.lock', w.ROOT/'.web-state/naming.lock'):
+                with original_open(lock, 'a') as stream:
+                    try: fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    except BlockingIOError: held.append(lock.name)
+            pytest.fail(f'confirm read video bytes while locks held: {held}')
+        return original_open(file, *args, **kwargs)
+    monkeypatch.setattr(Path, 'open', guarded_open)
+    with mutation_lock():
+        if managed:
+            with w.naming_lock(): manifest = confirm(batch, managed)
+        else:
+            manifest = confirm(batch, managed)
+    assert manifest['requests'][0]['hook_options']['preview_key'] == job['result']['preview_key']
+    def no_repeat_preview_reads(file, *args, **kwargs):
+        if file.parent in (path/'hook-previews', project/'cache/hook-previews'):
+            pytest.fail('reconfirm reread optional preview data for an existing version')
+        return guarded_open(file, *args, **kwargs)
+    monkeypatch.setattr(Path, 'open', no_repeat_preview_reads)
+    if not managed: w.update(path, 'failed', 'fixture retry')
+    with mutation_lock():
+        if managed:
+            with w.naming_lock(): repeated = confirm(w.detail(batch['id']), managed)
+        else:
+            repeated = confirm(w.detail(batch['id']), managed)
+    assert repeated == manifest
+
+
+@pytest.mark.parametrize('broken', ['report-list', 'report-null', 'result-list', 'result-string',
+                                   'completed-at', 'cache-list', 'cache-null', 'identity-list', 'decision-list'])
+@pytest.mark.parametrize('managed', [False, True], ids=['legacy', 'managed'])
+def test_malformed_optional_preview_falls_back_without_blocking_confirm(hook_input, broken, managed):
+    batch, request, project = hook_input
+    video = project/'source/videos/EP1.mp4'
+    video.parent.mkdir(parents=True, exist_ok=True); make_video(video)
+    path = w.folder(batch['id'])
+    if managed:
+        m.enroll(path); batch = w.detail(batch['id'])
+    dispatcher = interactive_queue.Dispatcher(poll_seconds=.01); assert dispatcher.start()
+    try:
+        job = finish(batch, request, dispatcher)
+    finally:
+        dispatcher.stop(timeout=None)
+    report = path/'hook-previews'/(job['id']+'.json')
+    key = job['result']['preview_key']
+    cache = project/'cache/hook-previews'/(key+'.json')
+    if broken == 'report-list': write_json_atomic(report, [])
+    elif broken == 'report-null': write_json_atomic(report, None)
+    elif broken.startswith('result-'):
+        job['result'] = [] if broken == 'result-list' else 'broken'
+        write_json_atomic(report, job)
+    elif broken == 'completed-at':
+        job['completed_at'] = []
+        write_json_atomic(report, job)
+        second = {**job, 'completed_at': '2026-01-01'}
+        write_json_atomic(report.with_name('f'*32+'.json'), second)
+    elif broken == 'cache-list': write_json_atomic(cache, [])
+    elif broken == 'cache-null': write_json_atomic(cache, None)
+    else:
+        doc = read_json(cache)
+        doc['identity' if broken == 'identity-list' else 'decision'] = []
+        # Keep the digest valid: structure is independently invalid.
+        key = json_sha256(doc)
+        write_json_atomic(cache.with_name(key+'.json'), doc)
+        job['result']['preview_key'] = key; write_json_atomic(report, job)
+    manifest = confirm(batch, managed)
+    if broken != 'completed-at':
+        assert manifest['requests'][0]['hook_options']['preview_key'] is None
+    else:
+        assert manifest['requests'][0]['hook_options']['preview_key'] == key
+
+
+@pytest.mark.parametrize('managed', [False, True], ids=['legacy', 'managed'])
+def test_renderer_rechecks_source_content_after_confirmation(hook_input, managed):
+    batch, request, project = hook_input
+    video = project/'source/videos/EP1.mp4'
+    video.parent.mkdir(parents=True, exist_ok=True); make_video(video)
+    path = w.folder(batch['id'])
+    if managed:
+        m.enroll(path); batch = w.detail(batch['id'])
+    dispatcher = interactive_queue.Dispatcher(poll_seconds=.01); assert dispatcher.start()
+    try:
+        job = finish(batch, request, dispatcher)
+    finally:
+        dispatcher.stop(timeout=None)
+    manifest = confirm(batch, managed)
+    frozen = BatchManifest.model_validate(manifest).requests[0]
+    assert frozen.hook_options.preview_key == job['result']['preview_key']
+    before = file_sha256(video)
+    replacement = video.with_name('replacement.mp4')
+    make_video(replacement, frames=91); replacement.replace(video)
+    assert file_sha256(video) != before
+    config = load_config(); config['render'].update(width=180, height=320, preset='ultrafast')
+    result = renderer.render_request(project, frozen, [i.model_dump(mode='json') for i in frozen.timeline], project/'changed-source.mp4', config)
+    assert not result['hook_visual'].get('preview_approved')
+    # The immutable pointer stays frozen; it is the renderer that rejects reuse.
+    assert frozen.hook_options.preview_key == job['result']['preview_key']

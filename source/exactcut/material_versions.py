@@ -437,7 +437,14 @@ def _confirm(path, data):
     from .ending import snapshot_images
     snapshot_images(path, w.ROOT / 'projects' / manifest.drama_id, manifest)
     from .hook_preview import bind_confirmed_previews
-    bind_confirmed_previews(path, w.ROOT / 'projects' / manifest.drama_id, manifest)
+    pending = []
+    for request in manifest.requests:
+        asset = snapshot['assets'][request.request_id]
+        current = snapshot['versions'].get(asset['current_version'], {})
+        candidate = snapshot['versions'].get(asset['candidate_version'], {})
+        if candidate.get('status') in {'queued', 'processing'} or current.get('generation') == asset['desired_generation']: continue
+        pending.append(request)
+    bind_confirmed_previews(path, w.ROOT / 'projects' / manifest.drama_id, pending)
     serialized = manifest.model_dump(mode='json')
     from .material_workers import local_pair_valid
     retryable = {rid for rid, asset in snapshot['assets'].items()

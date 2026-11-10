@@ -155,22 +155,24 @@ def state(batch_id,jid):
     return job
 
 
-def bind_confirmed_previews(path, project, manifest):
-    """Freeze a matching receipt from this batch into a new execution snapshot only."""
+def bind_confirmed_previews(path, project, requests):
+    """Freeze server receipts without reading video contents under confirmation locks."""
     import re
     from .util import read_json
     from .timing_review import local_timeline
     from .hook_presentation import approved_preview
+    if not requests: return
     reports = []
     for file in (path/'hook-previews').glob('*.json'):
         try:
             job = read_json(file)
-            if job.get('status') == 'completed': reports.append(job)
+            if (isinstance(job, dict) and job.get('status') == 'completed'
+                    and isinstance(job.get('result'), dict) and isinstance(job.get('completed_at'), str)):
+                reports.append(job)
         except (OSError, ValueError):
             continue
     config = json_sha256(load_config())
-    source_cache = {}
-    for request in manifest.requests:
+    for request in requests:
         # Old confirmed manifests keep their pointer; new snapshots trust server reports.
         request.hook_options.preview_key = None
         matching = [job for job in reports if job.get('request_id') == request.request_id
@@ -181,11 +183,19 @@ def bind_confirmed_previews(path, project, manifest):
             source = source_identity(project, request)
             timeline, states = local_timeline(project, [i.model_dump(mode='json') for i in request.timeline])
             if any(s['error'] or s['source_status'] != 'ready' for s in states): continue
-            sources = source_fingerprints(project, timeline, source_cache)
-            for job in sorted(matching, key=lambda row: row.get('completed_at', ''), reverse=True):
-                key = (job.get('result') or {}).get('preview_key')
+            for job in sorted(matching, key=lambda row: row['completed_at'], reverse=True):
+                key = job['result'].get('preview_key')
                 if job.get('source_identity_sha256') != source or not isinstance(key, str) or not re.fullmatch('[a-f0-9]{64}', key): continue
+                try:
+                    doc = read_json(project/'cache/hook-previews'/f'{key}.json')
+                except (OSError, ValueError):
+                    continue
+                if not isinstance(doc, dict) or not isinstance(doc.get('identity'), dict): continue
+                sources = doc['identity'].get('sources')
+                if not isinstance(sources, list): continue
                 request.hook_options.preview_key = key
+                # The worker published these hashes with this source stat identity.
+                # Renderer still compares actual source content hashes before reuse.
                 if approved_preview(project, request, timeline, sources) is not None: break
                 request.hook_options.preview_key = None
         except (OSError, ValueError, ValidationError):
