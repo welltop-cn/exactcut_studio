@@ -282,7 +282,7 @@ def open_original(drama_id, episode, *, store=None, getter=None, start=0):
     signed = sign_original(drama_id, episode, store=store)
     diag.bind(upstream_url=diag.redact_url(signed['url']))
     get = getter or _get_stream
-    remote = get(signed['url'], {'Range': f'bytes={start}-'}) if start else get(signed['url'])
+    remote = get(signed['url'], start=start) if start else get(signed['url'])
     expected = 206 if start else 200
     if remote.status != expected:
         remote.close()
