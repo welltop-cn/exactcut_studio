@@ -2,6 +2,15 @@
 
 整理日期：2026-11-04。这里保留默认开发约定和最近专项实例；旧端口、PID、启动脚本流水账见[历史清单](archive/local-dev-services-before-cleanup-2026-11-04.md)。
 
+## 2026-11-10：Hook / 上传修复的本地配置复现
+
+- 本机 `http://127.0.0.1:18794/home/` 已启动，代码 `440bd37`，release `development-local-440bd37`；PID 启动时为 36972，后续操作须重新核对。
+- 沿用 `/Users/matao/exactcut-test/env.sh` 的独立本地数据、测试 OSS 命名空间及交付 guard；使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。日志和 PID 在 `/Users/matao/exactcut-test/bug-replay-20261110-440bd37/`。
+- 用户要求只复制两个报错项目的配置，并在本地走制作流程。实际仅导入 15,432 字节的草稿配置，未复制生产原片、成片、账号、任务状态或交付回执。生成新项目和新 request_id，清除历史预览凭证。
+- 本地项目：`9384eae8db5940a89760c138766bc5f4`（101689，4 条）和 `bca42906b2b649adaae9f0778c269c26`（101708，5 条）。初始均为 draft；本地尚无对应原片，需要在页面准备原片后制作。未自动点击制作。导入后曾误归属 admin，导致当前 verifier 账号列表不显示、详情返回 404；现已将这两个本地项目归属改为 verifier，并用该账号经 HTTP 验证列表和详情均可见。
+- 后续按用户要求停下旧 4+5 条项目，并终止其暂停的制作进程以释放索引锁，保留数据和缓存。新 Chrome 窗口创建 `0d60e402ee3140dbba77ed3924078df4`（101689）和 `7f1efce1da0b48d5820a674f9f54d187`（101708），均归属 verifier、各 2 条素材；现均制作完成，状态 review。32 个隔离 Chrome 故障/并发场景通过，未启动真实交付，见[Chrome 验收](verification/hook-publish-dev-chrome-2026-11-10.md)。
+- 启动前核对无活动普通/交互/字幕队列；启动后 `/home/healthz` 为 ok、worker_alive=true，登录后两个项目详情均可读取。沿用验收环境的 production 功能上下文以支持纳管流程，但仍是本机隔离数据，非线上服务；FBBM/飞书交付关闭，`media_delivery_enabled=false`。
+
 ## 2026-11-04：剪切打码时间轴开发预览
 
 - 本机 `takeover-m2.localhost:18793/home/` 保持原服务与数据，仅将 `feat/mosaic-timeline-live-preview` 的 `index.html`、`mosaic.js` 同步到运行工作树供用户围观；未重启 Python 后端。
