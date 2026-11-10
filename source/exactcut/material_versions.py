@@ -257,7 +257,11 @@ def _mutation(path, data, action, operation, *, control_frozen=True):
             if old['payload_sha256'] != digest:
                 raise ValueError('幂等标识已用于其他内容')
             return copy.deepcopy({**state, 'mutations': {}, 'mutation': old['result']})
-        if data.get('revision') != state['revision']:
+        revision = data.get('revision')
+        # Delivery approves an immutable media identity, checked by its operation
+        # below. Other mutations still compare the entire project revision.
+        if ((action == 'delivery' and (type(revision) is not int or revision < 1 or revision > state['revision']))
+                or (action != 'delivery' and revision != state['revision'])):
             raise ValueError('项目已在其他页面更新，请刷新后重试')
         before_versions, before_deliveries, before_assets = set(state['versions']), set(state['deliveries']), set(state['assets'])
         frozen_before=copy.deepcopy(state)
@@ -489,7 +493,11 @@ def _queue_delivery(path, data):
     snapshot = read(path)
     version = snapshot['versions'].get(vid, {})
     master = media_file(path, version.get('master_path'))
-    if not master.is_file() or file_sha256(master) != data.get('sha256'):
+    def identity(file):
+        stat = file.lstat()
+        return (stat.st_dev, stat.st_ino, stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns)
+    master_identity = identity(master)
+    if master.is_symlink() or not master.is_file() or file_sha256(master) != data.get('sha256'):
         raise ValueError('成片校验失败，请重新预览')
     def apply(state):
         _editable(state, execution=True)
@@ -497,6 +505,10 @@ def _queue_delivery(path, data):
         if not asset or asset['deleted_at'] or asset['current_version'] != vid or state['versions'][vid]['record']['output_sha256'] != data.get('sha256'):
             raise ValueError('成片版本已变化，请重新预览确认')
         if _blocked(state, rid): raise ValueError('以前的交付仍待核实，禁止重复交付')
+        version = state['versions'][vid]
+        if (version['asset_id'] != rid or version['version_id'] != vid
+                or media_file(path, version['master_path']) != master or identity(master) != master_identity):
+            raise ValueError('成片版本已变化，请重新预览确认')
         filename = version['manifest']['requests'][0]['output_filename']
         for previous in state['deliveries'].values():
             old = state['versions'][previous['version_id']]

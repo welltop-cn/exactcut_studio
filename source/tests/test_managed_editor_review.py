@@ -174,10 +174,11 @@ const api=()=>new Promise(resolve=>{finish=resolve}),toast=()=>{},operation=(but
 const renderRuntime=()=>{rendered++},renderEditor=()=>{rendered++},openBatch=async()=>{opened++};
 """ + handlers + """
 (async()=>{
-for(const action of ['retryButton','cloneButton','reworkButton','previewButton','startNow','publish']){
+// Publish navigation races are covered through the complete click/API/refresh
+// flow in test_publish_conflict_resync.py rather than this isolated handler test.
+for(const action of ['retryButton','cloneButton','reworkButton','previewButton','startNow']){
 current={id:'a',media_managed:true,revision:4,runtime:{status:'review'},assets:[{request_id:'r'}]};selectedId='a';
-if(action==='publish')$('assets').handler({target:{closest:s=>s==='[data-publish]'?{dataset:{publish:'0'}}:null}});
-else $(action).onclick();
+$(action).onclick();
 selectedId='b';finish({id:'a',revision:5});await pending;
 assert.equal(current.revision,4,action);assert.equal(rendered,0,action);assert.equal(opened,0,action);
 }
