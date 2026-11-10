@@ -121,6 +121,25 @@ def test_clip_input_invalidates_existing_preview(frame_page, part, value):
     assert page.evaluate('dirty') is True
 
 
+@pytest.mark.parametrize('remaining_preview', [True, False])
+def test_deleting_first_material_keeps_remaining_material_preview(frame_page, remaining_preview):
+    page = frame_page
+    jobs = ready_project(page)
+    for job in jobs:
+        job['result']['notice'] = 'Preview for ' + job['request_id']
+    jobs[1]['result']['decision']['emphasis'] = {'highlights': [{'start': 6, 'end': 10, 'phrase': 'Hook'}]}
+    page.evaluate("current.draft.rows.forEach(row=>row.hook_options.mode='ai');controls.editingId=current.id;renderEditor();setTab('editor')")
+    page.evaluate('async jobs=>{for(const job of jobs)await watchHookJob(current.id,job)}', jobs if remaining_preview else jobs[:1])
+    page.locator('[data-delete="0"]').click()
+    assert page.locator('.hook-preview-image').count() == int(remaining_preview)
+    if remaining_preview:
+        assert 'Preview for R2' in page.locator('[data-hook-result="0"]').inner_text()
+        page.locator('.hook-display > summary').click()
+        page.locator('#hook-mode-0').select_option('manual')
+        assert page.locator('.hook-words [aria-pressed="true"]').inner_text() == 'Hook'
+    assert 'Preview for R1' not in page.locator('#requests').inner_text()
+
+
 def test_newer_hook_task_wins_over_late_older_task(frame_page):
     from copy import deepcopy
     page = frame_page
