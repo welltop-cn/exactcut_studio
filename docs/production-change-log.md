@@ -14,6 +14,7 @@
 
 | 时间 | 类型 | 应用版本 | 内容 | 详细记录 |
 | --- | --- | --- | --- | --- |
+| 2026-11-11 07:14 | 应用发布及生产验收 | `2fb979a` | 四项复盘修复已合 main 并 push；本机 2950、Linux 2520、Chromium 417+7 通过（有重叠）。真实 Hook 编辑/晚回包/删除归属、两条成片 OSS 播放、EP46 完整读取通过；新 4 个 OSS 对象身份核验通过，交付为 0，临时账号已停用。按原清单恢复上轮 8 个测试 OSS 副本，配置不变 | [发布与生产验收](verification/production-followup-2026-11-11.md) |
 | 2026-11-10 21:42 | 应用发布及线上测试账号验收 | `e53c40b` | Hook 预览不改草稿、确认冻结有效预览及连续上传回执/CAS 修复；main 已推送，本机 2922、Linux 2502、浏览器 407+7 通过；镜像不含测试工具/夹具，配置不变。线上复制两项目各 2 条成片，预览及播放通过，FBBM/飞书交付为 0；后端自动产生的 8 个测试 OSS 对象已按精确身份清理，上传约束偏差如实记录 | [发布与线上验收](verification/production-hook-publish-2026-11-10.md) |
 | 2026-11-08 22:00 | 应用发布 | `aee6fe9` | 合入打码片段外隐藏区域框与 queue 免调度全局锁只读扫描；合 main 前候选 2823/0/10、基线 2811/0/10（通过/失败/跳过），新增失败 0；Linux 2409/0/424、Chromium UI 401/0/8；工程备份及回滚版本保留，配置/gzip 不变，公网版本、首页、queue 只读核验通过 | [晚间合并与发布](verification/production-evening-2026-11-08.md) |
 | 2026-11-08 17:28 | nginx 配置（reload） | 保持 `de8d7e7`，应用未重启 | 先备份完整 nginx，仅在 ExactCut HTTPS server 新增指定文本 gzip 6 行；nginx -t 后 reload；batches JSON 1,416,338→178,228 字节（−87.42%），sidebar 76,157→12,612（−83.44%）；首页/JSON/JS gzip、JPEG 不压缩、视频 200 与 Range 206 字节及 healthz 核验通过 | [gzip 配置与核验](verification/nginx-gzip-2026-11-08.md) |
