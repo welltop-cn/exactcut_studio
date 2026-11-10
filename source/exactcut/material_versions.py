@@ -319,8 +319,12 @@ def _invalidate(asset, state):
 
 
 def _semantic(draft, row):
-    return json_sha256({'metadata': {k: v for k, v in draft.items() if k != 'rows'},
-                       'row': {k: v for k, v in row.items() if k not in {'notes', 'source', 'client_id'}}})
+    content = {k: v for k, v in row.items() if k not in {'notes', 'source', 'client_id'}}
+    if isinstance(content.get('hook_options'), dict):
+        options = {k: v for k, v in content['hook_options'].items() if k != 'preview_key'}
+        if options: content['hook_options'] = options
+        else: content.pop('hook_options')
+    return json_sha256({'metadata': {k: v for k, v in draft.items() if k != 'rows'}, 'row': content})
 
 
 def save_draft(path, data):
@@ -432,6 +436,8 @@ def _confirm(path, data):
     if errors or manifest is None: raise ValueError('\n'.join(errors))
     from .ending import snapshot_images
     snapshot_images(path, w.ROOT / 'projects' / manifest.drama_id, manifest)
+    from .hook_preview import bind_confirmed_previews
+    bind_confirmed_previews(path, w.ROOT / 'projects' / manifest.drama_id, manifest)
     serialized = manifest.model_dump(mode='json')
     from .material_workers import local_pair_valid
     retryable = {rid for rid, asset in snapshot['assets'].items()

@@ -22,7 +22,7 @@ def ready_project(page):
             for i in (1, 2)]
     page.route('**/hook-previews', lambda route: route.fulfill(json={'jobs': jobs}))
     for job in jobs:
-        page.route('**/hook-previews/' + job['id'], lambda route, job=job: route.fulfill(json=job))
+        page.route('**/hook-previews/' + job['id'], lambda route, request, job=job: route.fulfill(json=job))
     return jobs
 
 
