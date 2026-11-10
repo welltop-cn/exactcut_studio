@@ -37,13 +37,16 @@ def broken(after=b'first'):
     return Remote([after, requests.exceptions.ChunkedEncodingError('IncompleteRead 33/113')], 16)
 
 
-def test_interrupted_stream_resumes_from_the_bytes_already_sent():
+@pytest.mark.parametrize('etag', [None, '"same"'])
+def test_interrupted_stream_resumes_from_the_bytes_already_sent(etag):
     handler, first = Handler(), broken()
+    if etag:
+        first.headers['ETag'] = etag
     calls = []
 
     def resume(sent):
         calls.append(sent)
-        remote = Remote([b'second', b'third'], 11, {'Content-Range': f'bytes {sent}-15/16'})
+        remote = Remote([b'second', b'third'], 11, {'Content-Range': f'bytes {sent}-15/16', 'ETag': etag})
         remote.status = 206
         return remote
 
@@ -54,17 +57,71 @@ def test_interrupted_stream_resumes_from_the_bytes_already_sent():
     assert first.closed and handler.diagnostic_status in (None, 200)
 
 
+def test_retry_before_first_byte_accepts_matching_full_response():
+    handler = Handler()
+    first = broken(after=b'')
+    first.headers['ETag'] = '"same"'
+    remote = Remote([b'firstsecondthird'], 16, {'ETag': '"same"'})
+    offsets = []
+
+    def resume(sent):
+        offsets.append(sent)
+        return remote
+
+    handler._send_original(first, resume=resume)
+    assert handler.wfile.getvalue() == b'firstsecondthird'
+    assert offsets == [0]
+    assert first.closed and remote.closed
+
+
+@pytest.mark.parametrize('changed', [{'Content-Length': '17'}, {'ETag': '"changed"'}])
+def test_retry_before_first_byte_rejects_changed_object(changed):
+    handler, first = Handler(), broken(after=b'')
+    first.headers['ETag'] = '"same"'
+    remote = Remote([b'firstsecondthird'], 16, {'ETag': '"same"', **changed})
+    with pytest.raises(requests.exceptions.RequestException):
+        handler._send_original(first, resume=lambda sent: remote)
+    assert handler.wfile.getvalue() == b''
+    assert remote.closed
+
+
+def test_weak_etag_cannot_prove_identical_resume_bytes():
+    handler, first = Handler(), broken()
+    first.headers['ETag'] = 'W/"same"'
+    remote = Remote([b'secondthird'], 11, {'Content-Range': 'bytes 5-15/16', 'ETag': 'W/"same"'})
+    remote.status = 206
+    with pytest.raises(requests.exceptions.RequestException):
+        handler._send_original(first, resume=lambda sent: remote)
+    assert handler.wfile.getvalue() == b'first'
+    assert remote.closed
+
+
+def test_unknown_initial_length_allows_consistent_partial_response():
+    handler, first = Handler(), broken()
+    first.headers.pop('Content-Length')
+    remote = Remote([b'secondthird'], 11, {'Content-Range': 'bytes 5-15/*'})
+    remote.status = 206
+    handler._send_original(first, resume=lambda sent: remote)
+    assert handler.wfile.getvalue() == b'firstsecondthird'
+    assert first.closed and remote.closed
+
+
 def test_resume_gives_up_after_bounded_attempts_and_surfaces_the_error():
     handler = Handler()
     attempts = []
+    first = broken()
+    first.headers['Content-Length'] = '100'
 
     def resume(sent):
         attempts.append(sent)
-        return broken()
+        remote = broken()
+        remote.status = 206
+        remote.headers.update({'Content-Length': str(100 - sent), 'Content-Range': f'bytes {sent}-99/100'})
+        return remote
 
     with pytest.raises(requests.exceptions.RequestException):
-        handler._send_original(broken(), resume=resume)
-    assert len(attempts) <= 3
+        handler._send_original(first, resume=resume)
+    assert len(attempts) == 3
     assert handler.wfile.getvalue().startswith(b'first')
 
 
@@ -139,6 +196,29 @@ def test_default_adapter_resumes_interrupted_body_without_losing_bytes(monkeypat
     assert handler.sent_headers.count(('Content-Length', str(len(payload)))) == 1
     assert len(calls) == 2
     assert all(response.raw.released for response in responses)
+
+
+@pytest.mark.parametrize('changed', [
+    {'Content-Range': 'bytes 0-10/16'},
+    {'Content-Range': 'bytes 5-15/17'},
+    {'Content-Range': None},
+    {'Content-Range': 'bytes 5-4/16'},
+    {'Content-Range': 'bytes 5-15/*'},
+    {'Content-Length': 'garbage'},
+    {'Content-Length': '10'},
+    {'ETag': '"different-object"'},
+    {'ETag': None},
+])
+def test_resume_rejects_inconsistent_range_or_object_before_writing(changed):
+    handler, first = Handler(), broken()
+    first.headers['ETag'] = '"original-object"'
+    headers = {'Content-Range': 'bytes 5-15/16', 'ETag': '"original-object"', **changed}
+    remote = Remote([b'wrongtail!!'], 11, headers)
+    remote.status = 206
+    with pytest.raises(requests.exceptions.RequestException):
+        handler._send_original(first, resume=lambda sent: remote)
+    assert handler.wfile.getvalue() == b'first'
+    assert first.closed and remote.closed
 
 
 def test_open_original_range_requires_a_partial_response(monkeypatch):

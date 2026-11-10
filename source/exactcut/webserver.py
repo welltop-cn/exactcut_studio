@@ -1589,6 +1589,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def _send_original(self, remote, resume=None):
         length = remote.headers.get('Content-Length')
+        etag = remote.headers.get('ETag')
         self.send_response(200)
         self.send_header('Content-Type', remote.headers.get('Content-Type') or 'video/mp4')
         self.send_header('Cache-Control', 'no-store')
@@ -1619,6 +1620,9 @@ class Handler(BaseHTTPRequestHandler):
                 attempts += 1
                 try:
                     remote = resume(sent)
+                    if remote:
+                        from .originals import validate_resume
+                        validate_resume(remote, sent, length=length, etag=etag)
                 except Exception:
                     raise exc from None
                 if not remote:

@@ -290,6 +290,30 @@ def open_original(drama_id, episode, *, store=None, getter=None, start=0):
     return remote
 
 
+def validate_resume(remote, start, *, length=None, etag=None):
+    """Reject a different byte range or object before forwarding its body."""
+    known_length = length is not None and str(length).isdigit()
+    if start == 0 and remote.status == 200:
+        valid = not known_length or remote.headers.get('Content-Length') == str(length)
+    else:
+        match = re.fullmatch(r'bytes (\d+)-(\d+)/(\d+|\*)', str(remote.headers.get('Content-Range', '')))
+        valid = remote.status == 206 and match is not None
+        if valid:
+            first, last = int(match[1]), int(match[2])
+            total = None if match[3] == '*' else int(match[3])
+            valid = first == start and last >= first and (total is None or last == total - 1)
+            if known_length:
+                valid = valid and total == int(length)
+            remaining = remote.headers.get('Content-Length')
+            if remaining is not None:
+                valid = valid and str(remaining).isdigit() and int(remaining) == last - first + 1
+    if etag:
+        valid = valid and not etag.startswith('W/') and remote.headers.get('ETag') == etag
+    if not valid:
+        remote.close()
+        raise OriginalsUnavailable(502, '原片续传响应不一致，请重新下载')
+
+
 def metabase_query(sql):
     import requests
     values = credentials()
