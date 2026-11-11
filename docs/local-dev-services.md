@@ -2,15 +2,16 @@
 
 整理日期：2026-11-04。这里保留默认开发约定和最近专项实例；旧端口、PID、启动脚本流水账见[历史清单](archive/local-dev-services-before-cleanup-2026-11-04.md)。
 
-## 2026-11-11：下载完整性修复可视化验收
+## 2026-11-11：下载完整性与恢复修复测试实例
 
-- 新本地隔离 dev：`http://127.0.0.1:18895/home/#f2f245e0f51e4c6c91f4fee42a1fff88`，运行代码 `8d7234e`，release `dev-download-context-8d7234e`；原 18794 服务保留。
-- 服务器沿用 `http://8.221.122.75/test/#81aeef49800d4961b57b9dbcd46ec935`，release `server-test-download-context-8d7234e`。入口原本仍在 `/etc/nginx/conf.d/exactcut-test.conf`，不是 sites-enabled 中的正式域名配置；只更新该测试入口的 upstream。
+- 新本地隔离 dev：`http://127.0.0.1:18895/home/#f2f245e0f51e4c6c91f4fee42a1fff88`，运行代码 `74b065a`，release `dev-recovery-review-74b065a`；原 18794 服务保留。
+- 服务器沿用 `http://8.221.122.75/test/#81aeef49800d4961b57b9dbcd46ec935`，release `server-test-recovery-review-74b065a`。入口原本仍在 `/etc/nginx/conf.d/exactcut-test.conf`，不是 sites-enabled 中的正式域名配置；只更新该测试入口的 upstream。
 - 两处均为独立数据/账号与合成字节上游，不是生产项目副本，也不是实际视频素材。测试适配器仅在私有启动器中替换目录/签名及本地源路由，真实 HTTP 代理、下载 UI 和文件保存函数不替换；外部写入、AI、发布及真实素材获取仍关闭。
 - 独立验收 Chrome CDP 18897 只对 `http://8.221.122.75` 启用 insecure-origin-as-secure，以覆盖 HTTP IP 上的目录保存分支。真实 OPFS 目录句柄存入应用原有目录记录，然后点击页面下载按钮；没有冒充系统目录选择器验收。
 - 本地和服务器各三项实际点击通过：EP1 短正文被拒绝，EP2 保存 16 字节，EP3 压缩响应 502；两种失败均保留 8 字节旧文件。截图与最终文件核对保留在 `/Users/matao/exactcut-test/download-integrity-fix-20261111/` 的 `visible-local.png`、`visible-server.png`、`visible-final-state.json`。
 - 私有启动器 `visible_instance.py`、本机数据 `visible-local-data/`、PID 和日志均在上述目录；服务器对应目录为 `/srv/exactcut/preparation/download-integrity-fix-20261111/`，数据 `visible-data/`，容器及 internal 网络均命名 `exactcut-download-visible-20261111`，限制 1 CPU / 2 GiB。端口和 PID 操作前重新核对。
-- 后续修复下载中改剧号/切项目导致混存，以及选择目录期间重复启动；两处各 81 项回归通过，见[验证记录](verification/original-download-context-2026-11-11.md)。本机当前源码快照为 `/Users/matao/exactcut-test/download-context-20261111/after/source`，服务器为 `/srv/exactcut/preparation/download-context-20261111/after/source`。修改主仓库不会自动更新这两份快照；测试数据与私有启动器仍沿用上一轮目录。
+- 后续修复下载中改剧号/切项目导致混存，以及选择目录期间重复启动；两处各 81 项回归通过，见[验证记录](verification/original-download-context-2026-11-11.md)。本机当前源码快照为 `/Users/matao/exactcut-test/recovery-review-20261111/after/source`，服务器为 `/srv/exactcut/preparation/recovery-review-20261111/after/source`。修改主仓库不会自动更新这两份快照；测试数据与私有启动器仍沿用上一轮目录。
+- 本轮又修复单条损坏报告阻塞交互队列；两处各 321 项相关回归通过。空闲检查后更新测试代码，旧服务器测试容器 `exactcut-download-visible-20261111-8d7234e` 停止保留。健康检查、代码哈希与生产未变核对见[恢复链路跟进](reviews/retrospective-followup-recovery-2026-11-11.md)。坏报告注入仅在独立回归临时目录中进行，未改可见测试项目的报告；本轮未重复点击下载验收。
 - 未重启生产应用；生产镜像仍为 d9470927…，StartedAt `2026-11-10T23:15:38.085774569Z`，正式站点配置哈希未变，公网 health 正常。为更新 IP 测试 upstream 做过 Nginx 语法检查和 graceful reload。旧 `exactcut-test` 容器及数据保留，未恢复其旧后台任务。
 
 ## 2026-11-10：Hook / 上传修复的本地配置复现
@@ -74,4 +75,4 @@
 
 并发专项保持 SAM CPU、`preview.namespace=test`、`delivery_enabled=false` 及交付守卫。测试上下文可以是 production，但仍是独立测试实例，不是正式服务。故障注入适配器已在验收结束时退出，OSS 测试媒体为播放检查保留，尚未清理。
 
-本次仅整理文档与只读检查本机监听，未操作上述服务或数据。
+最初清单整理仅包含文档与只读监听检查；后续测试实例变更以本文顶部按日期记录的专项条目为准。
