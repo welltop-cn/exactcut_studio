@@ -52,6 +52,15 @@ def relative(path):
 def report(entry):return data_root()/entry['report']
 
 
+def _read_report(entry):
+    """A missing outbox report is recoverable; a damaged existing report is not."""
+    try:job=read_json(report(entry))
+    except FileNotFoundError:job=dict(entry['job'])
+    except (OSError,ValueError):return None
+    if not isinstance(job,dict) or job.get('id')!=entry['job']['id'] or not isinstance(job.get('status'),str):return None
+    return job
+
+
 def enqueue(kind,session,path,job,cfg,*,state_lock,payload=None):
     """Server adapters hold state_lock before calling; paths/runners are not client input."""
     if kind not in ROLES:raise ValueError('unsupported interactive task')
@@ -173,7 +182,8 @@ class Dispatcher:
             for entry in state['active']:
                 try:lease=cutting.lock_file(report(entry).with_suffix('.worker.lock'))
                 except cutting.CutError:live.append(entry);continue
-                lease.close();job=read_json(report(entry)) if report(entry).is_file() else entry['job']
+                lease.close();job=_read_report(entry)
+                if job is None:live.append(entry);continue
                 if job.get('cancel_requested'):interrupted.append((entry,'cancelled'))
                 elif job.get('status') in TERMINAL:continue
                 elif entry['kind'] in {'clip','track','mosaic_prepare','cut_prepare','preview_oss','mosaic_frame','cut_frame'} or job.get('status')=='queued':state['pending'].append(entry);interrupted.append((entry,'queued'))
@@ -184,11 +194,13 @@ class Dispatcher:
     def finish_cancellations(self):
         # HTTP order is report state -> queue; never invert it in the dispatcher.
         for entry in snapshot()['pending']:
-            path=report(entry);job=read_json(path) if path.is_file() else entry['job']
+            path=report(entry);job=_read_report(entry)
+            if job is None:continue
             if not job.get('cancel_requested') or job.get('status') in TERMINAL:continue
             try:
                 with cutting.lock_file(data_root()/entry['state_lock']):
-                    current=read_json(path) if path.is_file() else dict(entry['job'])
+                    current=_read_report(entry)
+                    if current is None:continue
                     if current.get('id')==entry['job']['id'] and current.get('cancel_requested') and current.get('status') not in TERMINAL:
                         current.update(status='cancelled',progress='任务已取消');write_json_atomic(path,current)
             except cutting.CutError as exc:
@@ -213,7 +225,8 @@ class Dispatcher:
                 path=report(entry)
                 if not path.parent.is_dir():
                     pending.remove(entry);continue  # Never resurrect a deleted project/session.
-                job=read_json(path) if path.is_file() else entry['job']
+                job=_read_report(entry)
+                if job is None:continue
                 if entry.get('not_before',0)>time.time():continue
                 if job.get('status') in TERMINAL:
                     pending.remove(entry);continue
