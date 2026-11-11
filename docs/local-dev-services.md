@@ -12,7 +12,7 @@
 - 私有启动器 `visible_instance.py`、本机数据 `visible-local-data/`、PID 和日志均在上述目录；服务器对应目录为 `/srv/exactcut/preparation/download-integrity-fix-20261111/`，数据 `visible-data/`，容器及 internal 网络均命名 `exactcut-download-visible-20261111`，限制 1 CPU / 2 GiB。端口和 PID 操作前重新核对。
 - 后续修复下载中改剧号/切项目导致混存，以及选择目录期间重复启动；两处各 81 项回归通过，见[验证记录](verification/original-download-context-2026-11-11.md)。本机当前源码快照为 `/Users/matao/exactcut-test/recovery-review-20261111/after/source`，服务器为 `/srv/exactcut/preparation/recovery-review-20261111/after/source`。修改主仓库不会自动更新这两份快照；测试数据与私有启动器仍沿用上一轮目录。
 - 本轮又修复单条损坏报告阻塞交互队列；两处各 321 项相关回归通过。空闲检查后更新测试代码，旧服务器测试容器 `exactcut-download-visible-20261111-8d7234e` 停止保留。健康检查、代码哈希与生产未变核对见[恢复链路跟进](reviews/retrospective-followup-recovery-2026-11-11.md)。坏报告注入仅在独立回归临时目录中进行，未改可见测试项目的报告；本轮未重复点击下载验收。
-- 未重启生产应用；生产镜像仍为 d9470927…，StartedAt `2026-11-10T23:15:38.085774569Z`，正式站点配置哈希未变，公网 health 正常。为更新 IP 测试 upstream 做过 Nginx 语法检查和 graceful reload。旧 `exactcut-test` 容器及数据保留，未恢复其旧后台任务。
+- 上述测试实例更新时生产保持 `2fb979a`，仅历史 IP 测试 upstream 调整做过 Nginx graceful reload。随后按独立发布授权，生产已于 2026-11-11 21:51 更新至 `us-east-20261111-recovery-7383715`，镜像 de5f35fc…；见[生产发布验收](verification/production-recovery-download-2026-11-11.md)。本表的两处测试实例仍为 `74b065a`，应用代码与该发布一致。旧 `exactcut-test` 容器及数据保留，未恢复其旧后台任务。
 
 ## 2026-11-10：Hook / 上传修复的本地配置复现
 
