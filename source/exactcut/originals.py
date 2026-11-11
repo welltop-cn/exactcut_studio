@@ -292,7 +292,7 @@ def open_original(drama_id, episode, *, store=None, getter=None, start=0):
         raise OriginalsUnavailable(502, '原片暂时下不了')
     if str(remote.headers.get('Content-Encoding') or '').strip().lower() not in ('', 'identity'):
         remote.close()
-        raise OriginalsUnavailable(502, '原片响应编码不受支持，请重试')
+        raise OriginalsUnavailable(502, '原片暂时无法下载，请稍后重试')
     return remote
 
 

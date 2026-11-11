@@ -59,7 +59,7 @@ def test_encoded_original_is_rejected_before_sending_success(app, upstream, monk
     monkeypatch.setattr(originals, 'sign_original', lambda *a, **k: {'url': upstream + '/gzip'})
     status, _, body = call(app, 'GET', f"/api/batches/{batch['id']}/originals/EP1/file?drama_id=101606")
     assert status == 502
-    assert '编码' in json.loads(body)['error']
+    assert '原片暂时无法下载' in json.loads(body)['error']
 
 
 def test_identity_negotiation_preserves_complete_original(app, upstream, monkeypatch):
@@ -83,5 +83,5 @@ def test_range_download_preserves_identity_bytes(upstream, monkeypatch):
 
 def test_encoded_partial_response_is_rejected(upstream, monkeypatch):
     monkeypatch.setattr(originals, 'sign_original', lambda *a, **k: {'url': upstream + '/gzip'})
-    with pytest.raises(originals.OriginalsUnavailable, match='编码'):
+    with pytest.raises(originals.OriginalsUnavailable, match='原片暂时无法下载'):
         originals.open_original('101606', 'EP1', start=5)
