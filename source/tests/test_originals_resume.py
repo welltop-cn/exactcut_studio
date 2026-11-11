@@ -141,7 +141,8 @@ def test_default_adapter_sends_byte_offset_as_http_range(monkeypatch, start):
     monkeypatch.setattr(requests.Session, 'get', get)
     remote = originals.open_original('101606', 'EP25', start=start)
     remote.close()
-    assert calls == [('https://oss.example/EP25', {'Range': 'bytes=100-'} if start else None, False)]
+    expected = {'Accept-Encoding': 'identity', 'Range': 'bytes=100-'} if start else {'Accept-Encoding': 'identity'}
+    assert calls == [('https://oss.example/EP25', expected, False)]
 
 
 def test_default_adapter_resumes_interrupted_body_without_losing_bytes(monkeypatch):
@@ -182,7 +183,8 @@ def test_default_adapter_resumes_interrupted_body_without_losing_bytes(monkeypat
     def get(session, url, **kwargs):
         index = len(calls)
         calls.append(kwargs['headers'])
-        assert kwargs['headers'] == (None if index == 0 else {'Range': f'bytes={offset}-'})
+        assert kwargs['headers'] == ({'Accept-Encoding': 'identity'} if index == 0 else
+                                     {'Accept-Encoding': 'identity', 'Range': f'bytes={offset}-'})
         if index:
             assert responses[0].raw.closed
         return responses[index]
@@ -230,7 +232,7 @@ def test_open_original_range_requires_a_partial_response(monkeypatch):
     response.raw = BytesIO(b'x')
 
     def get(session, url, **kwargs):
-        assert kwargs['headers'] == {'Range': 'bytes=100-'}
+        assert kwargs['headers'] == {'Accept-Encoding': 'identity', 'Range': 'bytes=100-'}
         return response
 
     monkeypatch.setattr(requests.Session, 'get', get)

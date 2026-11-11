@@ -269,9 +269,12 @@ def _get_stream(url, start=0):
     import requests
     session = requests.Session()
     session.trust_env = False
+    # Content-Length and Range offsets must describe the bytes we forward.
+    headers = {'Accept-Encoding': 'identity'}
+    if start:
+        headers['Range'] = f'bytes={start}-'
     try:
-        response = session.get(url, stream=True, timeout=(20, 300),
-                               headers={'Range': f'bytes={start}-'} if start else None)
+        response = session.get(url, stream=True, timeout=(20, 300), headers=headers)
     except requests.RequestException as exc:
         raise OriginalsUnavailable(502, '原片暂时下不了') from exc
     return _Remote(response)
@@ -287,6 +290,9 @@ def open_original(drama_id, episode, *, store=None, getter=None, start=0):
     if remote.status != expected:
         remote.close()
         raise OriginalsUnavailable(502, '原片暂时下不了')
+    if str(remote.headers.get('Content-Encoding') or '').strip().lower() not in ('', 'identity'):
+        remote.close()
+        raise OriginalsUnavailable(502, '原片响应编码不受支持，请重试')
     return remote
 
 
