@@ -6,7 +6,7 @@
 
 继续排查后另确认并本地修复两项：[删除素材后预览串行](../verification/hook-preview-row-identity-2026-11-10.md)、[续传响应范围与对象标识不一致仍被拼接](../verification/original-resume-consistency-2026-11-10.md)。这些是下文风险项的后续证据，不将新结果倒填为最初复盘时已确认；也已随 `2fb979a` 发布，见[发布验收](../verification/production-followup-2026-11-11.md)。
 
-2026-11-11 继续审查新增确认两项下载边界问题，并识别本机依赖偏差，见[响应体完整性后续审查](download-body-followup-2026-11-11.md)。这两项尚未修复；不能与上述已发布的四项混为一谈。
+2026-11-11 继续审查新增确认两项下载边界问题，并识别本机依赖偏差，见[响应体完整性后续审查](download-body-followup-2026-11-11.md)。这两项随后已在本地与服务器测试实例复现、修复并各通过 67 项回归，见[修复验证](../verification/original-download-integrity-2026-11-11.md)；尚未发布，不能与上述已发布的四项混为一谈。
 
 ## 结论
 
