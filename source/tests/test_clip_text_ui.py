@@ -8,7 +8,7 @@ pytestmark = pytest.mark.ui
 
 
 @pytest.fixture
-def page():
+def page(request):
     playwright = pytest.importorskip('playwright.sync_api')
     root = Path(__file__).parents[1] / 'exactcut/web'
     html = re.sub(r'<script src="[^"]+"></script>', '', (root / 'index.html').read_text())
@@ -17,7 +17,7 @@ def page():
         browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         page.route('**/*', lambda route: route.fulfill(body=html, content_type='text/html'))
-        page.goto('http://fixture.test/')
+        page.goto(getattr(request, 'param', 'http://fixture.test/'))
         page.add_script_tag(content=(root/'editor-busy.js').read_text())
         page.add_script_tag(content=source)
         page.evaluate('''() => {
