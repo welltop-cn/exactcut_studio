@@ -2,9 +2,11 @@
 
 审查时间：2026-11-10。审查代码：main `59acccb`；该提交与已发布 `e53c40b` 的应用代码相同，差异为文档。本轮只做离线历史审查和本地最小复现，没有修改应用或操作生产。
 
-后续更新：用户要求修复后，F2 已完成本地代码修复及浏览器回归，见 [Hook 预览输入失效修复](../verification/hook-preview-input-invalidation-2026-11-10.md)；随后 F1 也已完成默认适配器修复及 50 项回归，见 [原片续传修复](../verification/original-resume-adapter-2026-11-10.md)。两项补丁尚未发布；下面保留发现时的分析与失败证据。
+后续更新：用户要求修复后，F2 已完成本地代码修复及浏览器回归，见 [Hook 预览输入失效修复](../verification/hook-preview-input-invalidation-2026-11-10.md)；随后 F1 也已完成默认适配器修复及 50 项回归，见 [原片续传修复](../verification/original-resume-adapter-2026-11-10.md)。两项补丁已随 `2fb979a` 于 2026-11-11 发布；下面保留发现时的分析与失败证据。
 
-继续排查后另确认并本地修复两项：[删除素材后预览串行](../verification/hook-preview-row-identity-2026-11-10.md)、[续传响应范围与对象标识不一致仍被拼接](../verification/original-resume-consistency-2026-11-10.md)。这些是下文风险项的后续证据，不将新结果倒填为最初复盘时已确认；同样尚未发布。
+继续排查后另确认并本地修复两项：[删除素材后预览串行](../verification/hook-preview-row-identity-2026-11-10.md)、[续传响应范围与对象标识不一致仍被拼接](../verification/original-resume-consistency-2026-11-10.md)。这些是下文风险项的后续证据，不将新结果倒填为最初复盘时已确认；也已随 `2fb979a` 发布，见[发布验收](../verification/production-followup-2026-11-11.md)。
+
+2026-11-11 继续审查新增确认两项下载边界问题，并识别本机依赖偏差，见[响应体完整性后续审查](download-body-followup-2026-11-11.md)。这两项尚未修复；不能与上述已发布的四项混为一谈。
 
 ## 结论
 
