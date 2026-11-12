@@ -1,8 +1,8 @@
 # 应用内告警与外部监控
 
-本功能为 `feat/application-alerts` 分支实现，默认关闭。本文的服务器现状来自 2026-11-12 只读核验；本轮没有发布应用、修改生产配置/cron 或发送真实飞书消息。
+本功能已于 2026-11-12 按授权随 `c37af22` 发布，生产 runtime 已开启应用告警、外部监控 scan_logs=false、root feed cron 已停用，外部探活与资源检查保留。两条明确标记的验收错误已合并并取得真实发送回执。代码默认配置仍关闭，其他环境不会因更新代码自动启用；详见[发布与线上验收](verification/production-alerts-hook-2026-11-12.md)。
 
-## 已核实的现状
+## 切换前只读核验的现状
 
 - 生产健康接口返回 release `us-east-20261111-recovery-7383715`、environment=production、status=ok、worker_alive=true；维护关闭。
 - deploy crontab 每五分钟执行 `~/exactcut-monitor/prod_monitor.py run`。配置的日志目录为 `/home/deploy/exactcut-monitor/feed`；扫描状态正常、self_failures=0、待发消息为 0。
@@ -49,7 +49,7 @@
 1. 备份 runtime、production.env、旧监控代码/配置及两端队列状态。以实际服务器核对运行版本、活动任务、cron 和凭据权限。
 2. 处理旧 feed 的最后增量并确认旧监控 outbox 已排空；旧 pending 签名需明确是等待旧冷却到期发送还是接受切换时不补历史。应用内新队列不会导入历史日志或旧签名。
 3. 为应用配置同一 webhook 与 `alerts.enabled=true`；将外部监控更新为支持 `scan_logs` 的版本并设置 false。通过发布管理器发布已提交的干净版本，避免新旧应用报错通知长期重叠。
-4. 在授权范围内写入一条明确标识为测试的应用诊断错误，确认由应用后台送达真实飞书群，核对父项目链接、聚合、队列清空、服务与 worker 健康。此步骤本轮尚未执行。
+4. 在授权范围内写入一条明确标识为测试的应用诊断错误，确认由应用后台送达真实飞书群，核对父项目链接、聚合、队列清空、服务与 worker 健康。2026-11-12 已在授权发布中执行，记录见上述发布验收。
 5. 新链路验收通过后由管理员停用 root 的 log_feed cron。保留原脚本、配置和 feed/状态供回退；deploy 的存活与资源监控 cron 继续保留。
 
 回退时先关闭应用 alerts，通过发布管理器恢复已封存代码；恢复外部 `scan_logs=true` 和 root 复制任务。保留最新业务数据库及两边告警队列。回退到不认识 alerts 的旧代码不会自动发送新 outbox；需明确处理该积压，不能宣称完整补发。旧 scanner 使用原游标，避免不经确认 bootstrap 跳过增量。
