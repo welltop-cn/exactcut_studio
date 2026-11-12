@@ -78,6 +78,10 @@ def guidance(message, stage=None, *, continuation=False, fbbm_status=None):
         code, title, action = 'source', '原片缺失或无法完整读取', '检查所需集数和原片完整性，再重试获取与制作。'
     elif any(s in lower for s in ('时间线', 'end_ms', 'start_ms', '时间范围')):
         code, title, action = 'timeline', '剪辑时间需要校对', '对照 Excel 解析说明和原片时长，修改为有效范围后重新制作。'
+    elif 'ai 未生成合规重点' in lower:
+        action = ('系统已自动重试一轮，重点仍未通过校验。' if '已自动重试一轮' in str(message)
+                  else '系统会自动重试一轮；若仍失败，')
+        code, title, action = 'ai_emphasis_validation', 'AI 重点未通过原文校验', action + '请点击“修改后重新制作”，将该条 Hook 改为手动选词或不强调。'
     elif stage == 'ai_emphasis' or any(s in lower for s in ('openai', '语义', '429', 'api key')):
         code, title, action = 'ai', 'AI 重点分析未完成', '服务恢复后重试，或在新草稿中改为手动重点／不强调。'
     elif any(s in lower for s in ('hook', '排版', '字幕')):

@@ -537,7 +537,22 @@ def finish_job(job, code=None, message='执行进程已结束，可查看日志�
             workflow.update(path, 'publishing' if waiting else 'review', message)
         elif job.get('phase') == 'render' and job.get('request_id'):
             record = workflow.result_records(path).get(job['request_id'], {})
-            workflow.end_execution(path, job['request_id'], status='failed', error=record.get('error') or message)
+            from .hook_emphasis import HookEmphasisValidationError
+            runtime = workflow.runtime(path)
+            if (result and not local_failure and not workflow.material_versions.internal(path)
+                    and record.get('status') == 'failed'
+                    and record.get('error_type') == HookEmphasisValidationError.__name__
+                    and job.get('hook_validation_retries', 0) < 1
+                    and not runtime.get('paused') and not runtime.get('archived')):
+                job['hook_validation_retries'] = 1
+                requeue_stage(job)
+                workflow.update(path, message='AI 重点未通过原文校验，已自动排队重试一轮')
+                diag.event('production.hook_validation_retry', batch_id=path.name, request_id=job['request_id'], automatic_retry=1)
+                return
+            error = record.get('error') or message
+            if record.get('error_type') == HookEmphasisValidationError.__name__ and job.get('hook_validation_retries'):
+                error += '；系统已自动重试一轮，仍未通过校验'
+            workflow.end_execution(path, job['request_id'], status='failed', error=error)
         elif workflow.runtime(path)['status'] in workflow.ACTIVE:
             workflow.update(path, 'interrupted', message)
         return

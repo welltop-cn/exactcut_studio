@@ -8,6 +8,7 @@ import math
 import os
 import re
 import time
+import uuid
 from pathlib import Path
 from typing import Literal
 
@@ -47,6 +48,10 @@ class Analysis(BaseModel):
     style: Style
     highlights: list[Highlight]
     reason: str
+
+
+class HookEmphasisValidationError(ValidationError):
+    """The model responded, but its emphasis failed the strict source contract."""
 
 
 class TransientHookAIError(ValidationError):
@@ -198,8 +203,21 @@ def analyze_grounded(clean: str, model: str, *, progress_path: Path | None = Non
                 result = grounded_analysis(clean,response)
                 return response,result
             except (ValidationError,ValueError,TypeError) as exc:
+                highlights = response.get('highlights') if isinstance(response, dict) else None
+                rejection = {**diag.current(), 'text': clean, 'model': model, 'attempt': attempt + 1,
+                             'highlights': highlights, 'reason': str(exc), 'rejected_at': now_iso(),
+                             'prompt_sha256': identity['prompt_sha256']}
+                rejection_path = None
+                if progress_path is not None:
+                    rejection_path = progress_path.parent / 'rejections' / (uuid.uuid4().hex + '.json')
+                    write_json_atomic(rejection_path, rejection)
+                phrases = [item['phrase'][:300] for item in highlights[:10]
+                           if isinstance(item, dict) and isinstance(item.get('phrase'), str)] if isinstance(highlights, list) else []
+                diag.event('ai.emphasis_rejected', level='warning', model=model,
+                           analysis_attempt=attempt + 1, rejected_phrases=phrases,
+                           reason=str(exc)[:500], rejection_path=str(rejection_path) if rejection_path else None)
                 if attempt:
-                    raise ValidationError('AI 未生成合规重点，请重试或改用手工选词／不强调；未修改原文') from exc
+                    raise HookEmphasisValidationError('AI 未生成合规重点，请重试或改用手工选词／不强调；未修改原文') from exc
                 # Persist only a trusted marker, never model output/error text as instructions.
                 correction = '重点未通过原文匹配、数量、字符范围或覆盖率校验'
                 if progress_path is not None:

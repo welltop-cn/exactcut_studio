@@ -133,12 +133,159 @@ def rendered(child, event, *, master=b'new-master', preview=b'new-preview'):
     return video, derivative
 
 
+@pytest.mark.parametrize('retry_succeeds', [False, True])
+def test_hook_validation_requeues_only_failed_asset_once_and_keeps_success(workspace, retry_succeeds):
+    m, path, state = enrolled()
+    draft = copy.deepcopy(state['draft'])
+    draft['rows'].append({**copy.deepcopy(draft['rows'][0]), 'request_id': None, 'seq': '2'})
+    state = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    worker, child, event, job = candidate_job(path, state)
+    worker.stage_enter(job)
+    other_event = next(e for e in state['outbox'].values() if e['asset_id'] != event['asset_id'])
+    other_child = worker.materialize(path, other_event)
+    other_job = {**job, 'id': token(), 'batch_id': other_child.name, 'request_id': other_event['asset_id'], 'process_token': token()}
+    write_json_atomic(w.ROOT / '.web-state/jobs' / (other_job['id'] + '.json'), other_job)
+    worker.stage_enter(other_job)
+    rendered(other_child, other_event)
+    worker.stage_finish(other_job, 0)
+    before = m.read(path)
+    kept = copy.deepcopy(before['versions'][other_event['version_id']])
+    kept_files = {key: (Path(kept[key]).stat().st_mtime_ns, file_sha256(Path(kept[key])))
+                  for key in ('master_path', 'preview_path')}
+    result_store.put(child / 'production', event['asset_id'], {
+        'status': 'failed', 'error_type': 'HookEmphasisValidationError', 'error': 'AI 未生成合规重点'})
+    worker.stage_finish(job, 2)
+    latest = m.read(path)
+    retry = latest['versions'][event['version_id']]
+    assert retry['status'] == 'queued'
+    assert retry['child_id'] != child.name
+    assert retry['hook_validation_retries'] == 1
+    assert latest['versions'][other_event['version_id']] == kept
+    assert latest['assets'][other_event['asset_id']]['current_version'] == other_event['version_id']
+    replacement = latest['outbox'][retry['child_id']]
+    assert [r['request_id'] for r in replacement['manifest']['requests']] == [event['asset_id']]
+    # Recovery must materialize only the replacement, never revive the old outbox.
+    m.recover_outbox()
+    m.recover_outbox()
+    recovered = m.read(path)
+    assert recovered['outbox'][child.name]['status'] == 'superseded'
+    assert recovered['outbox'][retry['child_id']]['status'] == 'materialized'
+    assert recovered['versions'][other_event['version_id']] == kept
+    assert latest['outbox'][child.name]['status'] == 'superseded'
+    # Duplicate completion and scheduler recovery cannot allocate another retry.
+    worker.stage_finish(job, 2)
+    worker.reconcile_candidates(path, w.ROOT / '.web-state/jobs')
+    assert len(m.read(path)['outbox']) == len(latest['outbox'])
+    new_child = worker.materialize(path, replacement)
+    next_job = {**job, 'id': token(), 'batch_id': new_child.name, 'process_token': token()}
+    write_json_atomic(w.ROOT / '.web-state/jobs' / (next_job['id'] + '.json'), next_job)
+    worker.stage_enter(next_job)
+    if retry_succeeds:
+        rendered(new_child, replacement)
+    else:
+        result_store.put(new_child / 'production', event['asset_id'], {
+            'status': 'failed', 'error_type': 'HookEmphasisValidationError', 'error': 'AI 未生成合规重点'})
+    worker.stage_finish(next_job, 0 if retry_succeeds else 2)
+    final = m.read(path)
+    m.recover_outbox()
+    m.recover_outbox()
+    assert len(m.read(path)['outbox']) == len(final['outbox'])
+    assert final['versions'][event['version_id']]['status'] == ('current' if retry_succeeds else 'failed')
+    assert final['versions'][event['version_id']]['hook_validation_retries'] == 1
+    if not retry_succeeds:
+        asset = next(a for a in m.detail(path)['assets'] if a['request_id'] == event['asset_id'])
+        assert '已自动重试一轮' in asset['error_info']['action']
+        assert '服务恢复' not in str(asset['error_info'])
+    assert len(final['outbox']) == len(latest['outbox'])
+    assert final['versions'][other_event['version_id']] == kept
+    assert {key: (Path(kept[key]).stat().st_mtime_ns, file_sha256(Path(kept[key])))
+            for key in ('master_path', 'preview_path')} == kept_files
+
+
+def test_recovery_requeues_a_validation_failure_before_parent_finalization(workspace):
+    m, path, state = enrolled()
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    worker, child, event, job = candidate_job(path, state)
+    worker.stage_enter(job)
+    result_store.put(child / 'production', event['asset_id'], {
+        'status': 'failed', 'error_type': 'HookEmphasisValidationError', 'error': 'AI 未生成合规重点'})
+    job.update(status='failed', exit_code=2)
+    write_json_atomic(w.ROOT / '.web-state/jobs' / (job['id'] + '.json'), job)
+    worker.reconcile_candidates(path, w.ROOT / '.web-state/jobs')
+    latest = m.read(path)
+    assert latest['versions'][event['version_id']]['status'] == 'queued'
+    assert latest['versions'][event['version_id']]['hook_validation_retries'] == 1
+    worker.reconcile_candidates(path, w.ROOT / '.web-state/jobs')
+    assert m.read(path) == latest
+
+
+@pytest.mark.parametrize('fence', ['paused', 'archived', 'deleted', 'generation', 'attempt', 'success'])
+def test_hook_validation_auto_retry_respects_existing_execution_fences(workspace, fence):
+    m, path, state = enrolled()
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    worker, child, event, job = candidate_job(path, state)
+    worker.stage_enter(job)
+    result_store.put(child / 'production', event['asset_id'], {
+        'status': 'qc_passed' if fence == 'success' else 'failed',
+        'error_type': 'HookEmphasisValidationError', 'error': 'AI 未生成合规重点'})
+    if fence == 'attempt':
+        write_json_atomic(w.ROOT / '.web-state/jobs' / (job['id'] + '.json'), {**job, 'process_token': token()})
+    elif fence in {'paused', 'archived', 'deleted'}:
+        action = {'paused': 'pause', 'archived': 'archive', 'deleted': 'delete'}[fence]
+        m.control(path, action, {'revision': m.read(path)['revision'], 'mutation_id': token()})
+    elif fence == 'generation':
+        latest = m.read(path)
+        draft = copy.deepcopy(latest['draft']); draft['rows'][0]['hook_text'] += ' newer'
+        m.save_draft(path, {'revision': latest['revision'], 'mutation_id': token(), 'draft': draft})
+    before = m.read(path)
+    assert not worker.retry_hook_validation(job)
+    after = m.read(path)
+    assert after == before
+
+
+@pytest.mark.parametrize('error_type', ['TransientHookAIError', 'ValidationError', 'ResourceDeferred', 'OSError'])
+def test_other_failures_never_auto_reproduce(workspace, error_type):
+    m, path, state = enrolled()
+    state = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    worker, child, event, job = candidate_job(path, state)
+    worker.stage_enter(job)
+    result_store.put(child / 'production', event['asset_id'], {
+        'status': 'failed', 'error_type': error_type, 'error': '服务或资源错误'})
+    worker.stage_finish(job, 2)
+    final = m.read(path)
+    assert final['versions'][event['version_id']]['status'] == 'failed'
+    assert len(final['outbox']) == len(state['outbox'])
+
+
 def changed_candidate():
     m, path, state = enrolled(media=True)
     draft = copy.deepcopy(state['draft']); draft['rows'][0]['hook_text'] += ' edited'
     state = m.save_draft(path, {'revision': state['revision'], 'mutation_id': token(), 'draft': draft})
     old = state['assets'][draft['rows'][0]['request_id']]['current_version']
     return m, path, m.confirm(path, {'revision': state['revision'], 'mutation_id': token()}), old
+
+
+@pytest.mark.integration
+def test_hook_validation_retry_and_late_success_keep_previous_current(workspace):
+    m, path, state, old = changed_candidate()
+    worker, child, event, job = candidate_job(path, state)
+    worker.stage_enter(job)
+    kept = copy.deepcopy(m.read(path)['versions'][old])
+    master = Path(kept['master_path'])
+    before = (master.stat().st_mtime_ns, file_sha256(master))
+    result_store.put(child / 'production', event['asset_id'], {
+        'status': 'failed', 'error_type': 'HookEmphasisValidationError', 'error': 'AI 未生成合规重点'})
+    worker.stage_finish(job, 2)
+    # A late success from the superseded executor must never promote its output.
+    rendered(child, event)
+    worker.stage_finish(job, 0)
+    m.recover_outbox()
+    latest = m.read(path)
+    assert latest['assets'][event['asset_id']]['current_version'] == old
+    assert latest['versions'][old] == kept
+    assert (master.stat().st_mtime_ns, file_sha256(master)) == before
+    assert latest['assets'][event['asset_id']]['history'] == state['assets'][event['asset_id']]['history']
 
 
 @pytest.mark.integration

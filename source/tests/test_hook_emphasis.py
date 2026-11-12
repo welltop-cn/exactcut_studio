@@ -31,6 +31,58 @@ def permit_mock(monkeypatch):
     monkeypatch.setenv('EXACTCUT_HOOK_MODEL', 'mock-semantic-model')
 
 
+def test_rejected_highlights_survive_terminal_failure_without_becoming_correction(tmp_path, monkeypatch):
+    permit_mock(monkeypatch)
+    rejected = [{'phrase': 'invented queen', 'occurrence': 1, 'role': 'identity'}]
+    calls, events = [], []
+    def analyze(clean, model, correction=None):
+        calls.append(correction)
+        return {**RESPONSE, 'highlights': rejected}
+    monkeypatch.setattr(semantic, '_request_analysis', analyze)
+    monkeypatch.setattr(semantic.diag, 'event', lambda name, **fields: events.append((name, fields)))
+    with pytest.raises(ValidationError, match='合规重点'):
+        semantic.resolve_emphasis(TEXT, tmp_path)
+    records = [json.loads(p.read_text()) for p in sorted((tmp_path / 'rejections').glob('*.json'))]
+    assert len(records) == 2
+    assert {r['attempt'] for r in records} == {1, 2}
+    for row in records:
+        assert row['text'] == TEXT
+        assert row['model'] == 'mock-semantic-model'
+        assert row['highlights'] == rejected
+        assert '原文不一致' in row['reason']
+    assert not list(tmp_path.glob('*.json'))
+    assert calls[0] is None and calls[1] and 'invented queen' not in calls[1]
+    logged = [fields for name, fields in events if name == 'ai.emphasis_rejected']
+    assert len(logged) == 2
+    assert all(fields['rejected_phrases'] == ['invented queen'] for fields in logged)
+    # A later successful decision cannot delete independent rejection evidence.
+    monkeypatch.setattr(semantic, '_request_analysis', lambda *args: RESPONSE)
+    assert semantic.resolve_emphasis(TEXT, tmp_path)['source'] == 'ai_semantic'
+    assert len(list((tmp_path / 'rejections').glob('*.json'))) == 2
+
+
+def test_rejection_diagnostics_keep_phrases_and_analysis_attempt_under_worker_context(tmp_path, monkeypatch):
+    permit_mock(monkeypatch)
+    bad = {**RESPONSE, 'highlights': [{'phrase': 'rewritten queen', 'occurrence': 1, 'role': 'identity'}]}
+    monkeypatch.setattr(semantic, '_request_analysis', lambda *args: bad)
+    semantic.diag.configure(tmp_path / 'diagnostics', settings={})
+    try:
+        with semantic.diag.context(batch_id='a' * 32, request_id='R2', attempt=17):
+            with pytest.raises(semantic.HookEmphasisValidationError):
+                semantic.resolve_emphasis(TEXT, tmp_path / 'cache')
+    finally:
+        semantic.diag.disable()
+    rows = [json.loads(line) for p in (tmp_path / 'diagnostics/logs').glob('*.jsonl')
+            for line in p.read_text().splitlines()]
+    rejected = [r for r in rows if r['event'] == 'ai.emphasis_rejected']
+    assert len(rejected) == 2
+    assert {r['analysis_attempt'] for r in rejected} == {1, 2}
+    assert all(r['rejected_phrases'] == ['rewritten queen'] and r['request_id'] == 'R2' for r in rejected)
+    files = list((tmp_path / 'cache/rejections').glob('*.json'))
+    assert {json.loads(p.read_text())['attempt'] for p in files} == {1, 2}
+    assert all(p.stat().st_mode & 0o777 == 0o600 for p in files)
+
+
 def test_cached_semantic_decision_reused_and_changed_text_reanalyzed(tmp_path, monkeypatch):
     permit_mock(monkeypatch)
     calls = []

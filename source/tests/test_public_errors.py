@@ -55,6 +55,18 @@ def test_scan_unavailable_is_not_reported_as_missing_source(message):
     assert (info['code'], info['title']) == ('recognition_unavailable', '识别服务暂不可用，可以先手动添加片段。')
 
 
+@pytest.mark.parametrize('stage', [None, 'ai_emphasis', 'rendering'])
+def test_emphasis_validation_guidance_describes_retry_and_editing(stage):
+    from exactcut.error_guidance import guidance
+    info = guidance('AI 未生成合规重点，请重试或改用手工选词／不强调；未修改原文', stage)
+    assert info['code'] == 'ai_emphasis_validation'
+    assert '自动重试一轮' in info['action']
+    assert '修改后重新制作' in info['action']
+    assert '该条 Hook' in info['action']
+    assert '手动选词或不强调' in info['action']
+    assert '服务恢复' not in str(info)
+
+
 def test_missing_source_keeps_source_title():
     from exactcut.error_guidance import guidance
     assert guidance('缺少第 3 集正片')['title'] == '原片缺失或无法完整读取'

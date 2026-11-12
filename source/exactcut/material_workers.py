@@ -157,7 +157,8 @@ def _recover_parent(parent, jobs, snapshot):
             asset = state['assets'][event['asset_id']]
             if asset['deleted_at'] or asset['candidate_version'] != event['version_id']: continue
             version = state['versions'][event['version_id']]
-            if version['status'] not in {'queued', 'processing'} or version.get('upload_job_id'): continue
+            if (version['status'] not in {'queued', 'processing'} or version.get('upload_job_id')
+                    or version['child_id'] != event['child_id']): continue
         child = materialize(parent, event)
         job = _job(parent, event, child)
         target = jobs / (job['id'] + '.json')
@@ -303,6 +304,42 @@ def freeze(parent, child, identity, job):
     return read_json(seal)
 
 
+def retry_hook_validation(job):
+    """Durably replace just this candidate once after a strict emphasis rejection."""
+    from . import workflow as w
+    from . import diagnostics as diag
+    from .hook_emphasis import HookEmphasisValidationError
+    if job.get('phase') != 'render': return False
+    context = _context(job)
+    if not context: return False
+    parent, child, identity = context
+    if identity['kind'] != 'candidate': return False
+    record = w.result_records(child).get(identity['asset_id'], {})
+    if record.get('status') != 'failed' or record.get('error_type') != HookEmphasisValidationError.__name__:
+        return False
+    try: actual = _actual(job)
+    except (ValueError, OSError): return False
+    with m.locked(parent):
+        state = m._read(parent)
+        if not _eligible(state, identity, child): return False
+        version = state['versions'][identity['version_id']]
+        if (version.get('execution') != actual or version.get('hook_validation_retries', 0) >= 1
+                or version.get('upload_job_id')): return False
+        event = state['outbox'][child.name]
+        new_id = uuid.uuid4().hex
+        state['outbox'][new_id] = {**copy.deepcopy(event), 'child_id': new_id, 'status': 'pending',
+                                  'job_id': uuid.uuid5(uuid.NAMESPACE_URL, new_id + ':fetch').hex}
+        event['status'] = 'superseded'
+        version.update(child_id=new_id, status='queued', hook_validation_retries=1)
+        version.pop('execution', None)
+        version.pop('error', None)
+        state['revision'] += 1; m._write(parent, state)
+    diag.event('production.hook_validation_retry', batch_id=child.name, parent_batch_id=parent.name,
+               request_id=identity['asset_id'], version_id=identity['version_id'], retry_batch_id=new_id,
+               automatic_retry=1)
+    return True
+
+
 def stage_finish(job, code):
     context = _context(job)
     if not context: return
@@ -326,9 +363,18 @@ def stage_finish(job, code):
         try: actual = _actual(job)
         except (ValueError, OSError): return
         if version.get('execution') != actual: return
+    if code and retry_hook_validation(job): return
     frozen, error = None, None
     try:
-        if code: raise ValueError('候选执行失败；原成片已保留')
+        if code:
+            from . import workflow as w
+            record = w.result_records(child).get(identity['asset_id'], {})
+            error = '候选执行失败；原成片已保留'
+            if record.get('error_type') == 'HookEmphasisValidationError':
+                error = record.get('error') or 'AI 未生成合规重点'
+                if version.get('hook_validation_retries'):
+                    error += '；系统已自动重试一轮，仍未通过校验'
+            raise ValueError(error)
         actual = _actual(job)
         if version.get('execution') != actual: raise ValueError('执行尝试已被替代')
         frozen = freeze(parent, child, identity, job)
@@ -383,6 +429,7 @@ def reconcile_candidates(parent, jobs, snapshot=None):
         elif (job.get('status') in {'failed', 'interrupted'}
               or (job.get('phase') == 'media-upload' and job.get('status') == 'queued' and job.get('attempt'))
               or (job.get('phase') in {'render', 'media-upload'} and job.get('status') == 'completed')):
+            if job.get('status') == 'failed' and retry_hook_validation(job): continue
             # A paused finalizer may have successful child evidence without a
             # parent commit. Never rerun an upload process over the same mutable
             # files automatically: explicit confirmation verifies the pair and

@@ -70,6 +70,30 @@ def test_ready_material_can_be_approved_while_sibling_renders(workspace):
     assert 'publish' in w.queue_publish(batch['id'], request['request_id'], record['output_sha256'])
 
 
+def test_legacy_render_requeues_only_validation_failure_once(workspace, monkeypatch):
+    from exactcut import webserver as web
+    batch = imported()
+    w.start_batch(batch['id'], batch['revision'])
+    path = w.folder(batch['id'])
+    rid = read_json(path / 'confirmed.json')['requests'][0]['request_id']
+    monkeypatch.setattr(web, 'JOBS', workspace / '.web-state/jobs')
+    monkeypatch.setattr(web.stage_results, 'verified', lambda *a: {'status': 'failed', 'exit_code': 2})
+    job = {'id': 'test-hook-retry', 'batch_id': path.name, 'request_id': rid,
+           'phase': 'render', 'attempt': 1, 'status': 'running'}
+    store_module().put(path / 'production', rid, {
+        'status': 'failed', 'error_type': 'HookEmphasisValidationError', 'error': 'AI 未生成合规重点'})
+    store_module().put(path / 'production', 'successful', {'status': 'qc_passed', 'output_sha256': 'keep'})
+    web.finish_job(job, 2)
+    assert job['status'] == 'queued'
+    assert job['hook_validation_retries'] == 1
+    assert job['request_id'] == rid
+    job.update(status='running', attempt=2)
+    web.finish_job(job, 2)
+    assert job['status'] == 'failed'
+    assert job['hook_validation_retries'] == 1
+    assert w.result_records(path)['successful'] == {'status': 'qc_passed', 'output_sha256': 'keep'}
+
+
 def test_single_request_render_calls_selected_executor(workspace, monkeypatch):
     batch = imported(); w.start_batch(batch['id'], batch['revision']); path = w.folder(batch['id'])
     rid = read_json(path / 'confirmed.json')['requests'][0]['request_id']
@@ -90,6 +114,31 @@ def two_requests(batch):
         if item['type'] == 'episode': item['episode'] = 'EP2'
     manifest['requests'].append(second); write_json_atomic(path / 'confirmed.json', manifest)
     return path, manifest, first['request_id']
+
+
+def test_strict_emphasis_failure_remains_typed_in_production_results(workspace, monkeypatch):
+    from exactcut import orchestrator as o, hook_emphasis as semantic
+    from exactcut.models import BatchManifest
+    from test_hook_emphasis import TEXT, RESPONSE, permit_mock
+    permit_mock(monkeypatch)
+    path, raw, rid = two_requests(imported())
+    manifest = BatchManifest.model_validate(raw)
+    monkeypatch.setattr(o, 'resolve_full_episodes', lambda m, p: m)
+    monkeypatch.setattr(o, 'validate_manifest_sources', lambda *a: None)
+    monkeypatch.setattr(o, '_request_fingerprint', lambda *a: 'fixture')
+    monkeypatch.setattr(semantic, '_request_analysis', lambda *a: {
+        **RESPONSE, 'highlights': [{'phrase': 'rewritten queen', 'occurrence': 1, 'role': 'identity'}]})
+    def render(project, request, timeline, staged, config, **options):
+        options['progress']('ai_emphasis')
+        return semantic.resolve_emphasis(TEXT, workspace / 'cache')
+    monkeypatch.setattr(o, 'render_request', render)
+    results = o.execute_batch(workspace, manifest, {}, request_ids=[rid], output_dir=path / 'production')
+    record = results['requests'][rid]
+    assert record['status'] == 'failed'
+    assert record['error_type'] == 'HookEmphasisValidationError'
+    assert w.result_records(path)[rid]['error_type'] == 'HookEmphasisValidationError'
+    assert len(list((workspace / 'cache/rejections').glob('*.json'))) == 2
+    assert 'R2' not in results['requests']
 
 
 @pytest.mark.integration
