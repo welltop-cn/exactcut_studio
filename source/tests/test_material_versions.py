@@ -73,6 +73,23 @@ def test_registry_corruption_never_falls_back_and_old_writers_blocked(workspace)
         w.delete_batch(path.name, path.name)
 
 
+def test_stage_diagnostics_preserve_child_and_visible_parent(workspace, monkeypatch):
+    from exactcut import diagnostics, stage_results
+    m, path, state = enrolled()
+    confirmed = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})
+    m.recover_outbox()
+    child = next(iter(confirmed['outbox']))
+    monkeypatch.delitem(__import__('sys')._xoptions, 'exactcut_process_token', raising=False)
+    seen = []
+    def operation(batch_id):
+        seen.append(diagnostics.current())
+        return 0
+    assert stage_results.run_child(operation, child) == 0
+    assert stage_results.run_child(operation, path.name) == 0
+    assert [(row['batch_id'], row['parent_batch_id']) for row in seen] == [
+        (child, path.name), (path.name, path.name)]
+
+
 def test_b2_internal_name_alias_does_not_renumber_parent_or_allow_third_party(workspace):
     m, path, state = enrolled()
     confirmed = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})

@@ -54,6 +54,24 @@ def http_failure():
         })
 
 
+@pytest.mark.parametrize('parent', ['39270661bab2497788fda4494bf50352', None])
+def test_alert_links_visible_parent_and_retains_internal_batch(tmp_path, env, parent):
+    config, state, sender = env
+    child = 'e6739500' + 'a' * 24
+    fields = {'parent_batch_id': parent} if parent else {}
+    write(tmp_path, [event(batch_id=child, **fields)])
+    m.Monitor(config, state).run()
+    text = sender.call_args.args[1]
+    project = parent or child
+    assert f'项目：{config["public_url"]}#{project}' in text
+    assert f'项目 id：{project}' in text
+    if parent:
+        assert f'内部批次：{child}' in text
+        assert f'/#{child}' not in text
+    else:
+        assert '内部批次：' not in text
+
+
 def test_http_failure_context(tmp_path, env, http_failure):
     config, state, sender = env
     path = write(tmp_path, [http_failure, http_failure])

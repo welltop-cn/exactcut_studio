@@ -424,9 +424,12 @@ def run_child(operation, *args):
     token = sys._xoptions.get('exactcut_process_token')
     jobs = workflow.ROOT / '.web-state/jobs'
     job = next((read_json(p) for p in jobs.glob('*.json') if read_json(p).get('process_token') == token), None) if token else None
+    from . import material_workers
     fields = {key: job.get(key) for key in ('trace_id', 'batch_id', 'request_id', 'actor', 'phase', 'attempt')} if job else {}
+    batch_id = fields.get('batch_id') or (args[0] if args and isinstance(args[0], str) else None)
+    if batch_id:
+        fields.update(batch_id=batch_id, parent_batch_id=material_workers.parent_batch_id(batch_id))
     with diag.context(job_id=job['id'] if job else None, **fields), diag.span('stage.execute'):
-        from . import material_workers
         try:
             if job: material_workers.stage_enter(job)
             code = operation(*args)

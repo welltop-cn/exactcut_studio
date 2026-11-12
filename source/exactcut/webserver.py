@@ -1119,7 +1119,7 @@ class Handler(BaseHTTPRequestHandler):
                 diag.bind(client_request_id=client_id)
             batch = re.match(r'/api/batches/([0-9a-f]{32})(?:/|$)', route)
             if batch:
-                diag.bind(batch_id=batch[1])
+                diag.bind(batch_id=batch[1], parent_batch_id=batch[1])
                 try:
                     document = read_json(workflow.folder(batch[1]) / 'draft.json') or {}
                     inner = document.get('draft') if isinstance(document.get('draft'), dict) else {}

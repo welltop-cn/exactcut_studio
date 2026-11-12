@@ -108,11 +108,15 @@ def event_context(event, config, webhook=''):
 
     lines = []
     batch = event.get('batch_id')
-    if valid_batch(batch):
+    parent = event.get('parent_batch_id')
+    project = parent if valid_batch(parent) else batch
+    if valid_batch(project):
         base = safe(config['public_url'], 1000).rstrip('/')
         if base.startswith(('https://', 'http://')):
-            lines.append(f'项目：{base}/#{batch}')
-        lines.append(f'项目 id：{batch}')
+            lines.append(f'项目：{base}/#{project}')
+        lines.append(f'项目 id：{project}')
+        if valid_batch(batch) and batch != project:
+            lines.append(f'内部批次：{batch}')
     elif batch is not None:
         lines.append('项目 id：[无效]')
     for key in ('project_name', 'batch_name', 'title', 'name'):
