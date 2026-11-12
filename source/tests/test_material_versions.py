@@ -90,6 +90,46 @@ def test_stage_diagnostics_preserve_child_and_visible_parent(workspace, monkeypa
         (child, path.name), (path.name, path.name)]
 
 
+@pytest.mark.parametrize('phase', ['fetch', 'render', 'upload'])
+@pytest.mark.parametrize('draft', ['{', '[]', '{"media_internal":"bad"}',
+                                   '{"media_internal":{"wrong_field":true}}',
+                                   '{"media_internal":{"parent_batch_id":[]}}', 'unreadable'])
+def test_stage_parent_diagnostic_failure_does_not_block_operation(workspace, monkeypatch, phase, draft):
+    from exactcut import diagnostics, stage_results
+    child = w.BATCHES / ('a' * 32)
+    child.mkdir(parents=True)
+    file = child / 'draft.json'
+    file.write_text(draft)
+    monkeypatch.delitem(__import__('sys')._xoptions, 'exactcut_process_token', raising=False)
+    if draft == 'unreadable':
+        read = Path.read_text
+        def unreadable(path, *args, **kwargs):
+            if path == file:
+                raise PermissionError('fixture cannot read diagnostic draft')
+            return read(path, *args, **kwargs)
+        monkeypatch.setattr(Path, 'read_text', unreadable)
+    seen = []
+    def operation(batch_id):
+        seen.append((phase, batch_id, diagnostics.current()))
+        return 0
+    assert stage_results.run_child(operation, child.name) == 0
+    assert len(seen) == 1 and seen[0][:2] == (phase, child.name)
+    assert seen[0][2]['batch_id'] == child.name
+    assert seen[0][2].get('parent_batch_id') in (None, child.name)
+
+
+def test_stage_diagnostic_guard_does_not_swallow_operation_failure(workspace, monkeypatch):
+    from exactcut import stage_results
+    child = w.BATCHES / ('a' * 32)
+    child.mkdir(parents=True)
+    (child / 'draft.json').write_text('{')
+    monkeypatch.delitem(__import__('sys')._xoptions, 'exactcut_process_token', raising=False)
+    def operation(batch_id):
+        raise ValueError('fixture business failure')
+    with pytest.raises(ValueError, match='fixture business failure'):
+        stage_results.run_child(operation, child.name)
+
+
 def test_b2_internal_name_alias_does_not_renumber_parent_or_allow_third_party(workspace):
     m, path, state = enrolled()
     confirmed = m.confirm(path, {'revision': state['revision'], 'mutation_id': token()})

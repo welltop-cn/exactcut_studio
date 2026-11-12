@@ -19,7 +19,7 @@
 | [独立测试实例](server-test-deployment.md) | 测试部署流程和隔离要求；旧实例记录不当作实时状态 |
 | [本地服务清单](local-dev-services.md) | 默认入口、最近专项实例、操作前检查 |
 | [诊断日志](production-diagnostics.md) | 按账号、项目、任务、trace 查询日志 |
-| [应用内告警与外部监控](application-alerts.md) | 当前链路核验、持久告警队列、飞书配置及切换回退 |
+| [应用内告警与外部监控](application-alerts.md) | 当前链路核验、持久告警队列、飞书配置及切换回退；[三分支集成修补验收](reviews/alert-review-integration.md) |
 | [线上变更索引](production-change-log.md) | 已核实的应用发布和配置变更；保留失败与回退记录 |
 | [剧名与 LOGO 水印](title-watermarks.md) | 仍适用的水印配置与资产说明 |
 

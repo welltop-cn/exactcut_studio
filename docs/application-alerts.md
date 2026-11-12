@@ -67,7 +67,7 @@
 
 ```sh
 cd source
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest -o addopts='' \
+python3.12 -m pytest -o addopts='' \
   tests/test_application_alerts.py tests/test_interactive_queue.py \
   tests/test_prod_monitor.py tests/test_diagnostics.py tests/test_mosaic_queue_release.py \
   tests/test_interactive_main.py -q -ra

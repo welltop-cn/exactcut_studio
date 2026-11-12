@@ -1,12 +1,14 @@
 # 本地开发与专项服务清单
 
+本文的 `${PRIVATE_TEST_ROOT}` 是操作者本地私有验收目录的占位符，不是仓库目录或预设环境变量；公开文档不记录个人主目录。Python 验证命令统一写为 `python3.12`，实际解释器由本地环境配置。
+
 整理日期：2026-11-04。这里保留默认开发约定和最近专项实例；旧端口、PID、启动脚本流水账见[历史清单](archive/local-dev-services-before-cleanup-2026-11-04.md)。
 
 ## 2026-11-12：AI 重点自动重试独立 dev
 
 - 用户要求本地独立 Chrome 窗口开启 dev；入口 `http://127.0.0.1:8793/home/#cab91483e510401093b192ad7550c470`，已登录新数据根的本地管理员。
-- 独立代码 worktree：`/Users/matao/exactcut-test/hook-validation-70c7c47/code`，固定提交 `70c7c47e6c532cd892ad559a415fade382058872`，对应 `fix/hook-validation-auto-retry` 的业务修复。不要在该运行树切分支或修改源码。
-- 使用原 `source/bin/dev-web` 和约定 Python 3.12；独立数据为该 worktree 的 `source/.dev-state/data`，密码只保存在其中 `.web-state/password`。启动日志 `/Users/matao/exactcut-test/hook-validation-70c7c47/dev.log`。初次核验 PID 32148，操作前必须重新检查监听与 cwd。
+- 独立代码 worktree：`${PRIVATE_TEST_ROOT}/hook-validation-70c7c47/code`，固定提交 `70c7c47e6c532cd892ad559a415fade382058872`，对应 `fix/hook-validation-auto-retry` 的业务修复。不要在该运行树切分支或修改源码。
+- 使用原 `source/bin/dev-web` 和约定 Python 3.12；独立数据为该 worktree 的 `source/.dev-state/data`，密码只保存在其中 `.web-state/password`。启动日志 `${PRIVATE_TEST_ROOT}/hook-validation-70c7c47/dev.log`。初次核验 PID 32148，操作前必须重新检查监听与 cwd。
 - 环境 development、release development、worker_alive=true，maintenance=false；无普通制作任务。新数据只有初始草稿项目，未复制生产素材、账号或回执。真实 AI / 素材下载 / 发布和外部写入均沿用启动器的关闭设置。
 - Chrome 独立窗口已实际加载工作台、登录并显示“已连接”；此步骤只验证 dev 可访问，不代表真实 AI 制作链路验收。代码已另通过 308 项相关全部层回归和 1657 项默认单元测试。
 - 初次默认 dev 之后，用户明确要求实际在 dev 测试。确认无活动任务后，仅将本实例切为私有 `serve_fixture.py`，release `dev-hook-fixture-70c7c47`；应用源码不变。使用 development 环境和本地模型模拟，AI 功能开关仅用于触发真实校验路径；无真实 AI 凭据。集中配置关闭 OSS 预览与标题提取，对外写入、下载、交付继续关闭。新 PID 初次核验 17961，操作前仍须重新核对。
@@ -20,16 +22,16 @@
 - 服务器沿用 `http://8.221.122.75/test/#81aeef49800d4961b57b9dbcd46ec935`，release `server-test-recovery-review-74b065a`。入口原本仍在 `/etc/nginx/conf.d/exactcut-test.conf`，不是 sites-enabled 中的正式域名配置；只更新该测试入口的 upstream。
 - 两处均为独立数据/账号与合成字节上游，不是生产项目副本，也不是实际视频素材。测试适配器仅在私有启动器中替换目录/签名及本地源路由，真实 HTTP 代理、下载 UI 和文件保存函数不替换；外部写入、AI、发布及真实素材获取仍关闭。
 - 独立验收 Chrome CDP 18897 只对 `http://8.221.122.75` 启用 insecure-origin-as-secure，以覆盖 HTTP IP 上的目录保存分支。真实 OPFS 目录句柄存入应用原有目录记录，然后点击页面下载按钮；没有冒充系统目录选择器验收。
-- 本地和服务器各三项实际点击通过：EP1 短正文被拒绝，EP2 保存 16 字节，EP3 压缩响应 502；两种失败均保留 8 字节旧文件。截图与最终文件核对保留在 `/Users/matao/exactcut-test/download-integrity-fix-20261111/` 的 `visible-local.png`、`visible-server.png`、`visible-final-state.json`。
+- 本地和服务器各三项实际点击通过：EP1 短正文被拒绝，EP2 保存 16 字节，EP3 压缩响应 502；两种失败均保留 8 字节旧文件。截图与最终文件核对保留在 `${PRIVATE_TEST_ROOT}/download-integrity-fix-20261111/` 的 `visible-local.png`、`visible-server.png`、`visible-final-state.json`。
 - 私有启动器 `visible_instance.py`、本机数据 `visible-local-data/`、PID 和日志均在上述目录；服务器对应目录为 `/srv/exactcut/preparation/download-integrity-fix-20261111/`，数据 `visible-data/`，容器及 internal 网络均命名 `exactcut-download-visible-20261111`，限制 1 CPU / 2 GiB。端口和 PID 操作前重新核对。
-- 后续修复下载中改剧号/切项目导致混存，以及选择目录期间重复启动；两处各 81 项回归通过，见[验证记录](verification/original-download-context-2026-11-11.md)。本机当前源码快照为 `/Users/matao/exactcut-test/recovery-review-20261111/after/source`，服务器为 `/srv/exactcut/preparation/recovery-review-20261111/after/source`。修改主仓库不会自动更新这两份快照；测试数据与私有启动器仍沿用上一轮目录。
+- 后续修复下载中改剧号/切项目导致混存，以及选择目录期间重复启动；两处各 81 项回归通过，见[验证记录](verification/original-download-context-2026-11-11.md)。本机当前源码快照为 `${PRIVATE_TEST_ROOT}/recovery-review-20261111/after/source`，服务器为 `/srv/exactcut/preparation/recovery-review-20261111/after/source`。修改主仓库不会自动更新这两份快照；测试数据与私有启动器仍沿用上一轮目录。
 - 本轮又修复单条损坏报告阻塞交互队列；两处各 321 项相关回归通过。空闲检查后更新测试代码，旧服务器测试容器 `exactcut-download-visible-20261111-8d7234e` 停止保留。健康检查、代码哈希与生产未变核对见[恢复链路跟进](reviews/retrospective-followup-recovery-2026-11-11.md)。坏报告注入仅在独立回归临时目录中进行，未改可见测试项目的报告；本轮未重复点击下载验收。
 - 上述测试实例更新时生产保持 `2fb979a`，仅历史 IP 测试 upstream 调整做过 Nginx graceful reload。随后按独立发布授权，生产已于 2026-11-11 21:51 更新至 `us-east-20261111-recovery-7383715`，镜像 de5f35fc…；见[生产发布验收](verification/production-recovery-download-2026-11-11.md)。本表的两处测试实例仍为 `74b065a`，应用代码与该发布一致。旧 `exactcut-test` 容器及数据保留，未恢复其旧后台任务。
 
 ## 2026-11-10：Hook / 上传修复的本地配置复现
 
 - 本机 `http://127.0.0.1:18794/home/` 已启动，代码 `440bd37`，release `development-local-440bd37`；PID 启动时为 36972，后续操作须重新核对。
-- 沿用 `/Users/matao/exactcut-test/env.sh` 的独立本地数据、测试 OSS 命名空间及交付 guard；使用 `/Users/matao/miniconda3/envs/py3.12/bin/python3.12`。日志和 PID 在 `/Users/matao/exactcut-test/bug-replay-20261110-440bd37/`。
+- 沿用 `${PRIVATE_TEST_ROOT}/env.sh` 的独立本地数据、测试 OSS 命名空间及交付 guard；使用 `python3.12`。日志和 PID 在 `${PRIVATE_TEST_ROOT}/bug-replay-20261110-440bd37/`。
 - 用户要求只复制两个报错项目的配置，并在本地走制作流程。实际仅导入 15,432 字节的草稿配置，未复制生产原片、成片、账号、任务状态或交付回执。生成新项目和新 request_id，清除历史预览凭证。
 - 本地项目：`9384eae8db5940a89760c138766bc5f4`（101689，4 条）和 `bca42906b2b649adaae9f0778c269c26`（101708，5 条）。初始均为 draft；本地尚无对应原片，需要在页面准备原片后制作。未自动点击制作。导入后曾误归属 admin，导致当前 verifier 账号列表不显示、详情返回 404；现已将这两个本地项目归属改为 verifier，并用该账号经 HTTP 验证列表和详情均可见。
 - 后续按用户要求停下旧 4+5 条项目，并终止其暂停的制作进程以释放索引锁，保留数据和缓存。新 Chrome 窗口创建 `0d60e402ee3140dbba77ed3924078df4`（101689）和 `7f1efce1da0b48d5820a674f9f54d187`（101708），均归属 verifier、各 2 条素材；现均制作完成，状态 review。32 个隔离 Chrome 故障/并发场景通过，未启动真实交付，见[Chrome 验收](verification/hook-publish-dev-chrome-2026-11-10.md)。
@@ -47,10 +49,10 @@
 
 ## 2026-11-06：18794 人工验收实例
 
-- 地址 `http://127.0.0.1:18794/home/`；启动器 `/Users/matao/exactcut-test/start.sh`，repo 链接到本仓库，当前代码 `489c5dd`。
+- 地址 `http://127.0.0.1:18794/home/`；启动器 `${PRIVATE_TEST_ROOT}/start.sh`，repo 链接到本仓库，当前代码 `489c5dd`。
 - 用户要求除 FBBM 上车、飞书写入外对齐线上功能。已按生产有效配置同步业务参数；真实 OSS（仅 `exactcut-previews/test/`）、Gemini、OpenAI 兼容 AI、封面剧名提取开启。独立本地数据根与凭据文件保留。
 - `delivery_enabled=false`、publish/external-write 开关为 0；本地 guard 继续禁止 FBBM、飞书交付、生产 OSS 前缀及对象删除。SAM 为 CPU，同线上模型文件，仅路径不同。
-- 空闲屏障下正常重启，健康正常；目标项目详情 errors=[]。Gemini/OpenAI 小请求成功；图片提取仅完成配置，未重新生成图片验收。完整记录 `/Users/matao/exactcut-test/config/alignment-report-20261106.md`。
+- 空闲屏障下正常重启，健康正常；目标项目详情 errors=[]。Gemini/OpenAI 小请求成功；图片提取仅完成配置，未重新生成图片验收。完整记录 `${PRIVATE_TEST_ROOT}/config/alignment-report-20261106.md`。
 - 本地仍是 macOS，不能把工具链和性能等同线上 Linux；当前版本新增的调度及分段重编码配置保留供验收。
 
 ## 最近状态

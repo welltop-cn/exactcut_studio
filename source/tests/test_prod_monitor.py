@@ -447,6 +447,20 @@ def test_frame_signature_and_normalized_ids():
     assert m.signature(first) != m.signature(second)
 
 
+def test_parent_project_links_and_scan_switch_coexist(tmp_path, env):
+    config, state, sender = env
+    write(tmp_path, [event(parent_batch_id='a' * 32, batch_id='b' * 32)])
+    config['scan_logs'] = False
+    m.Monitor(config, state).run()
+    assert not sender.called
+    config['scan_logs'] = True
+    m.Monitor(config, state).run()
+    assert sender.call_count == 1
+    text = sender.call_args.args[1]
+    assert '/#' + 'a' * 32 in text and '/#' + 'b' * 32 not in text
+    assert '内部批次：' + 'b' * 32 in text
+
+
 def test_disabled_log_scan_keeps_service_monitoring(env, monkeypatch):
     config, state, sender = env
     config['scan_logs'] = False

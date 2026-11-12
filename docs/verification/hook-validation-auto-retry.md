@@ -35,7 +35,7 @@
 
 ```sh
 cd source
-/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest \
+python3.12 -m pytest \
   tests/test_material_versions.py tests/test_intra_project_results.py \
   tests/test_hook_emphasis.py tests/test_step3_resources.py \
   tests/test_public_errors.py tests/test_concurrency_recovery.py \
@@ -44,7 +44,7 @@ cd source
 
 结果：**308 通过**，包含相关 integration 层。使用隔离素材夹具和模拟模型；不能据此承诺真实模型下一轮必定成功。
 
-最终代码的全仓库默认层：`/Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest`，**1657 通过、1 跳过、1347 未选择，150.27 秒**。未选择项为默认排除的 UI / integration 层；相关八文件已另用 `-m ''` 执行全部层，不将默认单元层结果描述为全仓所有层。
+最终代码的全仓库默认层：`python3.12 -m pytest`，**1657 通过、1 跳过、1347 未选择，150.27 秒**。未选择项为默认排除的 UI / integration 层；相关八文件已另用 `-m ''` 执行全部层，不将默认单元层结果描述为全仓所有层。
 
 AST 与 main 比对：`SYSTEM`、`grounded_analysis`、`_request_analysis`、`Analysis`、`Highlight`、`manual_emphasis`、`resolve_emphasis` 完全一致，原提示词、校验、手动路径及成功缓存路径没有改变。
 

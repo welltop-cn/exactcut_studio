@@ -1,9 +1,11 @@
 # AI 重点重试：本地 Chrome 制作验收
 
+`${PRIVATE_TEST_ROOT}` 表示操作者的私有验收目录，仅作路径占位；这些脚本、数据和截图不随公开仓库分发。
+
 ## 运行范围
 
 - 应用业务代码固定为 `70c7c47e6c532cd892ad559a415fade382058872`，分支 `fix/hook-validation-auto-retry`。
-- 本地独立 Chrome 窗口，入口 `http://127.0.0.1:8793/home/`。独立代码和数据位于 `/Users/matao/exactcut-test/hook-validation-70c7c47/`，未使用生产素材、账号或交付回执。
+- 本地独立 Chrome 窗口，入口 `http://127.0.0.1:8793/home/`。独立代码和数据位于 `${PRIVATE_TEST_ROOT}/hook-validation-70c7c47/`，未使用生产素材、账号或交付回执。
 - 原 18794 / 18895 测试服务保留。本次只在确认无活动任务后重启自己新建的 8793 实例，运行入口为私有 `serve_fixture.py`，release 为 `dev-hook-fixture-70c7c47`。
 - 输入为本地 FFmpeg 生成的 8 秒测试图案和音频；实际输出为 360×640、约 5 秒视频。
 - 私有 `adapter/sitecustomize.py` 只替换 `_request_analysis` 的模型返回，提供逐字合法、改写短语以及服务错误三种受控结果。真实的 `resolve_emphasis`、原文校验、制作 worker、阶段证据、候选晋升、FFmpeg、预览和浏览器代码均未替换。不是对真实服务商成功率的验收。
@@ -53,7 +55,7 @@ correction/progress 仍使用固定可信标记；测试没有放宽逐字匹配
 
 ## 本地证据与可复核入口
 
-根目录：`/Users/matao/exactcut-test/hook-validation-70c7c47/`。
+根目录：`${PRIVATE_TEST_ROOT}/hook-validation-70c7c47/`。
 
 - `browser-acceptance-results.json` / `browser-acceptance-summary.txt`：最终断言、模型调用数、前后文件信息与完整状态转换。
 - `verify_browser_evidence.py`：只读核对脚本；最终再次执行通过。

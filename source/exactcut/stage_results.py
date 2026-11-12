@@ -428,7 +428,13 @@ def run_child(operation, *args):
     fields = {key: job.get(key) for key in ('trace_id', 'batch_id', 'request_id', 'actor', 'phase', 'attempt')} if job else {}
     batch_id = fields.get('batch_id') or (args[0] if args and isinstance(args[0], str) else None)
     if batch_id:
-        fields.update(batch_id=batch_id, parent_batch_id=material_workers.parent_batch_id(batch_id))
+        fields['batch_id'] = batch_id
+        try:
+            parent = material_workers.parent_batch_id(batch_id)
+            if isinstance(parent, str):
+                fields['parent_batch_id'] = parent
+        except (OSError, ValueError, TypeError, AttributeError, KeyError):
+            pass  # Optional diagnostic enrichment must not block the operation.
     with diag.context(job_id=job['id'] if job else None, **fields), diag.span('stage.execute'):
         try:
             if job: material_workers.stage_enter(job)
