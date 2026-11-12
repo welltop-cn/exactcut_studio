@@ -2,6 +2,15 @@
 
 整理日期：2026-11-04。这里保留默认开发约定和最近专项实例；旧端口、PID、启动脚本流水账见[历史清单](archive/local-dev-services-before-cleanup-2026-11-04.md)。
 
+## 2026-11-12：AI 重点自动重试独立 dev
+
+- 用户要求本地独立 Chrome 窗口开启 dev；入口 `http://127.0.0.1:8793/home/#cab91483e510401093b192ad7550c470`，已登录新数据根的本地管理员。
+- 独立代码 worktree：`/Users/matao/exactcut-test/hook-validation-70c7c47/code`，固定提交 `70c7c47e6c532cd892ad559a415fade382058872`，对应 `fix/hook-validation-auto-retry` 的业务修复。不要在该运行树切分支或修改源码。
+- 使用原 `source/bin/dev-web` 和约定 Python 3.12；独立数据为该 worktree 的 `source/.dev-state/data`，密码只保存在其中 `.web-state/password`。启动日志 `/Users/matao/exactcut-test/hook-validation-70c7c47/dev.log`。初次核验 PID 32148，操作前必须重新检查监听与 cwd。
+- 环境 development、release development、worker_alive=true，maintenance=false；无普通制作任务。新数据只有初始草稿项目，未复制生产素材、账号或回执。真实 AI / 素材下载 / 发布和外部写入均沿用启动器的关闭设置。
+- Chrome 独立窗口已实际加载工作台、登录并显示“已连接”；此步骤只验证 dev 可访问，不代表真实 AI 制作链路验收。代码已另通过 308 项相关全部层回归和 1657 项默认单元测试。
+- 原 18794 / 18895 测试服务继续保留，未重启、未修改其数据。本实例按用户要求留给人工操作；后续停止时只操作重新核实的 8793 实例。
+
 ## 2026-11-11：下载完整性与恢复修复测试实例
 
 - 新本地隔离 dev：`http://127.0.0.1:18895/home/#f2f245e0f51e4c6c91f4fee42a1fff88`，运行代码 `74b065a`，release `dev-recovery-review-74b065a`；原 18794 服务保留。
