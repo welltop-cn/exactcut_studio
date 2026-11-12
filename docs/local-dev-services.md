@@ -9,6 +9,9 @@
 - 使用原 `source/bin/dev-web` 和约定 Python 3.12；独立数据为该 worktree 的 `source/.dev-state/data`，密码只保存在其中 `.web-state/password`。启动日志 `/Users/matao/exactcut-test/hook-validation-70c7c47/dev.log`。初次核验 PID 32148，操作前必须重新检查监听与 cwd。
 - 环境 development、release development、worker_alive=true，maintenance=false；无普通制作任务。新数据只有初始草稿项目，未复制生产素材、账号或回执。真实 AI / 素材下载 / 发布和外部写入均沿用启动器的关闭设置。
 - Chrome 独立窗口已实际加载工作台、登录并显示“已连接”；此步骤只验证 dev 可访问，不代表真实 AI 制作链路验收。代码已另通过 308 项相关全部层回归和 1657 项默认单元测试。
+- 初次默认 dev 之后，用户明确要求实际在 dev 测试。确认无活动任务后，仅将本实例切为私有 `serve_fixture.py`，release `dev-hook-fixture-70c7c47`；应用源码不变。使用 development 环境和本地模型模拟，AI 功能开关仅用于触发真实校验路径；无真实 AI 凭据。集中配置关闭 OSS 预览与标题提取，对外写入、下载、交付继续关闭。新 PID 初次核验 17961，操作前仍须重新核对。
+- 已由 Chrome 实际点击制作并完成受控验收：自动重试成功、重试耗尽停止、服务错误不重制、单条修改时另一条成功素材版本/文件不变。两条真实成片播放成功，最终显示“1/1 条制作完成 · 1 条沿用已有成片”。[完整证据和夹具边界](verification/hook-validation-dev-chrome.md)。
+- 当前 Chrome 停在 `http://127.0.0.1:8793/home/#5a23f54ac32d4bffa6084869bf6d5623` 的成片预览；默认草稿保留。初次夹具缺少默认水印字段引起整批代际变化的未通过观察也已保留；补齐夹具默认值后重跑的成功素材保护通过。
 - 原 18794 / 18895 测试服务继续保留，未重启、未修改其数据。本实例按用户要求留给人工操作；后续停止时只操作重新核实的 8793 实例。
 
 ## 2026-11-11：下载完整性与恢复修复测试实例

@@ -45,7 +45,7 @@
 
 AST 比对确认 `SYSTEM`、`grounded_analysis`、`_request_analysis`、`Analysis`、`Highlight`、`manual_emphasis`、`resolve_emphasis` 与 main 一致。
 
-未使用真实 AI 模型、生产数据或外部上传；测试不保证真实模型重试一定成功。未进行本次变更的生产部署、真实网络故障注入或浏览器制作验收。
+后续已增加[独立 Chrome dev 验收](hook-validation-dev-chrome.md)：真实页面点击、制作 worker、FFmpeg、成片播放、实际失败提示，以及成功兄弟素材版本/文件 SHA/mtime 的前后核对均通过。模型返回使用本地受控适配器，未使用真实 AI 模型、生产数据或外部上传；测试不保证真实模型重试一定成功。未进行生产部署或真实网络故障注入。
 
 ## 方法与建议
 

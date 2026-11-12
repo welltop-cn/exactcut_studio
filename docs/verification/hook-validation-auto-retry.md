@@ -48,4 +48,6 @@ cd source
 
 AST 与 main 比对：`SYSTEM`、`grounded_analysis`、`_request_analysis`、`Analysis`、`Highlight`、`manual_emphasis`、`resolve_emphasis` 完全一致，原提示词、校验、手动路径及成功缓存路径没有改变。
 
+后续已在独立 Chrome 中实际点击制作、运行真实 worker / FFmpeg 并播放成片，覆盖自动重试、停止条件与成功素材文件保护，见 [本地 Chrome 验收](hook-validation-dev-chrome.md)。模型返回受控模拟，未调用真实服务商或对外交付。
+
 差异复核见 [AI 重点重试差异审查](hook-validation-differential-review.md)。
