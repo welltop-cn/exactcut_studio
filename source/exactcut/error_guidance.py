@@ -7,7 +7,7 @@ from urllib.parse import urlsplit, urlunsplit
 def redact(value, *, limit=4000):
     text = str(value or '')
     for key, secret in os.environ.items():
-        if len(secret) >= 8 and re.search(r'(TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY)', key, re.I):
+        if len(secret) >= 8 and re.search(r'(TOKEN|SECRET|PASSWORD|API_KEY|ACCESS_KEY|WEBHOOK)', key, re.I):
             text = text.replace(secret, '[已隐藏]')
     text = re.sub(r'(?i)(Bearer\s+)\S+', r'\1[已隐藏]', text)
     text = re.sub(r'\bsk-[A-Za-z0-9_-]{8,}', '[已隐藏]', text)

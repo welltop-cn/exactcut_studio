@@ -1134,7 +1134,7 @@ class Handler(BaseHTTPRequestHandler):
                 diag.bind(client_request_id=client_id)
             batch = re.match(r'/api/batches/([0-9a-f]{32})(?:/|$)', route)
             if batch:
-                diag.bind(batch_id=batch[1])
+                diag.bind(batch_id=batch[1], parent_batch_id=batch[1])
                 try:
                     document = read_json(workflow.folder(batch[1]) / 'draft.json') or {}
                     inner = document.get('draft') if isinstance(document.get('draft'), dict) else {}
@@ -2166,8 +2166,11 @@ def main():
     server.subtitle_dispatcher = Dispatcher()
     server.mosaic_dispatcher=MosaicDispatcher()
     server.interactive_dispatcher=InteractiveDispatcher()
+    from .alerts import Dispatcher as AlertDispatcher
+    server.alert_dispatcher = AlertDispatcher()
     previous_signals={}
     try:
+        server.alert_dispatcher.start()
         if not server.subtitle_dispatcher.start():
             diag.event('preview_subtitles.dispatcher_owned_elsewhere', level='warning')
         server.mosaic_dispatcher.start()
@@ -2193,8 +2196,11 @@ def main():
         finally:
             try:server.subtitle_dispatcher.stop(timeout=None)
             finally:
-                server.server_close()
-                for sig,handler in previous_signals.items():signal.signal(sig,handler)
+                try:
+                    server.alert_dispatcher.stop()
+                finally:
+                    server.server_close()
+                    for sig,handler in previous_signals.items():signal.signal(sig,handler)
 
 
 if __name__ == '__main__':

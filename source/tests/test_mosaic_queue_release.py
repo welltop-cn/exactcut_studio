@@ -40,13 +40,14 @@ def test_maintenance_keeps_tasks_pending(tmp_path,monkeypatch):
 
 def test_startup_failure_cannot_leave_dispatcher_writing_after_shutdown(tmp_path,monkeypatch):
     from unittest.mock import Mock
-    from exactcut import webserver,preview_subtitle_queue
+    from exactcut import webserver,preview_subtitle_queue,alerts
     created=[]
     class Stub:
         def __init__(self):self.started=False;self.stopped=False;created.append(self)
         def start(self):self.started=True;return True
         def stop(self,**kwargs):self.stopped=True
     monkeypatch.setattr(queue,'Dispatcher',Stub);monkeypatch.setattr(preview_subtitle_queue,'Dispatcher',Stub)
+    monkeypatch.setattr(alerts,'Dispatcher',Stub)
     monkeypatch.setenv('EXACTCUT_DATA_ROOT',str(tmp_path));monkeypatch.setenv('EXACTCUT_ENVIRONMENT','test');monkeypatch.setenv('EXACTCUT_WORKER_ENABLED','1')
     state=tmp_path/'state';state.mkdir();(state/'password').write_text('synthetic-startup-password-only')
     monkeypatch.setattr(webserver,'STATE',state);monkeypatch.setattr(webserver,'JOBS',state/'jobs')

@@ -2,6 +2,8 @@
 
 单文件脚本，面向 Linux 普通用户 deploy；使用 Python 3.12 标准库，无第三方依赖，无需 root 或容器权限。文中的命令在监控脚本目录执行。
 
+应用内告警实现和切换流程见[应用内告警与外部监控](../docs/application-alerts.md)。外部配置 `scan_logs: false` 可关闭日志扫描及签名汇总，保留服务/资源检查和已有待发通知重试；默认 true。它不清空旧签名或队列，切换前需确认旧积压的处理方式。此配置项需先更新脚本，旧版脚本不会识别。
+
 ## 监控项与阈值
 
 - 本机健康接口：默认回环地址的 18792 端口，要求返回 200、状态正常、工作进程存活、心跳不超过 120 秒。维护状态单独提示，不计故障。接口中的版本变化发送「版本已更新：旧→新」。
@@ -59,6 +61,7 @@ chmod 600 "$HOME/.exactcut-monitor/webhook.env"
   "load_low": 1.0,
   "load_count": 3,
   "cooldown_seconds": 1800,
+  "scan_logs": true,
   "warning_events": [],
   "ignore_errors": [
     {"event": "http.failed", "type": "BrokenPipeError"},
@@ -113,7 +116,7 @@ chmod 600 "$HOME/.exactcut-monitor/webhook.env"
 
 ## root 日志复制（log_feed）
 
-应用每次写日志都会设置目录 `0700`、文件 `0600`，这会清掉 ACL mask 中的读取权限，导致即使预先配置 ACL，deploy 仍可能读不到日志。`log_feed.py` 由 root 的 cron 每五分钟只读扫描源日志，将新增 error/critical 完整行复制到 deploy 可读的独立目录；无需改动应用或源日志的权限。
+历史版本在每次写日志时设置目录 `0700`、文件 `0600`，会清掉 ACL mask 中的读取权限。当前主线已改为仅在创建时设置权限，但既有源目录/文件权限仍需实际核验。原有 `log_feed.py` 由 root 的 cron 每五分钟只读扫描源日志，将新增 error/critical 完整行复制到 deploy 可读的独立目录；无需改动应用或源日志的权限。迁移到应用内告警并验收后可停用该复制任务，外部存活/资源检查继续保留。
 
 ### 安装
 

@@ -27,6 +27,64 @@ def wait(predicate):
     assert predicate()
 
 
+@pytest.mark.parametrize('failure, should_alert', [
+    (RuntimeError('fixture render failed'), True),
+    (queue.cutting.CutError('fixture version conflict', 409), False),
+    (queue.cutting.ResourceBusy('frame'), False),
+])
+def test_failed_interactive_work_generates_application_alert(state, monkeypatch, failure, should_alert):
+    from exactcut import diagnostics, util
+    from exactcut.alerts import AlertQueue
+    config = util.load_config()
+    config['alerts']['enabled'] = True
+    monkeypatch.setattr(util, 'load_config', lambda: config)
+    diagnostics.configure(state)
+    entry = submit(state, 1)
+    def fail(entry, leases):
+        raise failure
+    dispatcher = queue.Dispatcher(run=fail, poll_seconds=.01)
+    try:
+        assert dispatcher.start()
+        wait(lambda:not queue.snapshot()['pending'] and not queue.snapshot()['active'])
+        assert read_json(state / entry['report'])['status'] == 'failed'
+        sent = []
+        AlertQueue(state, config['alerts']).flush(sender=sent.append)
+        if should_alert:
+            assert len(sent) == 1 and 'interactive.failed' in sent[0] and 'R1' in sent[0]
+        else:
+            assert sent == []
+    finally:
+        dispatcher.stop(timeout=None)
+        diagnostics.disable()
+
+
+def test_thread_launch_failure_generates_application_alert(state, monkeypatch):
+    from exactcut import diagnostics, util
+    from exactcut.alerts import AlertQueue
+    config = util.load_config()
+    config['alerts']['enabled'] = True
+    monkeypatch.setattr(util, 'load_config', lambda: config)
+    diagnostics.configure(state)
+    entry = submit(state, 1)
+    start = threading.Thread.start
+    def fail_worker_launch(thread):
+        if threading.current_thread() is not threading.main_thread():
+            raise RuntimeError('fixture cannot launch worker thread')
+        return start(thread)
+    monkeypatch.setattr(threading.Thread, 'start', fail_worker_launch)
+    dispatcher = queue.Dispatcher(run=lambda *args: pytest.fail('worker must not run'), poll_seconds=.01)
+    try:
+        assert dispatcher.start()
+        wait(lambda:not queue.snapshot()['pending'] and not queue.snapshot()['active'])
+        assert read_json(state / entry['report'])['status'] == 'failed'
+        sent = []
+        AlertQueue(state, config['alerts']).flush(sender=sent.append)
+        assert len(sent) == 1 and 'interactive.launch_failed' in sent[0] and 'R1' in sent[0]
+    finally:
+        dispatcher.stop(timeout=None)
+        diagnostics.disable()
+
+
 def test_admission_persists_more_than_execution_capacity_and_deduplicates(state):
     entries=[submit(state,number) for number in range(1,7)]
     assert len(queue.snapshot()['pending'])==6

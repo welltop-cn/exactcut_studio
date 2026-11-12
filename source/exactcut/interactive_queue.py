@@ -263,6 +263,11 @@ class Dispatcher:
         except ResourceDeferred as exc:
             deferred=exc.not_before;_update(entry,status='queued',progress='等待所需资源，稍后继续')
         except Exception as exc:
+            with diagnostics.context(**entry.get('diagnostics',{})):
+                expected = isinstance(exc,cutting.CutError) and exc.status in (409,429)
+                diagnostics.event('interactive.failed',level='warning' if expected else 'error',error=exc,
+                                  batch_id=entry['session']['batch_id'],request_id=entry['session']['request_id'],
+                                  actor=entry['actor'],phase=entry['role'])
             _update(entry,status='failed',error=str(exc) if isinstance(exc,cutting.CutError) else '处理未完成，请重试；原素材保留')
         finally:
             for lease in reversed(leases):lease.close()
@@ -299,7 +304,10 @@ class Dispatcher:
                                     thread=threading.Thread(target=self.execute,args=(entry,leases,initial),daemon=True)
                                     self.workers[entry['task_id']]=thread
                                     try:thread.start()
-                                    except BaseException:
+                                    except BaseException as exc:
+                                        diagnostics.event('interactive.launch_failed',level='error',error=exc,
+                                                          batch_id=entry['session']['batch_id'],request_id=entry['session']['request_id'],
+                                                          actor=entry['actor'],phase=entry['role'])
                                         for lease in reversed(leases):lease.close()
                                         self.workers.pop(entry['task_id'],None)
                                         _update(entry,status='failed',error='无法启动处理，请重试；任务输入已保留')

@@ -22,7 +22,7 @@ DEFAULTS = {
     'mounts': [], 'failure_count': 2, 'heartbeat_seconds': 120,
     'disk_high': 85, 'disk_low': 80, 'memory_low': 10, 'memory_high': 15,
     'load_high': 1.5, 'load_low': 1.0, 'load_count': 3,
-    'cooldown_seconds': 1800, 'warning_events': [],
+    'cooldown_seconds': 1800, 'warning_events': [], 'scan_logs': True,
     'ignore_errors': [{'event': e, 'type': t} for e in
                       ('http.failed', 'http.handler_failed') for t in
                       ('BrokenPipeError', 'ConnectionResetError')],
@@ -108,11 +108,15 @@ def event_context(event, config, webhook=''):
 
     lines = []
     batch = event.get('batch_id')
-    if valid_batch(batch):
+    parent = event.get('parent_batch_id')
+    project = parent if valid_batch(parent) else batch
+    if valid_batch(project):
         base = safe(config['public_url'], 1000).rstrip('/')
         if base.startswith(('https://', 'http://')):
-            lines.append(f'项目：{base}/#{batch}')
-        lines.append(f'项目 id：{batch}')
+            lines.append(f'项目：{base}/#{project}')
+        lines.append(f'项目 id：{project}')
+        if valid_batch(batch) and batch != project:
+            lines.append(f'内部批次：{batch}')
     elif batch is not None:
         lines.append('项目 id：[无效]')
     for key in ('project_name', 'batch_name', 'title', 'name'):
@@ -481,7 +485,8 @@ class Monitor:
                 else:
                     self.guarded(args[1], lambda args=args: self.check(*args))
         self.guarded('资源', resource_checks)
-        self.guarded('报错扫描', self.events)
+        if self.config['scan_logs']:
+            self.guarded('报错扫描', self.events)
         queue = self.state.setdefault('outbox', [])
         if self.bootstrap:
             queue.clear()

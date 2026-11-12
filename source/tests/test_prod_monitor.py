@@ -54,6 +54,24 @@ def http_failure():
         })
 
 
+@pytest.mark.parametrize('parent', ['39270661bab2497788fda4494bf50352', None])
+def test_alert_links_visible_parent_and_retains_internal_batch(tmp_path, env, parent):
+    config, state, sender = env
+    child = 'e6739500' + 'a' * 24
+    fields = {'parent_batch_id': parent} if parent else {}
+    write(tmp_path, [event(batch_id=child, **fields)])
+    m.Monitor(config, state).run()
+    text = sender.call_args.args[1]
+    project = parent or child
+    assert f'项目：{config["public_url"]}#{project}' in text
+    assert f'项目 id：{project}' in text
+    if parent:
+        assert f'内部批次：{child}' in text
+        assert f'/#{child}' not in text
+    else:
+        assert '内部批次：' not in text
+
+
 def test_http_failure_context(tmp_path, env, http_failure):
     config, state, sender = env
     path = write(tmp_path, [http_failure, http_failure])
@@ -427,6 +445,19 @@ def test_frame_signature_and_normalized_ids():
     assert m.signature(first) == m.signature(second)
     second['error']['frames'][0]['function'] = '另一执行'
     assert m.signature(first) != m.signature(second)
+
+
+def test_disabled_log_scan_keeps_service_monitoring(env, monkeypatch):
+    config, state, sender = env
+    config['scan_logs'] = False
+    scanner = Mock(side_effect=AssertionError('log scan must be disabled'))
+    monkeypatch.setattr(m, 'scan_events', scanner)
+    state['signatures'] = {'legacy': {'pending': 2}}
+    m.Monitor(config, state).run()
+    scanner.assert_not_called()
+    assert state['checks']['health']['detail'] == '正常'
+    assert not sender.called
+    assert state['signatures']['legacy']['pending'] == 2
 
 
 def test_webhook_file_and_response(tmp_path, monkeypatch):
