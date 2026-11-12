@@ -429,6 +429,19 @@ def test_frame_signature_and_normalized_ids():
     assert m.signature(first) != m.signature(second)
 
 
+def test_disabled_log_scan_keeps_service_monitoring(env, monkeypatch):
+    config, state, sender = env
+    config['scan_logs'] = False
+    scanner = Mock(side_effect=AssertionError('log scan must be disabled'))
+    monkeypatch.setattr(m, 'scan_events', scanner)
+    state['signatures'] = {'legacy': {'pending': 2}}
+    m.Monitor(config, state).run()
+    scanner.assert_not_called()
+    assert state['checks']['health']['detail'] == '正常'
+    assert not sender.called
+    assert state['signatures']['legacy']['pending'] == 2
+
+
 def test_webhook_file_and_response(tmp_path, monkeypatch):
     file = tmp_path / '通知配置'
     monkeypatch.setenv('FEISHU_ALERT_WEBHOOK', '环境值')

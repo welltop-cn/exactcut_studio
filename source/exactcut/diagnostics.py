@@ -20,6 +20,7 @@ import traceback
 from urllib.parse import urlsplit, urlunsplit
 
 from .error_guidance import redact
+from . import alerts
 
 _context = ContextVar('diagnostic_context', default={})
 _root = None
@@ -75,18 +76,22 @@ def configure(root=None, settings=None):
     from .util import load_config
     _settings = {'retention_days': 14, 'max_file_bytes': 20 * 1024**2,
                  'max_total_bytes': 1024**3, 'browser_events_per_minute': 240, 'enabled': True}
-    _settings.update(settings if settings is not None else load_config().get('logging', {}))
+    config = load_config() if settings is None else {}
+    _settings.update(settings if settings is not None else config.get('logging', {}))
     for key in ('retention_days', 'max_file_bytes', 'max_total_bytes', 'browser_events_per_minute'):
         if not isinstance(_settings[key], int) or isinstance(_settings[key], bool) or _settings[key] <= 0:
             raise ValueError('logging.' + key + ' must be a positive integer')
     if _settings['max_file_bytes'] > _settings['max_total_bytes']:
         raise ValueError('logging.max_file_bytes exceeds max_total_bytes')
-    _root = Path(root if root is not None else data_root()) / 'logs' if _settings['enabled'] else None
+    base = Path(root if root is not None else data_root())
+    _root = base / 'logs' if _settings['enabled'] else None
+    alerts.configure(base, config.get('alerts', {}))
 
 
 def disable():
     global _root
     _root = None
+    alerts.configure(None, {})
 
 
 def current():
@@ -210,14 +215,18 @@ def _append(line):
 
 def event(name, *, level='info', **fields):
     global _last_failure
-    if _root is None:
+    if _root is None and not alerts.enabled():
         return
     try:
         from .runtime import environment, release_id
         row = {'at': datetime.now(timezone.utc).isoformat(), 'event': name, 'level': level,
                'pid': os.getpid(), 'environment': environment(), 'release': release_id(),
                **current(), **fields}
-        line = (json.dumps(safe(row), ensure_ascii=False, allow_nan=False) + '\n').encode()
+        row = safe(row)
+        alerts.submit(row)
+        if _root is None:
+            return
+        line = (json.dumps(row, ensure_ascii=False, allow_nan=False) + '\n').encode()
         if len(line) > min(_settings['max_file_bytes'], 32768):
             row = {key: row[key] for key in ('at', 'event', 'level', 'pid', 'release', 'trace_id', 'job_id',
                                             'batch_id', 'request_id', 'phase', 'attempt') if key in row}

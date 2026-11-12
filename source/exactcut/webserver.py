@@ -2151,8 +2151,11 @@ def main():
     server.subtitle_dispatcher = Dispatcher()
     server.mosaic_dispatcher=MosaicDispatcher()
     server.interactive_dispatcher=InteractiveDispatcher()
+    from .alerts import Dispatcher as AlertDispatcher
+    server.alert_dispatcher = AlertDispatcher()
     previous_signals={}
     try:
+        server.alert_dispatcher.start()
         if not server.subtitle_dispatcher.start():
             diag.event('preview_subtitles.dispatcher_owned_elsewhere', level='warning')
         server.mosaic_dispatcher.start()
@@ -2178,8 +2181,11 @@ def main():
         finally:
             try:server.subtitle_dispatcher.stop(timeout=None)
             finally:
-                server.server_close()
-                for sig,handler in previous_signals.items():signal.signal(sig,handler)
+                try:
+                    server.alert_dispatcher.stop()
+                finally:
+                    server.server_close()
+                    for sig,handler in previous_signals.items():signal.signal(sig,handler)
 
 
 if __name__ == '__main__':
