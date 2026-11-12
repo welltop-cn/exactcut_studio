@@ -10,7 +10,8 @@
 
 - 修复前：有父项目的告警回归失败，无父项目的回归通过。
 - 命令：`cd source && /Users/matao/miniconda3/envs/py3.12/bin/python3.12 -m pytest tests/test_prod_monitor.py tests/test_material_versions.py tests/test_diagnostics.py`
-- 结果：128 通过，1 跳过，58 未选择（默认不执行 UI / integration 层）。
+- 默认层结果：128 通过，1 跳过，58 未选择（默认不执行 UI / integration 层）。
+- 独立 worktree 扩展验收：上述三个文件加 `tests/test_concurrency_recovery.py`，使用 `-m ''` 执行所有相关层，227 通过，1 跳过。
 - 覆盖真实监控告警文本、内部子批次与普通项目的执行诊断上下文，以及原有脱敏和监控行为。
 
 只进行隔离本地测试；未发送飞书消息，未合并 main，未部署。
